@@ -70,9 +70,12 @@
    * Get favicon URL
    */
   function getFaviconUrl(url) {
-    const domain = getDomain(url);
-    if (!domain) return '';
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+    try {
+      const parsed = new URL(url);
+      return `${parsed.protocol}//${parsed.hostname}/favicon.ico`;
+    } catch (e) {
+      return '';
+    }
   }
 
   /**
@@ -221,11 +224,13 @@
 
     try {
       const buttons = await getButtons();
+      const selectedGroupId = groupSelectEl.value;
       
-      // Check if URL already exists
-      const exists = buttons.some(b => b.url === currentTab.url);
+      // Check if URL already exists in the same group
+      // Both groupId and selectedGroupId are strings, so strict equality is safe
+      const exists = buttons.some(b => b.url === currentTab.url && b.groupId === selectedGroupId);
       if (exists) {
-        showMessage('此页面已经添加过了', 'error');
+        showMessage('此页面已在该分组中', 'error');
         btnAddEl.disabled = false;
         btnAddEl.textContent = '添加到主页';
         return;
@@ -239,7 +244,7 @@
         icon: getFaviconUrl(currentTab.url),
         iconType: 'favicon',
         iconColor: stringToColor(currentTab.title),
-        groupId: groupSelectEl.value,
+        groupId: selectedGroupId,
         folderId: null,
         order: buttons.length,
         createdAt: Date.now(),
@@ -248,6 +253,18 @@
 
       buttons.push(newButton);
       await saveButtons(buttons);
+
+      // Notify all tabs to refresh
+      if (chrome.runtime && chrome.runtime.sendMessage) {
+        try {
+          chrome.runtime.sendMessage({ 
+            type: 'BUTTON_ADDED', 
+            button: newButton 
+          });
+        } catch (e) {
+          console.log('Could not send message to tabs:', e);
+        }
+      }
 
       showMessage('已添加到主页！', 'success');
       btnAddEl.textContent = '已添加';

@@ -10,7 +10,10 @@
   ],
   "host_permissions": [
     "https://www.bing.com/*",
-    "https://api.allorigins.win/*"
+    "https://api.allorigins.win/*",
+    "https://www.google.com/*",
+    "https://icons.duckduckgo.com/*",
+    "<all_urls>"
   ],
   "chrome_url_overrides": {
     "newtab": "newtab.html"

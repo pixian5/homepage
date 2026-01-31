@@ -36,6 +36,7 @@ const Storage = {
       density: 'standard' // 'compact', 'standard', 'loose'
     },
     openMode: 'new-tab', // 'current', 'new-tab', 'background'
+    showRecentView: true, // Show recent view in groups sidebar
     search: {
       enabled: true,
       engineIntegration: true,
@@ -43,7 +44,8 @@ const Storage = {
     },
     icon: {
       autoFetch: true,
-      retryAt18: true,
+      retryEnabled: true,
+      retryTime: '18:00', // Default retry time
       fallbackType: 'letter' // 'letter', 'default'
     },
     sync: {
@@ -214,7 +216,8 @@ const Storage = {
       folderId: button.folderId || null,
       order: buttons.length,
       createdAt: Date.now(),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      lastAccessedAt: null // Initialize for recent view tracking
     };
     buttons.push(newButton);
     await this.saveButtons(buttons);
@@ -275,6 +278,19 @@ const Storage = {
     });
     buttons.sort((a, b) => a.order - b.order);
     await this.saveButtons(buttons, false);
+  },
+
+  /**
+   * Update button last accessed time
+   * @param {string} id - Button ID
+   */
+  async updateButtonLastAccessed(id) {
+    const buttons = await this.getButtons();
+    const button = buttons.find(b => b.id === id);
+    if (button) {
+      button.lastAccessedAt = Date.now();
+      await this.saveButtons(buttons);
+    }
   },
 
   /**

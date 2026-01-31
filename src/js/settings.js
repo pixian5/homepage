@@ -89,17 +89,6 @@ const Settings = {
           
           <div class="settings-row">
             <div>
-              <span class="settings-label">背景透明度覆盖</span>
-              <p class="settings-description">添加白色/黑色半透明遮罩，数值越大越透明</p>
-            </div>
-            <div style="display: flex; align-items: center; gap: 12px; flex: 1; max-width: 200px;">
-              <input type="range" id="setting-bg-opacity" min="0" max="0.7" step="0.05" value="${settings.background?.opacity || 0}" style="flex: 1;">
-              <span id="setting-bg-opacity-value" style="min-width: 40px; text-align: right;">${Math.round((settings.background?.opacity || 0) * 100)}%</span>
-            </div>
-          </div>
-          
-          <div class="settings-row">
-            <div>
               <span class="settings-label">背景淡入效果</span>
             </div>
             <div class="toggle-switch ${settings.background?.fadeEffect ? 'active' : ''}" id="setting-fade-effect"></div>
@@ -166,6 +155,19 @@ const Settings = {
           </div>
         </div>
 
+        <!-- Group Settings -->
+        <div class="settings-section">
+          <h3 class="settings-section-title">分组设置</h3>
+          
+          <div class="settings-row">
+            <div>
+              <span class="settings-label">显示最近浏览</span>
+              <p class="settings-description">在左侧分组最上方显示最近访问的按钮</p>
+            </div>
+            <div class="toggle-switch ${settings.showRecentView !== false ? 'active' : ''}" id="setting-show-recent"></div>
+          </div>
+        </div>
+
         <!-- Search Settings -->
         <div class="settings-section">
           <h3 class="settings-section-title">搜索设置</h3>
@@ -211,9 +213,17 @@ const Settings = {
           
           <div class="settings-row">
             <div>
-              <span class="settings-label">每日 18:00 重试失败图标</span>
+              <span class="settings-label">定时重试失败图标</span>
+              <p class="settings-description">每天在指定时间自动重试获取失败的图标</p>
             </div>
-            <div class="toggle-switch ${settings.icon?.retryAt18 ? 'active' : ''}" id="setting-icon-retry"></div>
+            <div class="toggle-switch ${settings.icon?.retryEnabled !== false ? 'active' : ''}" id="setting-icon-retry"></div>
+          </div>
+          
+          <div class="settings-row" id="retry-time-row" style="${settings.icon?.retryEnabled !== false ? '' : 'display:none'}">
+            <div>
+              <span class="settings-label">重试时间</span>
+            </div>
+            <input type="time" id="setting-retry-time" class="form-select" value="${settings.icon?.retryTime || '18:00'}" style="width: 120px;">
           </div>
           
           <div class="settings-row">
@@ -356,21 +366,6 @@ const Settings = {
       await App.applyBackground();
     });
 
-    // Background opacity
-    const opacitySlider = document.getElementById('setting-bg-opacity');
-    const opacityValue = document.getElementById('setting-bg-opacity-value');
-    if (opacitySlider && opacityValue) {
-      opacitySlider.addEventListener('input', (e) => {
-        const value = parseFloat(e.target.value);
-        opacityValue.textContent = Math.round(value * 100) + '%';
-      });
-      opacitySlider.addEventListener('change', async (e) => {
-        const value = parseFloat(e.target.value);
-        await this.update({ background: { ...App.settings.background, opacity: value } });
-        await App.applyBackground();
-      });
-    }
-
     // Custom background upload
     const bgUploadBtn = document.getElementById('setting-bg-upload');
     const bgUploadInput = document.getElementById('bg-upload-input');
@@ -430,6 +425,11 @@ const Settings = {
       await this.update({ backup: { ...App.settings.backup, maxBackups: parseInt(e.target.value) } });
     });
 
+    // Icon retry time
+    document.getElementById('setting-retry-time')?.addEventListener('change', async (e) => {
+      await this.update({ icon: { ...App.settings.icon, retryTime: e.target.value } });
+    });
+
     // Buttons
     document.getElementById('btn-refresh-icons')?.addEventListener('click', () => {
       ButtonManager.refreshAllIcons();
@@ -483,6 +483,13 @@ const Settings = {
         await this.update({ grid: { ...settings.grid, fixed: value } });
         App.applyGridSettings();
         break;
+      case 'setting-show-recent':
+        await this.update({ showRecentView: value });
+        // Reload groups to show/hide recent view
+        await Groups.load();
+        Groups.render();
+        Toast.success(value ? '已开启最近浏览' : '已关闭最近浏览');
+        break;
       case 'setting-search-enabled':
         await this.update({ search: { ...settings.search, enabled: value } });
         document.querySelector('.search-wrapper').style.display = value ? '' : 'none';
@@ -494,7 +501,9 @@ const Settings = {
         await this.update({ icon: { ...settings.icon, autoFetch: value } });
         break;
       case 'setting-icon-retry':
-        await this.update({ icon: { ...settings.icon, retryAt18: value } });
+        await this.update({ icon: { ...settings.icon, retryEnabled: value } });
+        // Update visibility of retry time input
+        document.getElementById('retry-time-row').style.display = value ? '' : 'none';
         break;
       case 'setting-sync-enabled':
         await this.handleSyncToggle(value);

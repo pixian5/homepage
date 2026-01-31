@@ -68,8 +68,14 @@ const Utils = {
   getFaviconUrl(url) {
     const domain = this.getDomain(url);
     if (!domain) return '';
-    // Use Google's favicon service as a reliable source
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+    // Try to get favicon directly from the website root
+    // This avoids CORS issues with Google's favicon service
+    try {
+      const parsed = new URL(url);
+      return `${parsed.protocol}//${parsed.hostname}/favicon.ico`;
+    } catch (e) {
+      return '';
+    }
   },
 
   /**

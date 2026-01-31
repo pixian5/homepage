@@ -31,7 +31,7 @@
   /* Grid */
   --grid-columns: 8;
   --grid-rows: 3;
-  --button-size: 80px;
+  --button-size: 160px;
   --button-gap: 16px;
   
   /* Transitions */
@@ -1125,7 +1125,7 @@ input {
 @media (max-width: 768px) {
   :root {
     --grid-columns: 4;
-    --button-size: 70px;
+    --button-size: 140px;
     --button-gap: 12px;
   }
   
@@ -1148,7 +1148,7 @@ input {
 @media (max-width: 480px) {
   :root {
     --grid-columns: 3;
-    --button-size: 60px;
+    --button-size: 120px;
     --button-gap: 8px;
   }
   

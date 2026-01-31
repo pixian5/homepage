@@ -213,6 +213,10 @@ const BingWallpaper = {
     if (!element) return { success: false, error: 'Element not found' };
     
     const bgType = settings?.background?.type || 'bing';
+    const opacity = settings?.background?.opacity || 0;
+    
+    // Apply opacity overlay
+    document.documentElement.style.setProperty('--bg-overlay-opacity', opacity);
     
     switch (bgType) {
       case 'bing':
@@ -225,40 +229,50 @@ const BingWallpaper = {
           if (settings?.background?.fadeEffect) {
             element.style.opacity = '0';
             element.style.backgroundImage = `url(${imageUrl})`;
+            element.style.background = '';
             setTimeout(() => {
               element.style.opacity = '1';
             }, 50);
           } else {
             element.style.backgroundImage = `url(${imageUrl})`;
+            element.style.background = '';
           }
         } else {
           // Fallback to solid color
           element.style.backgroundImage = 'none';
+          element.style.background = '';
           element.style.backgroundColor = '#2c3e50';
         }
         return result;
 
       case 'solid':
         element.style.backgroundImage = 'none';
+        element.style.background = '';
         element.style.backgroundColor = settings.background.color || '#2c3e50';
         return { success: true, source: 'solid' };
 
       case 'gradient':
+        const color1 = settings.background.gradientColor1 || '#2c3e50';
+        const color2 = settings.background.gradientColor2 || '#3498db';
         element.style.backgroundImage = 'none';
-        element.style.background = settings.background.gradient || 'linear-gradient(135deg, #2c3e50, #3498db)';
+        element.style.backgroundColor = '';
+        element.style.background = `linear-gradient(135deg, ${color1}, ${color2})`;
         return { success: true, source: 'gradient' };
 
       case 'custom':
         if (settings.background.customUrl) {
+          element.style.background = '';
           element.style.backgroundImage = `url(${settings.background.customUrl})`;
           return { success: true, source: 'custom' };
         }
         element.style.backgroundImage = 'none';
+        element.style.background = '';
         element.style.backgroundColor = '#2c3e50';
         return { success: false, error: '未设置自定义背景' };
 
       default:
         element.style.backgroundImage = 'none';
+        element.style.background = '';
         element.style.backgroundColor = '#2c3e50';
         return { success: true, source: 'default' };
     }

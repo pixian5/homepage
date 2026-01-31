@@ -105,6 +105,7 @@ input {
   transition: opacity var(--transition-slow);
 }
 
+/* Disabled overlay to troubleshoot wallpaper issues
 .background::after {
   content: '';
   position: absolute;
@@ -119,6 +120,7 @@ input {
 [data-theme="dark"] .background::after {
   background: rgba(0, 0, 0, var(--bg-overlay-opacity, 0));
 }
+*/
 
 .background.loading {
   opacity: 0.5;
@@ -376,6 +378,7 @@ input {
   align-items: center;
   justify-content: center;
   overflow: auto;
+  position: relative;
 }
 
 /* ===== Empty State ===== */
@@ -389,6 +392,11 @@ input {
   width: 100%;
   height: 100%;
   padding: var(--spacing-xl);
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
 }
 
 .empty-icon {

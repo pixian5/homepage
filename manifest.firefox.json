@@ -6,7 +6,9 @@
   "default_locale": "en",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "https://www.bing.com/*",
+    "https://api.allorigins.win/*"
   ],
   "chrome_url_overrides": {
     "newtab": "newtab.html"

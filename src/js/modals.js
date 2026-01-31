@@ -9,6 +9,9 @@ const Modals = {
   
   // Current modal callback
   currentCallbacks: {},
+  
+  // Click handler reference for cleanup
+  _clickHandler: null,
 
   /**
    * Initialize modals
@@ -78,15 +81,21 @@ const Modals = {
       this.currentCallbacks[`button-${i}`] = btn.action;
     });
 
+    // Remove old click handler to prevent duplicates
+    if (this._clickHandler) {
+      this.content.removeEventListener('click', this._clickHandler);
+    }
+
     // Handle button clicks
-    this.content.addEventListener('click', (e) => {
+    this._clickHandler = (e) => {
       const action = e.target.closest('[data-action]')?.dataset.action;
       if (action === 'close') {
         this.hide();
       } else if (action && this.currentCallbacks[action]) {
         this.currentCallbacks[action]();
       }
-    });
+    };
+    this.content.addEventListener('click', this._clickHandler);
 
     this.overlay.classList.remove('hidden');
     

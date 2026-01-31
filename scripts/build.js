@@ -51,7 +51,7 @@ function build() {
   copyFile(manifestSrc, manifestDest);
 
   // Copy HTML files
-  const htmlFiles = ['newtab.html'];
+  const htmlFiles = ['newtab.html', 'popup.html'];
   htmlFiles.forEach(file => {
     const src = path.join(srcDir, file);
     if (fs.existsSync(src)) {

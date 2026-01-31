@@ -21,7 +21,8 @@
       "16": "icons/icon16.png",
       "48": "icons/icon48.png"
     },
-    "default_title": "Homepage"
+    "default_title": "添加到主页",
+    "default_popup": "popup.html"
   },
   "browser_specific_settings": {
     "gecko": {

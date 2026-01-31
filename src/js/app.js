@@ -117,6 +117,11 @@ const App = {
       Modals.showButtonForm();
     });
 
+    // Empty state add button
+    document.getElementById('empty-add-btn')?.addEventListener('click', () => {
+      Modals.showButtonForm();
+    });
+
     // Batch delete
     document.getElementById('btn-batch-delete')?.addEventListener('click', () => {
       if (ButtonManager.selectedButtons.size > 0) {

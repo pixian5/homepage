@@ -9,7 +9,8 @@ const BingWallpaper = {
   // Fallback CORS proxy (can be used if direct access fails)
   CORS_PROXY: 'https://api.allorigins.win/raw?url=',
   BING_BASE: 'https://www.bing.com',
-  USE_CORS_PROXY: false, // Will be set to true if direct access fails
+  // Try direct access first, then CORS proxy if needed
+  USE_CORS_PROXY: false,
   
   // Cache key
   CACHE_KEY: 'homepage_bing_wallpaper',

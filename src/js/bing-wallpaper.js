@@ -15,6 +15,9 @@ const BingWallpaper = {
   
   // Cache duration (24 hours)
   CACHE_DURATION: 24 * 60 * 60 * 1000,
+  
+  // Max URL length for logging
+  MAX_LOG_URL_LENGTH: 100,
 
   /**
    * Get cached wallpaper info
@@ -183,7 +186,7 @@ const BingWallpaper = {
       };
       await this.cache(cached);
       
-      console.log(`Wallpaper cached successfully${cached.hdUrl ? ' with URL' : ''}${base64 ? ' with base64' : ''}`);
+      console.log(`Wallpaper cached successfully${cached.hdUrl ? ' with URL' : ''}${cached.base64 ? ' with base64' : ''}`);
       
       return {
         success: true,
@@ -240,8 +243,8 @@ const BingWallpaper = {
         
         if (result.data) {
           const imageUrl = result.data.base64 || result.data.hdUrl || result.data.url;
-          const displayUrl = imageUrl && imageUrl.length > 100 
-            ? imageUrl.substring(0, 100) + '...' 
+          const displayUrl = imageUrl && imageUrl.length > this.MAX_LOG_URL_LENGTH
+            ? imageUrl.substring(0, this.MAX_LOG_URL_LENGTH) + '...' 
             : imageUrl || 'none';
           console.log('Setting background image:', displayUrl);
           

@@ -296,24 +296,24 @@ const Settings = {
     });
 
     // Theme
-    document.getElementById('setting-theme')?.addEventListener('change', (e) => {
-      this.update({ theme: e.target.value });
+    document.getElementById('setting-theme')?.addEventListener('change', async (e) => {
+      await this.update({ theme: e.target.value });
       App.applyTheme();
     });
 
     // Background type
-    document.getElementById('setting-bg-type')?.addEventListener('change', (e) => {
+    document.getElementById('setting-bg-type')?.addEventListener('change', async (e) => {
       const type = e.target.value;
       document.getElementById('bg-color-row').style.display = type === 'solid' ? '' : 'none';
       document.getElementById('bg-custom-row').style.display = type === 'custom' ? '' : 'none';
-      this.update({ background: { ...App.settings.background, type } });
-      App.applyBackground();
+      await this.update({ background: { ...App.settings.background, type } });
+      await App.applyBackground();
     });
 
     // Background color
-    document.getElementById('setting-bg-color')?.addEventListener('change', (e) => {
-      this.update({ background: { ...App.settings.background, color: e.target.value } });
-      App.applyBackground();
+    document.getElementById('setting-bg-color')?.addEventListener('change', async (e) => {
+      await this.update({ background: { ...App.settings.background, color: e.target.value } });
+      await App.applyBackground();
     });
 
     // Custom background upload
@@ -343,36 +343,36 @@ const Settings = {
     });
 
     // Grid columns
-    document.getElementById('setting-grid-cols')?.addEventListener('change', (e) => {
-      this.update({ grid: { ...App.settings.grid, columns: parseInt(e.target.value) } });
+    document.getElementById('setting-grid-cols')?.addEventListener('change', async (e) => {
+      await this.update({ grid: { ...App.settings.grid, columns: parseInt(e.target.value) } });
       App.applyGridSettings();
     });
 
     // Grid rows
-    document.getElementById('setting-grid-rows')?.addEventListener('change', (e) => {
-      this.update({ grid: { ...App.settings.grid, rows: parseInt(e.target.value) } });
+    document.getElementById('setting-grid-rows')?.addEventListener('change', async (e) => {
+      await this.update({ grid: { ...App.settings.grid, rows: parseInt(e.target.value) } });
       App.applyGridSettings();
     });
 
     // Grid density
-    document.getElementById('setting-grid-density')?.addEventListener('change', (e) => {
-      this.update({ grid: { ...App.settings.grid, density: e.target.value } });
+    document.getElementById('setting-grid-density')?.addEventListener('change', async (e) => {
+      await this.update({ grid: { ...App.settings.grid, density: e.target.value } });
       App.applyGridSettings();
     });
 
     // Open mode
-    document.getElementById('setting-open-mode')?.addEventListener('change', (e) => {
-      this.update({ openMode: e.target.value });
+    document.getElementById('setting-open-mode')?.addEventListener('change', async (e) => {
+      await this.update({ openMode: e.target.value });
     });
 
     // Search engine type
-    document.getElementById('setting-search-engine-type')?.addEventListener('change', (e) => {
-      this.update({ search: { ...App.settings.search, searchEngine: e.target.value } });
+    document.getElementById('setting-search-engine-type')?.addEventListener('change', async (e) => {
+      await this.update({ search: { ...App.settings.search, searchEngine: e.target.value } });
     });
 
     // Max backups
-    document.getElementById('setting-max-backups')?.addEventListener('change', (e) => {
-      this.update({ backup: { ...App.settings.backup, maxBackups: parseInt(e.target.value) } });
+    document.getElementById('setting-max-backups')?.addEventListener('change', async (e) => {
+      await this.update({ backup: { ...App.settings.backup, maxBackups: parseInt(e.target.value) } });
     });
 
     // Buttons
@@ -422,33 +422,33 @@ const Settings = {
     
     switch (id) {
       case 'setting-fade-effect':
-        this.update({ background: { ...settings.background, fadeEffect: value } });
+        await this.update({ background: { ...settings.background, fadeEffect: value } });
         break;
       case 'setting-grid-fixed':
-        this.update({ grid: { ...settings.grid, fixed: value } });
+        await this.update({ grid: { ...settings.grid, fixed: value } });
         App.applyGridSettings();
         break;
       case 'setting-search-enabled':
-        this.update({ search: { ...settings.search, enabled: value } });
+        await this.update({ search: { ...settings.search, enabled: value } });
         document.querySelector('.search-wrapper').style.display = value ? '' : 'none';
         break;
       case 'setting-search-engine':
-        this.update({ search: { ...settings.search, engineIntegration: value } });
+        await this.update({ search: { ...settings.search, engineIntegration: value } });
         break;
       case 'setting-icon-auto':
-        this.update({ icon: { ...settings.icon, autoFetch: value } });
+        await this.update({ icon: { ...settings.icon, autoFetch: value } });
         break;
       case 'setting-icon-retry':
-        this.update({ icon: { ...settings.icon, retryAt18: value } });
+        await this.update({ icon: { ...settings.icon, retryAt18: value } });
         break;
       case 'setting-sync-enabled':
         await this.handleSyncToggle(value);
         break;
       case 'setting-auto-backup':
-        this.update({ backup: { ...settings.backup, autoBackup: value } });
+        await this.update({ backup: { ...settings.backup, autoBackup: value } });
         break;
       case 'setting-keyboard-nav':
-        this.update({ accessibility: { ...settings.accessibility, keyboardNav: value } });
+        await this.update({ accessibility: { ...settings.accessibility, keyboardNav: value } });
         break;
     }
   },

@@ -4,9 +4,12 @@
  */
 
 const BingWallpaper = {
-  // Bing wallpaper API (via CORS proxy or direct)
+  // Bing wallpaper API - use CORS proxy to avoid CORS issues
   BING_API: 'https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=zh-CN',
+  // Fallback CORS proxy (can be used if direct access fails)
+  CORS_PROXY: 'https://api.allorigins.win/raw?url=',
   BING_BASE: 'https://www.bing.com',
+  USE_CORS_PROXY: false, // Will be set to true if direct access fails
   
   // Cache key
   CACHE_KEY: 'homepage_bing_wallpaper',
@@ -61,7 +64,15 @@ const BingWallpaper = {
    */
   async fetchFromApi() {
     try {
-      const response = await fetch(this.BING_API);
+      // Try direct access first
+      let apiUrl = this.BING_API;
+      
+      // If we've determined we need CORS proxy, use it
+      if (this.USE_CORS_PROXY) {
+        apiUrl = this.CORS_PROXY + encodeURIComponent(this.BING_API);
+      }
+      
+      const response = await fetch(apiUrl);
       if (!response.ok) throw new Error('API request failed');
       
       const data = await response.json();
@@ -81,6 +92,14 @@ const BingWallpaper = {
       return wallpaper;
     } catch (e) {
       console.error('Failed to fetch Bing wallpaper:', e);
+      
+      // If direct access failed and we haven't tried CORS proxy yet, try it
+      if (!this.USE_CORS_PROXY && e.message.includes('fetch')) {
+        console.log('Trying CORS proxy...');
+        this.USE_CORS_PROXY = true;
+        return this.fetchFromApi(); // Retry with CORS proxy
+      }
+      
       return null;
     }
   },

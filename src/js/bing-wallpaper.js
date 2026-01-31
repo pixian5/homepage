@@ -105,7 +105,7 @@ const BingWallpaper = {
       // If using proxy failed, try direct access as fallback
       if (useProxy && retryCount === 0) {
         console.log('Proxy failed, trying direct access...');
-        return await this.fetchFromApi(false, retryCount + 1);
+        return this.fetchFromApi(false, retryCount + 1);
       }
       
       return null;

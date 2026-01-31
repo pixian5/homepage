@@ -3,6 +3,7 @@
   "name": "Homepage",
   "version": "1.0.0",
   "description": "A customizable new tab page with button grid, groups, and folders",
+  "default_locale": "en",
   "permissions": [
     "storage",
     "activeTab"

@@ -592,8 +592,8 @@ const ButtonManager = {
       await Storage.cacheIcon(button.url, base64);
       await this.edit(id, { icon: base64 });
     } catch (e) {
-      console.error('Failed to fetch icon:', e);
-      // Switch to letter avatar
+      console.warn('Icon fetch failed for:', button.url, '- using letter avatar');
+      // Switch to letter avatar as fallback
       await this.edit(id, { iconType: 'letter', icon: null });
     }
   },

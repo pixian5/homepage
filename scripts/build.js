@@ -5,6 +5,13 @@ const args = process.argv.slice(2);
 const target = args[0] || 'chrome';
 const isWatch = args.includes('--watch');
 
+// Validate target
+const validTargets = ['chrome', 'firefox'];
+if (!validTargets.includes(target)) {
+  console.error(`Error: Invalid target "${target}". Valid targets are: ${validTargets.join(', ')}`);
+  process.exit(1);
+}
+
 const srcDir = path.join(__dirname, '..', 'src');
 const distDir = path.join(__dirname, '..', 'dist', target);
 

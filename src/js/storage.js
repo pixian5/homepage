@@ -188,7 +188,12 @@ const Storage = {
       await this.createBackup();
     }
     const storage = await this.getCurrentStorage();
-    await storage.set({ [this.KEYS.BUTTONS]: buttons });
+    try {
+      await storage.set({ [this.KEYS.BUTTONS]: buttons });
+    } catch (e) {
+      console.error('Failed to save buttons:', e);
+      throw new Error('保存失败：可能超出存储配额');
+    }
   },
 
   /**

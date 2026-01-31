@@ -53,7 +53,8 @@ const Keyboard = {
         break;
       case 'Delete':
       case 'Backspace':
-        if (settings?.accessibility?.keyboardNav) {
+        // Require Shift key for deletion to prevent accidental data loss
+        if (settings?.accessibility?.keyboardNav && e.shiftKey) {
           this.deleteFocused();
         }
         break;

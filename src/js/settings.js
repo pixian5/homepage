@@ -4,6 +4,24 @@
 
 const Settings = {
   /**
+   * Get version from manifest
+   * @returns {string} Version string
+   */
+  getVersion() {
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest) {
+        return chrome.runtime.getManifest().version;
+      }
+      if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.getManifest) {
+        return browser.runtime.getManifest().version;
+      }
+    } catch (e) {
+      // Fallback
+    }
+    return '1.0.0';
+  },
+
+  /**
    * Show settings modal
    */
   show() {
@@ -247,7 +265,7 @@ const Settings = {
         <div class="settings-section">
           <h3 class="settings-section-title">关于</h3>
           <p style="color: var(--text-muted); font-size: 12px;">
-            Homepage Extension v1.0.0<br>
+            Homepage Extension v${this.getVersion()}<br>
             本扩展不收集任何用户数据。<br>
             数据仅存储在本地或用户开启同步后进入浏览器同步存储。
           </p>

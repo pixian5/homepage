@@ -603,17 +603,38 @@ const ButtonManager = {
       }
     }
 
-    // Fetch favicon
-    const faviconUrl = Utils.getFaviconUrl(button.url);
-    try {
-      const base64 = await Utils.imageToBase64(faviconUrl);
-      await Storage.cacheIcon(button.url, base64);
-      await this.edit(id, { icon: base64 });
-    } catch (e) {
-      console.warn('Icon fetch failed for:', button.url, '- using letter avatar');
-      // Switch to letter avatar as fallback
-      await this.edit(id, { iconType: 'letter', icon: null });
+    // Try multiple favicon strategies
+    const strategies = [
+      // Strategy 1: Site's favicon.ico
+      () => Utils.getFaviconUrl(button.url),
+      // Strategy 2: Google favicon service
+      () => {
+        const domain = Utils.getDomain(button.url);
+        return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+      },
+      // Strategy 3: DuckDuckGo favicon service
+      () => {
+        const domain = Utils.getDomain(button.url);
+        return `https://icons.duckduckgo.com/ip3/${domain}.ico`;
+      }
+    ];
+
+    for (const getUrl of strategies) {
+      try {
+        const faviconUrl = getUrl();
+        const base64 = await Utils.imageToBase64(faviconUrl);
+        await Storage.cacheIcon(button.url, base64);
+        await this.edit(id, { icon: base64 });
+        return; // Success, exit
+      } catch (e) {
+        console.warn('Icon fetch failed for strategy:', e);
+        // Continue to next strategy
+      }
     }
+
+    // All strategies failed, use letter avatar
+    console.warn('All icon fetch strategies failed for:', button.url, '- using letter avatar');
+    await this.edit(id, { iconType: 'letter', icon: null });
   },
 
   /**

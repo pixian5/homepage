@@ -70,9 +70,12 @@
    * Get favicon URL
    */
   function getFaviconUrl(url) {
-    const domain = getDomain(url);
-    if (!domain) return '';
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+    try {
+      const parsed = new URL(url);
+      return `${parsed.protocol}//${parsed.hostname}/favicon.ico`;
+    } catch (e) {
+      return '';
+    }
   }
 
   /**
@@ -248,6 +251,18 @@
 
       buttons.push(newButton);
       await saveButtons(buttons);
+
+      // Notify all tabs to refresh
+      if (chrome.runtime && chrome.runtime.sendMessage) {
+        try {
+          chrome.runtime.sendMessage({ 
+            type: 'BUTTON_ADDED', 
+            button: newButton 
+          });
+        } catch (e) {
+          console.log('Could not send message to tabs:', e);
+        }
+      }
 
       showMessage('已添加到主页！', 'success');
       btnAddEl.textContent = '已添加';

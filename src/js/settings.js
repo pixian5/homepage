@@ -224,9 +224,17 @@ const Settings = {
           
           <div class="settings-row">
             <div>
-              <span class="settings-label">每日 18:00 重试失败图标</span>
+              <span class="settings-label">定时重试失败图标</span>
+              <p class="settings-description">每天在指定时间自动重试获取失败的图标</p>
             </div>
-            <div class="toggle-switch ${settings.icon?.retryAt18 ? 'active' : ''}" id="setting-icon-retry"></div>
+            <div class="toggle-switch ${settings.icon?.retryEnabled !== false ? 'active' : ''}" id="setting-icon-retry"></div>
+          </div>
+          
+          <div class="settings-row" id="retry-time-row" style="${settings.icon?.retryEnabled !== false ? '' : 'display:none'}">
+            <div>
+              <span class="settings-label">重试时间</span>
+            </div>
+            <input type="time" id="setting-retry-time" class="form-select" value="${settings.icon?.retryTime || '18:00'}" style="width: 120px;">
           </div>
           
           <div class="settings-row">
@@ -443,6 +451,17 @@ const Settings = {
       await this.update({ backup: { ...App.settings.backup, maxBackups: parseInt(e.target.value) } });
     });
 
+    // Icon retry time
+    document.getElementById('setting-retry-time')?.addEventListener('change', async (e) => {
+      await this.update({ icon: { ...App.settings.icon, retryTime: e.target.value } });
+    });
+
+    // Icon retry toggle
+    document.getElementById('setting-icon-retry')?.addEventListener('click', () => {
+      const enabled = document.getElementById('setting-icon-retry').classList.contains('active');
+      document.getElementById('retry-time-row').style.display = enabled ? '' : 'none';
+    });
+
     // Buttons
     document.getElementById('btn-refresh-icons')?.addEventListener('click', () => {
       ButtonManager.refreshAllIcons();
@@ -514,7 +533,7 @@ const Settings = {
         await this.update({ icon: { ...settings.icon, autoFetch: value } });
         break;
       case 'setting-icon-retry':
-        await this.update({ icon: { ...settings.icon, retryAt18: value } });
+        await this.update({ icon: { ...settings.icon, retryEnabled: value } });
         break;
       case 'setting-sync-enabled':
         await this.handleSyncToggle(value);

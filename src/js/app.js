@@ -40,6 +40,18 @@ const App = {
         }
       });
 
+      // Listen for messages from popup
+      if (chrome.runtime && chrome.runtime.onMessage) {
+        chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+          if (message.type === 'BUTTON_ADDED') {
+            // Reload buttons to show the new one
+            ButtonManager.load().then(() => {
+              console.log('Button added from popup, reloaded');
+            });
+          }
+        });
+      }
+
       console.log('Homepage Extension initialized');
     } catch (e) {
       console.error('Failed to initialize:', e);

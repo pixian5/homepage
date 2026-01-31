@@ -44,7 +44,8 @@ const Storage = {
     },
     icon: {
       autoFetch: true,
-      retryAt18: true,
+      retryEnabled: true,
+      retryTime: '18:00', // Default retry time
       fallbackType: 'letter' // 'letter', 'default'
     },
     sync: {

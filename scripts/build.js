@@ -1,97 +1,70 @@
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
 const args = process.argv.slice(2);
-const target = args[0] || 'chrome';
-const isWatch = args.includes('--watch');
+const target = args[0];
+const watch = args.includes("--watch");
 
-// Validate target
-const validTargets = ['chrome', 'firefox'];
-if (!validTargets.includes(target)) {
-  console.error(`Error: Invalid target "${target}". Valid targets are: ${validTargets.join(', ')}`);
+if (!target || !["chrome", "firefox"].includes(target)) {
+  console.error("Usage: node scripts/build.js <chrome|firefox> [--watch]");
   process.exit(1);
 }
 
-const srcDir = path.join(__dirname, '..', 'src');
-const distDir = path.join(__dirname, '..', 'dist', target);
+const rootDir = path.resolve(__dirname, "..");
+const srcDir = path.join(rootDir, "src");
+const distDir = path.join(rootDir, "dist", target);
 
-// Ensure dist directory exists
-if (!fs.existsSync(distDir)) {
-  fs.mkdirSync(distDir, { recursive: true });
+const manifestSrc =
+  target === "chrome"
+    ? path.join(rootDir, "manifest.chrome.json")
+    : path.join(rootDir, "manifest.firefox.json");
+
+function ensureDir(dirPath) {
+  fs.mkdirSync(dirPath, { recursive: true });
 }
 
-// Copy files to dist
-function copyFile(src, dest) {
-  fs.copyFileSync(src, dest);
-  console.log(`Copied: ${path.basename(src)}`);
+function cleanDir(dirPath) {
+  fs.rmSync(dirPath, { recursive: true, force: true });
+  ensureDir(dirPath);
 }
 
 function copyDir(src, dest) {
-  if (!fs.existsSync(dest)) {
-    fs.mkdirSync(dest, { recursive: true });
-  }
-  const entries = fs.readdirSync(src, { withFileTypes: true });
-  for (const entry of entries) {
-    const srcPath = path.join(src, entry.name);
-    const destPath = path.join(dest, entry.name);
-    if (entry.isDirectory()) {
-      copyDir(srcPath, destPath);
-    } else {
-      copyFile(srcPath, destPath);
-    }
-  }
+  fs.cpSync(src, dest, { recursive: true });
 }
 
-function build() {
+function copyFile(src, dest) {
+  ensureDir(path.dirname(dest));
+  fs.copyFileSync(src, dest);
+}
+
+function buildOnce() {
   console.log(`Building for ${target}...`);
+  cleanDir(distDir);
 
-  // Copy manifest
-  const manifestSrc = path.join(__dirname, '..', `manifest.${target}.json`);
-  const manifestDest = path.join(distDir, 'manifest.json');
-  copyFile(manifestSrc, manifestDest);
+  copyFile(manifestSrc, path.join(distDir, "manifest.json"));
+  copyFile(path.join(srcDir, "newtab.html"), path.join(distDir, "newtab.html"));
+  copyFile(path.join(srcDir, "popup.html"), path.join(distDir, "popup.html"));
 
-  // Copy HTML files
-  const htmlFiles = ['newtab.html', 'popup.html'];
-  htmlFiles.forEach(file => {
-    const src = path.join(srcDir, file);
-    if (fs.existsSync(src)) {
-      copyFile(src, path.join(distDir, file));
-    }
-  });
-
-  // Copy JS directory
-  const jsSrc = path.join(srcDir, 'js');
-  if (fs.existsSync(jsSrc)) {
-    copyDir(jsSrc, path.join(distDir, 'js'));
-  }
-
-  // Copy CSS directory
-  const cssSrc = path.join(srcDir, 'css');
-  if (fs.existsSync(cssSrc)) {
-    copyDir(cssSrc, path.join(distDir, 'css'));
-  }
-
-  // Copy icons directory
-  const iconsSrc = path.join(srcDir, 'icons');
-  if (fs.existsSync(iconsSrc)) {
-    copyDir(iconsSrc, path.join(distDir, 'icons'));
-  }
-
-  // Copy locales directory
-  const localesSrc = path.join(srcDir, 'locales');
-  if (fs.existsSync(localesSrc)) {
-    copyDir(localesSrc, path.join(distDir, '_locales'));
-  }
+  copyDir(path.join(srcDir, "js"), path.join(distDir, "js"));
+  copyDir(path.join(srcDir, "css"), path.join(distDir, "css"));
+  copyDir(path.join(srcDir, "icons"), path.join(distDir, "icons"));
+  copyDir(path.join(srcDir, "locales"), path.join(distDir, "_locales"));
 
   console.log(`Build complete: dist/${target}/`);
 }
 
-build();
+buildOnce();
 
-if (isWatch) {
-  console.log('Watching for changes...');
-  fs.watch(srcDir, { recursive: true }, (eventType, filename) => {
-    console.log(`\nFile changed: ${filename}`);
-    build();
+if (watch) {
+  console.log("Watching for changes...");
+  const watchTargets = [srcDir, manifestSrc];
+  watchTargets.forEach((p) => {
+    fs.watch(p, { recursive: true }, () => {
+      try {
+        buildOnce();
+      } catch (err) {
+        console.error(err);
+      }
+    });
   });
 }

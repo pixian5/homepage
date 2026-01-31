@@ -166,6 +166,19 @@ const Settings = {
           </div>
         </div>
 
+        <!-- Group Settings -->
+        <div class="settings-section">
+          <h3 class="settings-section-title">分组设置</h3>
+          
+          <div class="settings-row">
+            <div>
+              <span class="settings-label">显示最近浏览</span>
+              <p class="settings-description">在左侧分组最上方显示最近访问的按钮</p>
+            </div>
+            <div class="toggle-switch ${settings.showRecentView !== false ? 'active' : ''}" id="setting-show-recent"></div>
+          </div>
+        </div>
+
         <!-- Search Settings -->
         <div class="settings-section">
           <h3 class="settings-section-title">搜索设置</h3>
@@ -482,6 +495,13 @@ const Settings = {
       case 'setting-grid-fixed':
         await this.update({ grid: { ...settings.grid, fixed: value } });
         App.applyGridSettings();
+        break;
+      case 'setting-show-recent':
+        await this.update({ showRecentView: value });
+        // Reload groups to show/hide recent view
+        await Groups.load();
+        Groups.render();
+        Toast.success(value ? '已开启最近浏览' : '已关闭最近浏览');
         break;
       case 'setting-search-enabled':
         await this.update({ search: { ...settings.search, enabled: value } });

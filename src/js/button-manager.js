@@ -60,6 +60,15 @@ const ButtonManager = {
    * @returns {Array} Filtered buttons
    */
   getVisibleButtons() {
+    // Handle "最近浏览" special group
+    if (this.currentGroupId === 'recent') {
+      // Get all buttons sorted by last accessed time (descending)
+      const allButtons = [...this.buttons].filter(b => b.lastAccessedAt);
+      allButtons.sort((a, b) => (b.lastAccessedAt || 0) - (a.lastAccessedAt || 0));
+      // Return top 20 most recently accessed buttons
+      return allButtons.slice(0, 20);
+    }
+
     let filtered = this.buttons.filter(b => b.groupId === this.currentGroupId);
     
     if (this.currentFolderId) {
@@ -313,6 +322,9 @@ const ButtonManager = {
       Toast.error('URL无效');
       return;
     }
+
+    // Update last accessed time
+    Storage.updateButtonLastAccessed(button.id);
 
     try {
       switch (openMode) {

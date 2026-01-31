@@ -166,6 +166,14 @@ const Settings = {
             </div>
             <div class="toggle-switch ${settings.showRecentView !== false ? 'active' : ''}" id="setting-show-recent"></div>
           </div>
+
+          <div class="settings-row">
+            <div>
+              <span class="settings-label">记住上次分组</span>
+              <p class="settings-description">重新打开时回到上次点击的分组</p>
+            </div>
+            <div class="toggle-switch ${settings.rememberLastGroup !== false ? 'active' : ''}" id="setting-remember-group"></div>
+          </div>
         </div>
 
         <!-- Search Settings -->
@@ -489,6 +497,9 @@ const Settings = {
         await Groups.load();
         Groups.render();
         Toast.success(value ? '已开启最近浏览' : '已关闭最近浏览');
+        break;
+      case 'setting-remember-group':
+        await this.update({ rememberLastGroup: value });
         break;
       case 'setting-search-enabled':
         await this.update({ search: { ...settings.search, enabled: value } });

@@ -35,13 +35,15 @@ const Storage = {
       rows: 3,
       density: 'standard' // 'compact', 'standard', 'loose'
     },
-    openMode: 'new-tab', // 'current', 'new-tab', 'background'
-    showRecentView: true, // Show recent view in groups sidebar
-    search: {
-      enabled: true,
-      engineIntegration: true,
-      searchEngine: 'google' // 'google', 'bing', 'baidu', 'duckduckgo'
-    },
+     openMode: 'new-tab', // 'current', 'new-tab', 'background'
+     showRecentView: true, // Show recent view in groups sidebar
+     rememberLastGroup: true, // Remember last clicked group tab
+     lastActiveGroupId: 'default', // Last active group id
+     search: {
+       enabled: true,
+       engineIntegration: true,
+       searchEngine: 'google' // 'google', 'bing', 'baidu', 'duckduckgo'
+     },
     icon: {
       autoFetch: true,
       retryEnabled: true,

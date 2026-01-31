@@ -43,6 +43,14 @@ const Groups = {
       // Add "最近浏览" as a virtual group at the top
       this.groups.unshift({ id: 'recent', name: '最近浏览', order: -1, virtual: true });
     }
+
+    // Restore last active group if enabled and exists
+    if (settings?.rememberLastGroup !== false && settings?.lastActiveGroupId) {
+      const exists = this.groups.some(g => g.id === settings.lastActiveGroupId);
+      if (exists) {
+        this.activeGroupId = settings.lastActiveGroupId;
+      }
+    }
   },
 
   /**
@@ -61,7 +69,7 @@ const Groups = {
       if (!tab) return;
       
       const id = tab.dataset.id;
-      this.switchTo(id);
+      this.switchTo(id, true);
     });
 
     // Tab context menu
@@ -132,8 +140,11 @@ const Groups = {
    * Switch to a group
    * @param {string} groupId - Group ID
    */
-  switchTo(groupId) {
+  switchTo(groupId, fromUser = false) {
     this.activeGroupId = groupId;
+    if (fromUser && App.settings?.rememberLastGroup !== false) {
+      Storage.saveSettings({ lastActiveGroupId: groupId });
+    }
     ButtonManager.switchGroup(groupId);
     this.render();
   },
@@ -338,6 +349,3 @@ const Groups = {
     this.render();
   }
 };
-
-// Initialize on load
-document.addEventListener('DOMContentLoaded', () => Groups.init());

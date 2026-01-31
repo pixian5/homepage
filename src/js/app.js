@@ -23,7 +23,8 @@ const App = {
       // Apply background
       await this.applyBackground();
       
-      // Initialize modules
+      // Initialize modules (order matters: groups before buttons to restore last group)
+      await Groups.init();
       await ButtonManager.init();
       DragDrop.init();
       

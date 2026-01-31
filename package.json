@@ -1,0 +1,21 @@
+{
+  "name": "homepage-extension",
+  "version": "1.0.0",
+  "description": "A browser extension that replaces the new tab page with a customizable button grid",
+  "scripts": {
+    "build": "npm run build:chrome && npm run build:firefox",
+    "build:chrome": "node scripts/build.js chrome",
+    "build:firefox": "node scripts/build.js firefox",
+    "watch": "node scripts/build.js chrome --watch",
+    "clean": "rm -rf dist/*"
+  },
+  "keywords": [
+    "browser-extension",
+    "new-tab",
+    "chrome",
+    "firefox"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {}
+}

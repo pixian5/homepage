@@ -1,0 +1,10 @@
+{
+  "appName": {
+    "message": "Homepage",
+    "description": "Extension name"
+  },
+  "appDescription": {
+    "message": "自定义新标签页，支持网格按钮、分组、文件夹等功能",
+    "description": "Extension description"
+  }
+}

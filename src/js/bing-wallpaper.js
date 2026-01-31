@@ -4,13 +4,11 @@
  */
 
 const BingWallpaper = {
-  // Bing wallpaper API - use CORS proxy to avoid CORS issues
+  // Bing wallpaper API
   BING_API: 'https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=zh-CN',
   // CORS proxy for reliable access
   CORS_PROXY: 'https://api.allorigins.win/raw?url=',
   BING_BASE: 'https://www.bing.com',
-  // Use CORS proxy by default to avoid CORS issues in extensions
-  USE_CORS_PROXY: true,
   
   // Cache key
   CACHE_KEY: 'homepage_bing_wallpaper',
@@ -61,16 +59,24 @@ const BingWallpaper = {
 
   /**
    * Fetch wallpaper info from Bing API
+   * @param {boolean} useProxy - Whether to use CORS proxy
+   * @param {number} retryCount - Number of retries attempted
    * @returns {Promise<object|null>} Wallpaper info
    */
-  async fetchFromApi() {
+  async fetchFromApi(useProxy = true, retryCount = 0) {
+    // Prevent infinite recursion
+    if (retryCount > 1) {
+      console.error('Max retry attempts reached for Bing wallpaper');
+      return null;
+    }
+
     try {
       // Use CORS proxy for reliable access
-      let apiUrl = this.USE_CORS_PROXY 
+      const apiUrl = useProxy 
         ? this.CORS_PROXY + encodeURIComponent(this.BING_API)
         : this.BING_API;
       
-      console.log('Fetching Bing wallpaper from:', this.USE_CORS_PROXY ? 'CORS proxy' : 'direct');
+      console.log('Fetching Bing wallpaper from:', useProxy ? 'CORS proxy' : 'direct');
       
       const response = await fetch(apiUrl);
       if (!response.ok) {
@@ -97,16 +103,9 @@ const BingWallpaper = {
       console.error('Failed to fetch Bing wallpaper:', e);
       
       // If using proxy failed, try direct access as fallback
-      if (this.USE_CORS_PROXY) {
+      if (useProxy && retryCount === 0) {
         console.log('Proxy failed, trying direct access...');
-        this.USE_CORS_PROXY = false;
-        try {
-          return await this.fetchFromApi();
-        } catch (directError) {
-          console.error('Direct access also failed:', directError);
-          // Restore proxy setting for next attempt
-          this.USE_CORS_PROXY = true;
-        }
+        return await this.fetchFromApi(false, retryCount + 1);
       }
       
       return null;

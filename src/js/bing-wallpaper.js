@@ -183,7 +183,7 @@ const BingWallpaper = {
       };
       await this.cache(cached);
       
-      console.log('Wallpaper cached successfully:', cached.hdUrl ? 'with URL' : '', base64 ? 'with base64' : '');
+      console.log(`Wallpaper cached successfully${cached.hdUrl ? ' with URL' : ''}${base64 ? ' with base64' : ''}`);
       
       return {
         success: true,
@@ -240,7 +240,10 @@ const BingWallpaper = {
         
         if (result.data) {
           const imageUrl = result.data.base64 || result.data.hdUrl || result.data.url;
-          console.log('Setting background image:', imageUrl ? imageUrl.substring(0, 100) + '...' : 'none');
+          const displayUrl = imageUrl && imageUrl.length > 100 
+            ? imageUrl.substring(0, 100) + '...' 
+            : imageUrl || 'none';
+          console.log('Setting background image:', displayUrl);
           
           if (settings?.background?.fadeEffect) {
             element.style.opacity = '0';

@@ -456,12 +456,6 @@ const Settings = {
       await this.update({ icon: { ...App.settings.icon, retryTime: e.target.value } });
     });
 
-    // Icon retry toggle
-    document.getElementById('setting-icon-retry')?.addEventListener('click', () => {
-      const enabled = document.getElementById('setting-icon-retry').classList.contains('active');
-      document.getElementById('retry-time-row').style.display = enabled ? '' : 'none';
-    });
-
     // Buttons
     document.getElementById('btn-refresh-icons')?.addEventListener('click', () => {
       ButtonManager.refreshAllIcons();
@@ -534,6 +528,8 @@ const Settings = {
         break;
       case 'setting-icon-retry':
         await this.update({ icon: { ...settings.icon, retryEnabled: value } });
+        // Update visibility of retry time input
+        document.getElementById('retry-time-row').style.display = value ? '' : 'none';
         break;
       case 'setting-sync-enabled':
         await this.handleSyncToggle(value);

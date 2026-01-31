@@ -603,20 +603,17 @@ const ButtonManager = {
       }
     }
 
+    // Extract domain once for reuse
+    const domain = Utils.getDomain(button.url);
+
     // Try multiple favicon strategies
     const strategies = [
       // Strategy 1: Site's favicon.ico
       () => Utils.getFaviconUrl(button.url),
       // Strategy 2: Google favicon service
-      () => {
-        const domain = Utils.getDomain(button.url);
-        return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
-      },
+      () => `https://www.google.com/s2/favicons?domain=${domain}&sz=64`,
       // Strategy 3: DuckDuckGo favicon service
-      () => {
-        const domain = Utils.getDomain(button.url);
-        return `https://icons.duckduckgo.com/ip3/${domain}.ico`;
-      }
+      () => `https://icons.duckduckgo.com/ip3/${domain}.ico`
     ];
 
     for (const getUrl of strategies) {

@@ -323,7 +323,10 @@ const ButtonManager = {
       return;
     }
 
-    // Update last accessed time (don't await to avoid blocking)
+    // Update last accessed time - update local state immediately for "最近浏览" feature
+    button.lastAccessedAt = Date.now();
+    
+    // Also persist to storage (don't await to avoid blocking)
     Storage.updateButtonLastAccessed(button.id).catch(err => {
       console.error('Failed to update last accessed time:', err);
     });

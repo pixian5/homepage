@@ -93,9 +93,10 @@ const BingWallpaper = {
     } catch (e) {
       console.error('Failed to fetch Bing wallpaper:', e);
       
-      // If direct access failed and we haven't tried CORS proxy yet, try it
-      if (!this.USE_CORS_PROXY && e.message.includes('fetch')) {
-        console.log('Trying CORS proxy...');
+      // If direct access failed with a network error and we haven't tried CORS proxy yet, try it
+      // TypeError is thrown for network errors including CORS issues
+      if (!this.USE_CORS_PROXY && (e instanceof TypeError || e.name === 'TypeError')) {
+        console.log('Trying CORS proxy due to network error...');
         this.USE_CORS_PROXY = true;
         return this.fetchFromApi(); // Retry with CORS proxy
       }

@@ -227,6 +227,7 @@
       const selectedGroupId = groupSelectEl.value;
       
       // Check if URL already exists in the same group
+      // Both groupId and selectedGroupId are strings, so strict equality is safe
       const exists = buttons.some(b => b.url === currentTab.url && b.groupId === selectedGroupId);
       if (exists) {
         showMessage('此页面已在该分组中', 'error');

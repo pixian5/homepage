@@ -63,12 +63,39 @@ const Settings = {
             <input type="color" id="setting-bg-color" value="${settings.background?.color || '#2c3e50'}">
           </div>
           
+          <div id="bg-gradient-row" style="${settings.background?.type === 'gradient' ? '' : 'display:none'}">
+            <div class="settings-row">
+              <div>
+                <span class="settings-label">渐变起始颜色</span>
+              </div>
+              <input type="color" id="setting-gradient-color1" value="${settings.background?.gradientColor1 || '#2c3e50'}">
+            </div>
+            
+            <div class="settings-row">
+              <div>
+                <span class="settings-label">渐变结束颜色</span>
+              </div>
+              <input type="color" id="setting-gradient-color2" value="${settings.background?.gradientColor2 || '#3498db'}">
+            </div>
+          </div>
+          
           <div class="settings-row" id="bg-custom-row" style="${settings.background?.type === 'custom' ? '' : 'display:none'}">
             <div>
               <span class="settings-label">自定义背景</span>
             </div>
             <button id="setting-bg-upload" class="btn btn-secondary">上传图片</button>
             <input type="file" id="bg-upload-input" accept="image/*" style="display:none">
+          </div>
+          
+          <div class="settings-row">
+            <div>
+              <span class="settings-label">背景透明度覆盖</span>
+              <p class="settings-description">添加白色/黑色半透明遮罩，数值越大越透明</p>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; flex: 1; max-width: 200px;">
+              <input type="range" id="setting-bg-opacity" min="0" max="0.7" step="0.05" value="${settings.background?.opacity || 0}" style="flex: 1;">
+              <span id="setting-bg-opacity-value" style="min-width: 40px; text-align: right;">${Math.round((settings.background?.opacity || 0) * 100)}%</span>
+            </div>
           </div>
           
           <div class="settings-row">
@@ -305,6 +332,7 @@ const Settings = {
     document.getElementById('setting-bg-type')?.addEventListener('change', async (e) => {
       const type = e.target.value;
       document.getElementById('bg-color-row').style.display = type === 'solid' ? '' : 'none';
+      document.getElementById('bg-gradient-row').style.display = type === 'gradient' ? '' : 'none';
       document.getElementById('bg-custom-row').style.display = type === 'custom' ? '' : 'none';
       await this.update({ background: { ...App.settings.background, type } });
       await App.applyBackground();
@@ -315,6 +343,33 @@ const Settings = {
       await this.update({ background: { ...App.settings.background, color: e.target.value } });
       await App.applyBackground();
     });
+
+    // Gradient color 1
+    document.getElementById('setting-gradient-color1')?.addEventListener('change', async (e) => {
+      await this.update({ background: { ...App.settings.background, gradientColor1: e.target.value } });
+      await App.applyBackground();
+    });
+
+    // Gradient color 2
+    document.getElementById('setting-gradient-color2')?.addEventListener('change', async (e) => {
+      await this.update({ background: { ...App.settings.background, gradientColor2: e.target.value } });
+      await App.applyBackground();
+    });
+
+    // Background opacity
+    const opacitySlider = document.getElementById('setting-bg-opacity');
+    const opacityValue = document.getElementById('setting-bg-opacity-value');
+    if (opacitySlider && opacityValue) {
+      opacitySlider.addEventListener('input', (e) => {
+        const value = parseFloat(e.target.value);
+        opacityValue.textContent = Math.round(value * 100) + '%';
+      });
+      opacitySlider.addEventListener('change', async (e) => {
+        const value = parseFloat(e.target.value);
+        await this.update({ background: { ...App.settings.background, opacity: value } });
+        await App.applyBackground();
+      });
+    }
 
     // Custom background upload
     const bgUploadBtn = document.getElementById('setting-bg-upload');

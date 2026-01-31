@@ -60,7 +60,7 @@ const DragDrop = {
     }
     
     if (this.placeholder && this.placeholder.parentNode) {
-      this.placeholder.parentNode.removeChild(this.placeholder);
+      this.placeholder.remove();
     }
     
     // Clear folder creation timeout
@@ -69,10 +69,9 @@ const DragDrop = {
       this.folderCreateTimeout = null;
     }
     
-    // Remove drag-over class from all elements
-    document.querySelectorAll('.button-item.drag-over').forEach(el => {
-      el.classList.remove('drag-over');
-    });
+    // Remove drag-over class from all elements - use single class selector
+    const dragOverElements = document.querySelectorAll('.drag-over');
+    dragOverElements.forEach(el => el.classList.remove('drag-over'));
     
     this.draggedElement = null;
     this.draggedId = null;

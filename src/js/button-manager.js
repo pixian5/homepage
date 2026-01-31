@@ -125,14 +125,18 @@ const ButtonManager = {
     
     this.emptyStateElement.classList.add('hidden');
     
-    // Clear grid
-    this.gridElement.innerHTML = '';
+    // Use DocumentFragment for better performance
+    const fragment = document.createDocumentFragment();
     
     // Render buttons
     visibleButtons.forEach(button => {
       const buttonEl = this.createButtonElement(button);
-      this.gridElement.appendChild(buttonEl);
+      fragment.appendChild(buttonEl);
     });
+    
+    // Clear and append in one operation
+    this.gridElement.innerHTML = '';
+    this.gridElement.appendChild(fragment);
   },
 
   /**

@@ -137,6 +137,9 @@ const App = {
     document.getElementById('btn-open-mode')?.addEventListener('click', () => {
       this.cycleOpenMode();
     });
+    
+    // Initialize open mode label
+    this.updateOpenModeLabel();
 
     // Search button (toggle search visibility)
     document.getElementById('btn-search')?.addEventListener('click', () => {
@@ -159,14 +162,35 @@ const App = {
   },
 
   /**
+   * Update open mode label
+   */
+  updateOpenModeLabel() {
+    const labels = {
+      'current': '当前标签',
+      'new-tab': '新标签页',
+      'background': '后台打开'
+    };
+    const mode = this.settings.openMode || 'new-tab';
+    const btn = document.getElementById('btn-open-mode');
+    const label = document.getElementById('open-mode-label');
+    
+    if (btn) {
+      btn.title = `标签打开方式: ${labels[mode]}`;
+    }
+    if (label) {
+      label.textContent = labels[mode];
+    }
+  },
+
+  /**
    * Cycle through open modes
    */
   cycleOpenMode() {
     const modes = ['current', 'new-tab', 'background'];
     const labels = {
-      'current': '当前标签页',
+      'current': '当前标签',
       'new-tab': '新标签页',
-      'background': '后台新标签页'
+      'background': '后台打开'
     };
     
     const currentIndex = modes.indexOf(this.settings.openMode || 'new-tab');
@@ -176,12 +200,16 @@ const App = {
     this.settings = { ...this.settings, openMode: newMode };
     Storage.saveSettings({ openMode: newMode });
     
-    Toast.info(`打开方式: ${labels[newMode]}`);
+    Toast.info(`标签打开方式: ${labels[newMode]}`);
     
-    // Update button tooltip
+    // Update button tooltip and label
     const btn = document.getElementById('btn-open-mode');
+    const label = document.getElementById('open-mode-label');
     if (btn) {
-      btn.title = `打开方式: ${labels[newMode]}`;
+      btn.title = `标签打开方式: ${labels[newMode]}`;
+    }
+    if (label) {
+      label.textContent = labels[newMode];
     }
   }
 };

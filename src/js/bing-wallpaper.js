@@ -244,32 +244,31 @@ const BingWallpaper = {
             : imageUrl || 'none';
           console.log('Setting background image:', displayUrl);
           
+          // Clear background shorthand first, then set backgroundImage
+          // (setting background='' after backgroundImage would clear it)
+          element.style.background = '';
+          element.style.backgroundColor = '';
+          element.style.backgroundImage = `url(${imageUrl})`;
+          
           if (settings?.background?.fadeEffect) {
             element.style.opacity = '0';
-            element.style.backgroundImage = `url(${imageUrl})`;
-            element.style.background = '';
-            element.style.backgroundColor = '';
             setTimeout(() => {
               element.style.opacity = '1';
             }, 50);
-          } else {
-            element.style.backgroundImage = `url(${imageUrl})`;
-            element.style.background = '';
-            element.style.backgroundColor = '';
           }
           console.log('Wallpaper applied successfully');
         } else {
           // Fallback to solid color
           console.log('No wallpaper data, using fallback color');
-          element.style.backgroundImage = 'none';
           element.style.background = '';
+          element.style.backgroundImage = 'none';
           element.style.backgroundColor = '#2c3e50';
         }
         return result;
 
       case 'solid':
-        element.style.backgroundImage = 'none';
         element.style.background = '';
+        element.style.backgroundImage = 'none';
         element.style.backgroundColor = settings.background.color || '#2c3e50';
         return { success: true, source: 'solid' };
 
@@ -284,17 +283,18 @@ const BingWallpaper = {
       case 'custom':
         if (settings.background.customUrl) {
           element.style.background = '';
+          element.style.backgroundColor = '';
           element.style.backgroundImage = `url(${settings.background.customUrl})`;
           return { success: true, source: 'custom' };
         }
-        element.style.backgroundImage = 'none';
         element.style.background = '';
+        element.style.backgroundImage = 'none';
         element.style.backgroundColor = '#2c3e50';
         return { success: false, error: '未设置自定义背景' };
 
       default:
-        element.style.backgroundImage = 'none';
         element.style.background = '';
+        element.style.backgroundImage = 'none';
         element.style.backgroundColor = '#2c3e50';
         return { success: true, source: 'default' };
     }

@@ -105,23 +105,6 @@ input {
   transition: opacity var(--transition-slow);
 }
 
-/* Temporarily disabled overlay to troubleshoot wallpaper display issues
-.background::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(255, 255, 255, var(--bg-overlay-opacity, 0));
-  pointer-events: none;
-}
-
-[data-theme="dark"] .background::after {
-  background: rgba(0, 0, 0, var(--bg-overlay-opacity, 0));
-}
-*/
-
 .background.loading {
   opacity: 0.5;
 }

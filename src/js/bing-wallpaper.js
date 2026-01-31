@@ -227,10 +227,6 @@ const BingWallpaper = {
     if (!element) return { success: false, error: 'Element not found' };
     
     const bgType = settings?.background?.type || 'bing';
-    const opacity = settings?.background?.opacity || 0;
-    
-    // Apply opacity overlay (currently disabled in CSS)
-    document.documentElement.style.setProperty('--bg-overlay-opacity', opacity);
     
     switch (bgType) {
       case 'bing':

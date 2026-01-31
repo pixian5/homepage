@@ -89,17 +89,6 @@ const Settings = {
           
           <div class="settings-row">
             <div>
-              <span class="settings-label">背景透明度覆盖</span>
-              <p class="settings-description">添加白色/黑色半透明遮罩，数值越大越透明</p>
-            </div>
-            <div style="display: flex; align-items: center; gap: 12px; flex: 1; max-width: 200px;">
-              <input type="range" id="setting-bg-opacity" min="0" max="0.7" step="0.05" value="${settings.background?.opacity || 0}" style="flex: 1;">
-              <span id="setting-bg-opacity-value" style="min-width: 40px; text-align: right;">${Math.round((settings.background?.opacity || 0) * 100)}%</span>
-            </div>
-          </div>
-          
-          <div class="settings-row">
-            <div>
               <span class="settings-label">背景淡入效果</span>
             </div>
             <div class="toggle-switch ${settings.background?.fadeEffect ? 'active' : ''}" id="setting-fade-effect"></div>
@@ -376,21 +365,6 @@ const Settings = {
       await this.update({ background: { ...App.settings.background, gradientColor2: e.target.value } });
       await App.applyBackground();
     });
-
-    // Background opacity
-    const opacitySlider = document.getElementById('setting-bg-opacity');
-    const opacityValue = document.getElementById('setting-bg-opacity-value');
-    if (opacitySlider && opacityValue) {
-      opacitySlider.addEventListener('input', (e) => {
-        const value = parseFloat(e.target.value);
-        opacityValue.textContent = Math.round(value * 100) + '%';
-      });
-      opacitySlider.addEventListener('change', async (e) => {
-        const value = parseFloat(e.target.value);
-        await this.update({ background: { ...App.settings.background, opacity: value } });
-        await App.applyBackground();
-      });
-    }
 
     // Custom background upload
     const bgUploadBtn = document.getElementById('setting-bg-upload');

@@ -224,11 +224,12 @@
 
     try {
       const buttons = await getButtons();
+      const selectedGroupId = groupSelectEl.value;
       
-      // Check if URL already exists
-      const exists = buttons.some(b => b.url === currentTab.url);
+      // Check if URL already exists in the same group
+      const exists = buttons.some(b => b.url === currentTab.url && b.groupId === selectedGroupId);
       if (exists) {
-        showMessage('此页面已经添加过了', 'error');
+        showMessage('此页面已在该分组中', 'error');
         btnAddEl.disabled = false;
         btnAddEl.textContent = '添加到主页';
         return;
@@ -242,7 +243,7 @@
         icon: getFaviconUrl(currentTab.url),
         iconType: 'favicon',
         iconColor: stringToColor(currentTab.title),
-        groupId: groupSelectEl.value,
+        groupId: selectedGroupId,
         folderId: null,
         order: buttons.length,
         createdAt: Date.now(),

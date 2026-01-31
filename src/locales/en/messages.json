@@ -1,0 +1,10 @@
+{
+  "appName": {
+    "message": "Homepage",
+    "description": "Extension name"
+  },
+  "appDescription": {
+    "message": "Customizable new tab page with button grid, groups, and folders",
+    "description": "Extension description"
+  }
+}

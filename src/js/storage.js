@@ -216,7 +216,8 @@ const Storage = {
       folderId: button.folderId || null,
       order: buttons.length,
       createdAt: Date.now(),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      lastAccessedAt: null // Initialize for recent view tracking
     };
     buttons.push(newButton);
     await this.saveButtons(buttons);

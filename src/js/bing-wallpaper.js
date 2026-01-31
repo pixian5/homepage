@@ -119,14 +119,25 @@ const BingWallpaper = {
    */
   async toBase64(url) {
     try {
+      console.log('Converting wallpaper to base64:', url);
       // Try to fetch and convert to base64
       const response = await fetch(url);
+      if (!response.ok) {
+        console.error('Failed to fetch wallpaper image:', response.status);
+        return null;
+      }
       const blob = await response.blob();
       
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.onerror = reject;
+        reader.onloadend = () => {
+          console.log('Successfully converted wallpaper to base64');
+          resolve(reader.result);
+        };
+        reader.onerror = (e) => {
+          console.error('FileReader error:', e);
+          reject(e);
+        };
         reader.readAsDataURL(blob);
       });
     } catch (e) {
@@ -144,7 +155,8 @@ const BingWallpaper = {
     // Try cache first
     if (!forceRefresh) {
       const cached = await this.getCached();
-      if (cached && cached.base64) {
+      if (cached && (cached.base64 || cached.hdUrl || cached.url)) {
+        console.log('Using cached wallpaper');
         return {
           success: true,
           source: 'cache',
@@ -153,6 +165,7 @@ const BingWallpaper = {
       }
     }
 
+    console.log('Fetching new wallpaper from API...');
     // Fetch from API
     const wallpaper = await this.fetchFromApi();
     
@@ -163,36 +176,26 @@ const BingWallpaper = {
       // Try to convert to base64 for local caching
       const base64 = await this.toBase64(hdUrl);
       
-      if (base64) {
-        const cached = {
-          ...wallpaper,
-          hdUrl,
-          base64
-        };
-        await this.cache(cached);
-        return {
-          success: true,
-          source: 'api',
-          data: cached
-        };
-      } else {
-        // Cache URL only (will require network for display)
-        const cached = {
-          ...wallpaper,
-          hdUrl
-        };
-        await this.cache(cached);
-        return {
-          success: true,
-          source: 'api',
-          data: cached
-        };
-      }
+      const cached = {
+        ...wallpaper,
+        hdUrl,
+        base64: base64 || null
+      };
+      await this.cache(cached);
+      
+      console.log('Wallpaper cached successfully:', cached.hdUrl ? 'with URL' : '', base64 ? 'with base64' : '');
+      
+      return {
+        success: true,
+        source: 'api',
+        data: cached
+      };
     }
 
     // Fallback to old cache if available
     const oldCached = await this.getCached();
     if (oldCached) {
+      console.log('Using old cached wallpaper as fallback');
       return {
         success: false,
         source: 'old-cache',
@@ -202,6 +205,7 @@ const BingWallpaper = {
     }
 
     // Complete failure
+    console.error('No wallpaper available - all methods failed');
     return {
       success: false,
       source: 'none',
@@ -222,30 +226,39 @@ const BingWallpaper = {
     const bgType = settings?.background?.type || 'bing';
     const opacity = settings?.background?.opacity || 0;
     
-    // Apply opacity overlay
+    // Apply opacity overlay (currently disabled in CSS)
     document.documentElement.style.setProperty('--bg-overlay-opacity', opacity);
     
     switch (bgType) {
       case 'bing':
+        console.log('Applying Bing wallpaper...');
         element.classList.add('loading');
         const result = await this.get();
         element.classList.remove('loading');
         
+        console.log('Wallpaper result:', result);
+        
         if (result.data) {
           const imageUrl = result.data.base64 || result.data.hdUrl || result.data.url;
+          console.log('Setting background image:', imageUrl ? imageUrl.substring(0, 100) + '...' : 'none');
+          
           if (settings?.background?.fadeEffect) {
             element.style.opacity = '0';
             element.style.backgroundImage = `url(${imageUrl})`;
             element.style.background = '';
+            element.style.backgroundColor = '';
             setTimeout(() => {
               element.style.opacity = '1';
             }, 50);
           } else {
             element.style.backgroundImage = `url(${imageUrl})`;
             element.style.background = '';
+            element.style.backgroundColor = '';
           }
+          console.log('Wallpaper applied successfully');
         } else {
           // Fallback to solid color
+          console.log('No wallpaper data, using fallback color');
           element.style.backgroundImage = 'none';
           element.style.background = '';
           element.style.backgroundColor = '#2c3e50';

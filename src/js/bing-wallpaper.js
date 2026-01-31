@@ -6,11 +6,11 @@
 const BingWallpaper = {
   // Bing wallpaper API - use CORS proxy to avoid CORS issues
   BING_API: 'https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=zh-CN',
-  // Fallback CORS proxy (can be used if direct access fails)
+  // CORS proxy for reliable access
   CORS_PROXY: 'https://api.allorigins.win/raw?url=',
   BING_BASE: 'https://www.bing.com',
-  // Try direct access first, then CORS proxy if needed
-  USE_CORS_PROXY: false,
+  // Use CORS proxy by default to avoid CORS issues in extensions
+  USE_CORS_PROXY: true,
   
   // Cache key
   CACHE_KEY: 'homepage_bing_wallpaper',
@@ -65,20 +65,21 @@ const BingWallpaper = {
    */
   async fetchFromApi() {
     try {
-      // Try direct access first
-      let apiUrl = this.BING_API;
+      // Use CORS proxy for reliable access
+      let apiUrl = this.USE_CORS_PROXY 
+        ? this.CORS_PROXY + encodeURIComponent(this.BING_API)
+        : this.BING_API;
       
-      // If we've determined we need CORS proxy, use it
-      if (this.USE_CORS_PROXY) {
-        apiUrl = this.CORS_PROXY + encodeURIComponent(this.BING_API);
-      }
+      console.log('Fetching Bing wallpaper from:', this.USE_CORS_PROXY ? 'CORS proxy' : 'direct');
       
       const response = await fetch(apiUrl);
-      if (!response.ok) throw new Error('API request failed');
+      if (!response.ok) {
+        throw new Error(`API request failed with status ${response.status}`);
+      }
       
       const data = await response.json();
       if (!data.images || !data.images[0]) {
-        throw new Error('Invalid API response');
+        throw new Error('Invalid API response - no images found');
       }
       
       const image = data.images[0];
@@ -90,16 +91,22 @@ const BingWallpaper = {
         date: image.startdate
       };
       
+      console.log('Successfully fetched Bing wallpaper:', wallpaper.title);
       return wallpaper;
     } catch (e) {
       console.error('Failed to fetch Bing wallpaper:', e);
       
-      // If direct access failed with a network error and we haven't tried CORS proxy yet, try it
-      // TypeError is thrown for network errors including CORS issues
-      if (!this.USE_CORS_PROXY && (e instanceof TypeError || e.name === 'TypeError')) {
-        console.log('Trying CORS proxy due to network error...');
-        this.USE_CORS_PROXY = true;
-        return this.fetchFromApi(); // Retry with CORS proxy
+      // If using proxy failed, try direct access as fallback
+      if (this.USE_CORS_PROXY) {
+        console.log('Proxy failed, trying direct access...');
+        this.USE_CORS_PROXY = false;
+        try {
+          return await this.fetchFromApi();
+        } catch (directError) {
+          console.error('Direct access also failed:', directError);
+          // Restore proxy setting for next attempt
+          this.USE_CORS_PROXY = true;
+        }
       }
       
       return null;

@@ -427,6 +427,8 @@ input {
   max-width: 500px;
   text-align: center;
   width: 100%;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .empty-dismiss {

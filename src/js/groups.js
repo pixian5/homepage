@@ -35,12 +35,13 @@ const Groups = {
 
     // Check if recent view is enabled in settings
     const settings = App.settings || await Storage.getSettings();
+    
+    // Remove any existing virtual recent group first
+    this.groups = this.groups.filter(g => g.id !== 'recent');
+    
     if (settings?.showRecentView !== false) {
       // Add "最近浏览" as a virtual group at the top
-      // Check if it's already in the list (it shouldn't be in storage)
-      if (!this.groups.find(g => g.id === 'recent')) {
-        this.groups.unshift({ id: 'recent', name: '最近浏览', order: -1, virtual: true });
-      }
+      this.groups.unshift({ id: 'recent', name: '最近浏览', order: -1, virtual: true });
     }
   },
 

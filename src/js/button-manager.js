@@ -62,8 +62,8 @@ const ButtonManager = {
   getVisibleButtons() {
     // Handle "最近浏览" special group
     if (this.currentGroupId === 'recent') {
-      // Get all buttons sorted by last accessed time (descending)
-      const allButtons = [...this.buttons].filter(b => b.lastAccessedAt);
+      // Get all buttons with lastAccessedAt sorted by last accessed time (descending)
+      const allButtons = this.buttons.filter(b => b.lastAccessedAt);
       allButtons.sort((a, b) => (b.lastAccessedAt || 0) - (a.lastAccessedAt || 0));
       // Return top 20 most recently accessed buttons
       return allButtons.slice(0, 20);
@@ -323,8 +323,10 @@ const ButtonManager = {
       return;
     }
 
-    // Update last accessed time
-    Storage.updateButtonLastAccessed(button.id);
+    // Update last accessed time (don't await to avoid blocking)
+    Storage.updateButtonLastAccessed(button.id).catch(err => {
+      console.error('Failed to update last accessed time:', err);
+    });
 
     try {
       switch (openMode) {

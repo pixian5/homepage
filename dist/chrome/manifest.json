@@ -1,0 +1,23 @@
+﻿{
+  "manifest_version": 3,
+  "name": "新标签页",
+  "version": "1.0.0",
+  "description": "自定义新标签页面板",
+  "chrome_url_overrides": {
+    "newtab": "newtab.html"
+  },
+  "permissions": ["storage", "tabs", "activeTab", "history"],
+  "host_permissions": [
+    "https://www.bing.com/*",
+    "https://www.google.com/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' data: https: http:;"
+  },
+  "icons": {
+    "16": "assets/icon-16.png",
+    "32": "assets/icon-32.png",
+    "48": "assets/icon-48.png",
+    "128": "assets/icon-128.png"
+  }
+}

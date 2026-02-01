@@ -1,0 +1,72 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>新标签页</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="background" class="background"></div>
+
+  <div id="app" class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span class="brand-title">新标签页</span>
+      </div>
+      <div class="top-actions">
+        <div id="topSearchWrap" class="top-search">
+          <input id="topSearch" type="search" placeholder="搜索标题或网址..." autocomplete="off" />
+        </div>
+        <div class="toolbar">
+          <button id="btnAdd" class="icon-btn" data-tooltip="新增快捷按钮">新增</button>
+          <button id="btnBatchDelete" class="icon-btn" data-tooltip="批量删除">批量删除</button>
+          <button id="btnOpenMode" class="icon-btn" data-tooltip="打开方式">打开方式</button>
+          <button id="btnSettings" class="icon-btn" data-tooltip="设置">设置</button>
+          <button id="btnSearch" class="icon-btn" data-tooltip="搜索">搜索</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar" aria-label="分组">
+        <button id="recentTab" class="group-tab recent-tab">最近浏览</button>
+        <div id="groupTabs" class="group-tabs vertical"></div>
+        <button id="btnAddGroup" class="icon-btn add-group">新增分组</button>
+      </aside>
+
+      <main class="main">
+        <div id="grid" class="grid" tabindex="0" aria-label="快捷按钮网格"></div>
+        <div id="emptyState" class="empty-state hidden">
+          <div class="empty-title">还没有快捷按钮</div>
+          <div class="empty-desc">点击右上角新增 / 导入 JSON 添加快捷按钮</div>
+          <label class="empty-check"><input id="emptyHintToggle" type="checkbox"> 不再提示</label>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="folderOverlay" class="overlay hidden" aria-hidden="true">
+    <div class="overlay-header">
+      <button id="btnCloseFolder" class="icon-btn">返回</button>
+      <div id="folderTitle" class="overlay-title"></div>
+      <div class="overlay-actions">
+        <button id="btnFolderAdd" class="icon-btn">新增</button>
+        <button id="btnFolderBatchDelete" class="icon-btn">批量删除</button>
+      </div>
+    </div>
+    <div id="folderGrid" class="grid overlay-grid" tabindex="0" aria-label="文件夹内容"></div>
+  </div>
+
+  <div id="modalOverlay" class="modal-overlay hidden" aria-hidden="true">
+    <div id="modal" class="modal" role="dialog" aria-modal="true"></div>
+  </div>
+
+  <div id="contextMenu" class="context-menu hidden" role="menu"></div>
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+  <div id="tooltip" class="tooltip hidden"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

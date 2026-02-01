@@ -1,0 +1,11 @@
+﻿{
+  "name": "newtab-extension",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "build:chrome": "bash scripts/build.sh",
+    "build:firefox": "bash scripts/build.sh"
+  }
+}

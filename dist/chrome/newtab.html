@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>新标签页</title>
+  <title>我的首页</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -11,20 +11,17 @@
 
   <div id="app" class="app">
     <header class="topbar">
-      <div class="brand">
-        <span class="brand-dot"></span>
-        <span class="brand-title">新标签页</span>
-      </div>
       <div class="top-actions">
         <div id="topSearchWrap" class="top-search">
           <input id="topSearch" type="search" placeholder="搜索标题或网址..." autocomplete="off" />
+          <button id="btnSearch" class="icon-btn search-btn" data-tooltip="搜索">搜索</button>
         </div>
         <div class="toolbar">
           <button id="btnAdd" class="icon-btn" data-tooltip="新增快捷按钮">新增</button>
           <button id="btnBatchDelete" class="icon-btn" data-tooltip="批量删除">批量删除</button>
+          <button id="btnSelectAll" class="icon-btn hidden" data-tooltip="全选">全选</button>
           <button id="btnOpenMode" class="icon-btn" data-tooltip="打开方式">打开方式</button>
           <button id="btnSettings" class="icon-btn" data-tooltip="设置">设置</button>
-          <button id="btnSearch" class="icon-btn" data-tooltip="搜索">搜索</button>
         </div>
       </div>
     </header>
@@ -34,16 +31,19 @@
         <button id="recentTab" class="group-tab recent-tab">最近浏览</button>
         <div id="groupTabs" class="group-tabs vertical"></div>
         <button id="btnAddGroup" class="icon-btn add-group">新增分组</button>
+        <button id="btnToggleSidebar" class="icon-btn add-group toggle-btn">收起</button>
       </aside>
 
       <main class="main">
         <div id="grid" class="grid" tabindex="0" aria-label="快捷按钮网格"></div>
-        <div id="emptyState" class="empty-state hidden">
+      <div id="emptyState" class="empty-state hidden">
+        <div class="empty-box">
           <div class="empty-title">还没有快捷按钮</div>
           <div class="empty-desc">点击右上角新增 / 导入 JSON 添加快捷按钮</div>
           <label class="empty-check"><input id="emptyHintToggle" type="checkbox"> 不再提示</label>
         </div>
-      </main>
+      </div>
+    </main>
     </div>
   </div>
 

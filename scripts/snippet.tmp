@@ -1,0 +1,11 @@
+﻿const LOG_KEY = "homepage_save_log";
+
+async function appendLog(area, entry) {
+  return new Promise((resolve) => {
+    area.get(LOG_KEY, (res) => {
+      const list = Array.isArray(res[LOG_KEY]) ? res[LOG_KEY] : [];
+      list.unshift(entry);
+      area.set({ [LOG_KEY]: list.slice(0, 20) }, () => resolve());
+    });
+  });
+}

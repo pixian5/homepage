@@ -1,6 +1,26 @@
 ﻿import { loadIconCache, saveIconCache } from "./storage.js";
 
-const FAVICON_API = "https://www.google.com/s2/favicons?domain_url=";
+const FAVICON_API = "https://www.google.com/s2/favicons?domain=";
+const MULTI_PART_TLDS = new Set([
+  "co.uk",
+  "org.uk",
+  "ac.uk",
+  "gov.uk",
+  "co.jp",
+  "ne.jp",
+  "or.jp",
+  "com.cn",
+  "net.cn",
+  "org.cn",
+  "gov.cn",
+  "edu.cn",
+  "com.au",
+  "net.au",
+  "org.au",
+  "com.br",
+  "com.tw",
+  "com.hk",
+]);
 
 function hashColor(str) {
   let hash = 0;
@@ -26,43 +46,123 @@ function avatarDataUrl(text, color) {
   return canvas.toDataURL("image/png");
 }
 
-function blobToDataUrl(blob) {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result);
-    reader.readAsDataURL(blob);
-  });
+function isHttpUrl(pageUrl) {
+  try {
+    const u = new URL(pageUrl);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
-async function fetchFavicon(url) {
-  const apiUrl = `${FAVICON_API}${encodeURIComponent(url)}&sz=128`;
-  const res = await fetch(apiUrl, { cache: "no-store" });
-  if (!res.ok) throw new Error("favicon fetch failed");
-  const blob = await res.blob();
-  return blobToDataUrl(blob);
+function getRootDomain(host) {
+  if (!host) return "";
+  const parts = host.split(".").filter(Boolean);
+  if (parts.length <= 2) return host;
+  const lastTwo = parts.slice(-2).join(".");
+  const lastThree = parts.slice(-3).join(".");
+  if (MULTI_PART_TLDS.has(lastTwo)) return lastThree;
+  if (parts[parts.length - 1].length <= 2) return lastThree;
+  return lastTwo;
+}
+
+export function getSiteKey(pageUrl) {
+  try {
+    if (!isHttpUrl(pageUrl)) return "";
+    const host = new URL(pageUrl).hostname;
+    const root = getRootDomain(host);
+    return root ? `site:${root}` : "";
+  } catch {
+    return "";
+  }
+}
+
+export function getFaviconCandidates(pageUrl) {
+  try {
+    if (!isHttpUrl(pageUrl)) return [];
+    const u = new URL(pageUrl);
+    const host = u.hostname;
+    return [
+      `${u.origin}/favicon.ico`,
+      `${FAVICON_API}${encodeURIComponent(host)}&sz=128`,
+      `https://icons.duckduckgo.com/ip3/${host}.ico`,
+    ];
+  } catch {
+    return [];
+  }
+}
+
+function buildFaviconUrl(url) {
+  const candidates = getFaviconCandidates(url);
+  return candidates[0] || "";
 }
 
 export async function resolveIcon(node, settings) {
-  if (node.iconType === "upload" && node.iconData) return node.iconData;
-  if (node.iconType === "remote" && node.iconData) return node.iconData;
-
+  const base = node.title || node.url || "?";
+  const isHttp = node.url ? isHttpUrl(node.url) : false;
+  const siteKey = node.url ? getSiteKey(node.url) : "";
   const cache = await loadIconCache();
   const cacheKey = node.url || node.id;
-  if (cache[cacheKey]?.dataUrl) return cache[cacheKey].dataUrl;
 
-  if (settings.iconFetch && node.url) {
-    try {
-      const dataUrl = await fetchFavicon(node.url);
-      cache[cacheKey] = { dataUrl, ts: Date.now() };
-      await saveIconCache(cache);
-      return dataUrl;
-    } catch (err) {
-      cache[cacheKey] = { dataUrl: "", ts: Date.now(), failed: true };
+  if (node.url && !isHttp) {
+    if (cache[cacheKey]) {
+      delete cache[cacheKey];
       await saveIconCache(cache);
     }
+    return avatarDataUrl(base, node.color || hashColor(base));
   }
 
-  const base = node.title || node.url || "?";
+  if (node.iconType === "upload" && node.iconData) {
+    if (siteKey && !cache[siteKey]) {
+      cache[siteKey] = { dataUrl: node.iconData, ts: Date.now() };
+      await saveIconCache(cache);
+    }
+    return node.iconData;
+  }
+
+  if (node.iconType === "remote" && node.iconData) {
+    if (siteKey && !cache[siteKey]) {
+      cache[siteKey] = { url: node.iconData, ts: Date.now() };
+      await saveIconCache(cache);
+    }
+    return node.iconData;
+  }
+
+  if (node.iconType === "color") {
+    const dataUrl = avatarDataUrl(base, node.color || hashColor(base));
+    if (siteKey && !cache[siteKey]) {
+      cache[siteKey] = { dataUrl, ts: Date.now() };
+      await saveIconCache(cache);
+    }
+    return dataUrl;
+  }
+
+  if (siteKey && cache[siteKey]) {
+    return cache[siteKey].url || cache[siteKey].dataUrl;
+  }
+
+  if (cache[cacheKey]?.url) return cache[cacheKey].url;
+  if (cache[cacheKey]?.dataUrl) return cache[cacheKey].dataUrl;
+
+  if (node.iconType === "letter") {
+    const dataUrl = avatarDataUrl(base, node.color || hashColor(base));
+    if (siteKey && !cache[siteKey]) {
+      cache[siteKey] = { dataUrl, ts: Date.now() };
+      await saveIconCache(cache);
+    }
+    return dataUrl;
+  }
+
+  if (settings.iconFetch && node.url) {
+    const url = buildFaviconUrl(node.url);
+    cache[cacheKey] = { url, ts: Date.now() };
+    if (siteKey && !cache[siteKey]) {
+      cache[siteKey] = { url, ts: Date.now() };
+    }
+    await saveIconCache(cache);
+    return url;
+  }
+
   return avatarDataUrl(base, node.color || hashColor(base));
 }
 
@@ -70,12 +170,10 @@ export async function refreshAllIcons(nodes) {
   const cache = await loadIconCache();
   for (const node of nodes) {
     if (!node.url) continue;
-    try {
-      const dataUrl = await fetchFavicon(node.url);
-      cache[node.url] = { dataUrl, ts: Date.now() };
-    } catch (err) {
-      cache[node.url] = { dataUrl: "", ts: Date.now(), failed: true };
-    }
+    const url = buildFaviconUrl(node.url);
+    cache[node.url] = { url, ts: Date.now() };
+    const siteKey = getSiteKey(node.url);
+    if (siteKey) cache[siteKey] = { url, ts: Date.now() };
   }
   await saveIconCache(cache);
 }
@@ -87,15 +185,10 @@ export async function retryFailedIconsIfDue(settings) {
   const cache = await loadIconCache();
   let changed = false;
   for (const key of Object.keys(cache)) {
-    if (cache[key]?.failed) {
-      try {
-        const dataUrl = await fetchFavicon(key);
-        cache[key] = { dataUrl, ts: Date.now() };
-        changed = true;
-      } catch (err) {
-        cache[key] = { ...cache[key], ts: Date.now(), failed: true };
-        changed = true;
-      }
+    if (cache[key]) {
+      const raw = key.startsWith("site:") ? `https://${key.slice(5)}` : key;
+      cache[key] = { url: buildFaviconUrl(raw), ts: Date.now() };
+      changed = true;
     }
   }
   if (changed) await saveIconCache(cache);

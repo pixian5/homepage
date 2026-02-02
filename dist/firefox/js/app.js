@@ -4,11 +4,13 @@
   saveData,
   clearData,
   createBackupSnapshot,
+  loadIconCache,
+  saveIconCache,
   defaultData,
   getChromeApi,
 } from "./storage.js";
 import { getBingWallpaper } from "./bing-wallpaper.js";
-import { resolveIcon, refreshAllIcons, retryFailedIconsIfDue } from "./icons.js";
+import { resolveIcon, refreshAllIcons, retryFailedIconsIfDue, getFaviconCandidates, getSiteKey } from "./icons.js";
 
 const $ = (id) => document.getElementById(id);
 const qs = (sel, root = document) => root.querySelector(sel);
@@ -19,15 +21,18 @@ const elements = {
   grid: $("grid"),
   emptyState: $("emptyState"),
   emptyHintToggle: $("emptyHintToggle"),
+  main: document.querySelector(".main"),
   recentTab: $("recentTab"),
   groupTabs: $("groupTabs"),
   topSearch: $("topSearch"),
   topSearchWrap: $("topSearchWrap"),
   btnAdd: $("btnAdd"),
   btnBatchDelete: $("btnBatchDelete"),
+  btnSelectAll: $("btnSelectAll"),
   btnOpenMode: $("btnOpenMode"),
   btnSettings: $("btnSettings"),
   btnSearch: $("btnSearch"),
+  btnToggleSidebar: $("btnToggleSidebar"),
   btnAddGroup: $("btnAddGroup"),
   modalOverlay: $("modalOverlay"),
   modal: $("modal"),
@@ -52,6 +57,16 @@ let tooltipTimer = null;
 let dragState = null;
 let lastSelectedIndex = null;
 let recentItems = [];
+let draggingGroupId = null;
+let boxSelecting = false;
+let selectionBox = null;
+let selectionStart = null;
+let suppressBlankClick = false;
+let isDraggingBox = false;
+let settingsOpen = false;
+let settingsSaving = false;
+let renderSeq = 0;
+const DEBUG_LOG_KEY = "homepage_debug_log";
 
 const RECENT_GROUP_ID = "__recent__";
 const RECENT_LIMIT = 24;
@@ -62,12 +77,80 @@ const densityMap = {
   spacious: { gap: 22, size: 112, font: 14, icon: 44 },
 };
 
+function debugLog(event, payload = {}) {
+  const entry = { ts: Date.now(), event, payload };
+  try {
+    const raw = localStorage.getItem(DEBUG_LOG_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    list.unshift(entry);
+    localStorage.setItem(DEBUG_LOG_KEY, JSON.stringify(list.slice(0, 200)));
+  } catch (err) {
+    console.warn("debugLog failed", err);
+  }
+  console.log("[debug]", entry);
+}
+
+function getRuntimeInfo() {
+  const api = getChromeApi();
+  return {
+    runtimeId: api?.runtime?.id || "",
+    href: window.location.href,
+    origin: window.location.origin,
+  };
+}
+
+function shouldDebugPersist() {
+  try {
+    return localStorage.getItem("homepage_debug_persist") === "1";
+  } catch {
+    return false;
+  }
+}
+
+window.homepageDebugLog = () => {
+  try {
+    return JSON.parse(localStorage.getItem(DEBUG_LOG_KEY) || "[]");
+  } catch {
+    return [];
+  }
+};
+
+window.homepageDebugEnv = async () => {
+  const api = getChromeApi();
+  const info = getRuntimeInfo();
+  return new Promise((resolve) => {
+    if (!api?.storage?.local?.getBytesInUse) return resolve(info);
+    api.storage.local.getBytesInUse("homepage_data", (bytes) => {
+      resolve({ ...info, bytes });
+    });
+  });
+};
+
 function applyDensity() {
   const d = densityMap[data.settings.gridDensity] || densityMap.standard;
   document.documentElement.style.setProperty("--grid-gap", `${d.gap}px`);
   document.documentElement.style.setProperty("--tile-size", `${d.size}px`);
-  document.documentElement.style.setProperty("--tile-font", `${d.font}px`);
+  const baseFont = Number(data.settings.fontSize) || d.font;
+  document.documentElement.style.setProperty("--tile-font", `${baseFont}px`);
+  document.documentElement.style.setProperty("--base-font", `${baseFont}px`);
   document.documentElement.style.setProperty("--tile-icon", `${d.icon}px`);
+}
+
+function applyTheme() {
+  const theme = data.settings.theme || "system";
+  if (theme === "system") {
+    const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.setAttribute("data-theme", prefersDark ? "dark" : "light");
+    return;
+  }
+  document.documentElement.setAttribute("data-theme", theme);
+}
+
+function applySidebarState() {
+  document.body.classList.toggle("sidebar-collapsed", !!data.settings.sidebarCollapsed);
+  if (elements.btnToggleSidebar) {
+    elements.btnToggleSidebar.textContent = data.settings.sidebarCollapsed ? "展开" : "收起";
+  }
 }
 
 function toast(message, actionLabel, action) {
@@ -176,11 +259,49 @@ function pushBackup() {
 }
 
 async function persistData() {
+  debugLog("persist_start", {
+    useSync: data.settings.syncEnabled,
+    groups: data.groups?.length || 0,
+    nodes: Object.keys(data.nodes || {}).length,
+    lastUpdated: data.lastUpdated || 0,
+  });
   const useSync = data.settings.syncEnabled;
-  await saveData(data, useSync);
+  const changed = dedupeData(data);
+  let warning = null;
+  let err = null;
+  const err1 = await saveData(data, useSync);
+  if (err1) {
+    if (err1 === "sync_quota_exceeded" || err1.startsWith("local_trimmed_")) {
+      warning = err1;
+    } else {
+      err = err1;
+    }
+  }
   if (useSync) {
     await saveData(data, false);
   }
+  if (changed) {
+    const err2 = await saveData(data, useSync);
+    if (useSync) await saveData(data, false);
+    if (err2) {
+      if (err2 === "sync_quota_exceeded" || err2.startsWith("local_trimmed_")) {
+        warning = err2;
+      } else {
+        err = err2;
+      }
+    }
+    debugLog("persist_dedupe", { changed, err2 });
+  }
+  if (shouldDebugPersist()) {
+    const verify = await loadDataFromArea(false);
+    debugLog("persist_verify", {
+      groups: verify.groups?.length || 0,
+      nodes: Object.keys(verify.nodes || {}).length,
+      lastUpdated: verify.lastUpdated || 0,
+    });
+  }
+  debugLog("persist_done", { err1, changed, warning, err });
+  return { ok: !err, warning, err };
 }
 
 function getActiveGroup() {
@@ -194,6 +315,18 @@ function getCurrentNodes() {
   return nodeIds.map((id) => data.nodes[id]).filter(Boolean);
 }
 
+function uniqueNodes(nodes) {
+  const seenId = new Set();
+  const out = [];
+  for (const node of nodes) {
+    if (!node?.id) continue;
+    if (seenId.has(node.id)) continue;
+    seenId.add(node.id);
+    out.push(node);
+  }
+  return out;
+}
+
 function renderGroups() {
   elements.groupTabs.innerHTML = "";
   elements.recentTab.classList.toggle("active", activeGroupId === RECENT_GROUP_ID);
@@ -201,8 +334,9 @@ function renderGroups() {
     .sort((a, b) => a.order - b.order)
     .forEach((group) => {
       const btn = document.createElement("button");
-      btn.className = `group-tab ${group.id === activeGroupId ? "active" : ""}`;
+      btn.className = `group-tab draggable ${group.id === activeGroupId ? "active" : ""}`;
       btn.textContent = group.name;
+      btn.draggable = true;
       btn.addEventListener("click", () => {
         activeGroupId = group.id;
         openFolderId = null;
@@ -210,24 +344,59 @@ function renderGroups() {
         persistData();
         render();
       });
+      btn.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        openGroupContextMenu(e.clientX, e.clientY, group);
+      });
+      btn.addEventListener("dragstart", () => {
+        draggingGroupId = group.id;
+        btn.classList.add("dragging");
+      });
+      btn.addEventListener("dragend", () => {
+        draggingGroupId = null;
+        btn.classList.remove("dragging");
+        qsa(".group-tab", elements.groupTabs).forEach((el) => el.classList.remove("drop-target"));
+      });
+      btn.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        btn.classList.add("drop-target");
+      });
+      btn.addEventListener("dragleave", () => {
+        btn.classList.remove("drop-target");
+      });
+      btn.addEventListener("drop", (e) => {
+        e.preventDefault();
+        btn.classList.remove("drop-target");
+        if (!draggingGroupId || draggingGroupId === group.id) return;
+        moveGroupBefore(draggingGroupId, group.id);
+      });
       elements.groupTabs.appendChild(btn);
     });
 }
 
 async function renderGrid() {
+  const seq = ++renderSeq;
   const grid = openFolderId ? elements.folderGrid : elements.grid;
-  const nodes = getCurrentNodes();
+  const nodes = uniqueNodes(getCurrentNodes());
   grid.innerHTML = "";
 
-  const width = grid.clientWidth || window.innerWidth;
-  const tileSize = densityMap[data.settings.gridDensity]?.size || 96;
-  let columns = Math.max(3, Math.floor(width / (tileSize + 32)));
+  const width = grid.getBoundingClientRect().width || grid.clientWidth || window.innerWidth;
+  const density = densityMap[data.settings.gridDensity] || densityMap.standard;
+  const tileSize = density.size || 96;
+  const gap = density.gap || 16;
+  const style = getComputedStyle(grid);
+  const paddingX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+  const available = Math.max(0, width - paddingX);
+  const maxColumns = Math.max(1, Math.floor((available + gap) / (tileSize + gap)));
+  let columns = Math.max(1, maxColumns);
   if (data.settings.fixedLayout) {
-    columns = Math.max(1, data.settings.fixedCols || 8);
+    const desired = Math.max(1, data.settings.fixedCols || 8);
+    columns = Math.min(desired, maxColumns);
   }
   grid.style.gridTemplateColumns = `repeat(${columns}, minmax(${tileSize}px, 1fr))`;
 
   for (const [idx, node] of nodes.entries()) {
+    if (seq !== renderSeq) return;
     const tile = document.createElement("div");
     tile.className = "tile";
     tile.dataset.id = node.id;
@@ -239,7 +408,19 @@ async function renderGrid() {
     icon.className = "tile-icon";
     const img = document.createElement("img");
     img.alt = node.title || node.url || "";
-    img.src = await resolveIcon(node, data.settings);
+    const iconSrc = await resolveIcon(node, data.settings);
+    img.src = iconSrc;
+    if (node.url && data.settings.iconFetch && !iconSrc.startsWith("data:")) {
+      const candidates = getFaviconCandidates(node.url);
+      if (candidates.length) {
+        let idx = Math.max(0, candidates.indexOf(iconSrc));
+        img.onerror = () => {
+          idx += 1;
+          if (idx < candidates.length) img.src = candidates[idx];
+        };
+      }
+    }
+    if (seq !== renderSeq) return;
     icon.appendChild(img);
 
     const title = document.createElement("div");
@@ -364,6 +545,10 @@ function clearSelection() {
   selectedIds.clear();
   selectionMode = false;
   lastSelectedIndex = null;
+  if (selectionBox) {
+    selectionBox.remove();
+    selectionBox = null;
+  }
 }
 
 function openContextMenu(x, y, node) {
@@ -402,6 +587,26 @@ function openContextMenu(x, y, node) {
 
 function closeContextMenu() {
   elements.contextMenu.classList.add("hidden");
+}
+
+function openGroupContextMenu(x, y, group) {
+  elements.contextMenu.innerHTML = "";
+  const actions = [
+    { label: "重命名", fn: () => renameGroup(group) },
+    { label: "删除分组", fn: () => deleteGroup(group) },
+  ];
+  for (const action of actions) {
+    const btn = document.createElement("button");
+    btn.textContent = action.label;
+    btn.addEventListener("click", () => {
+      action.fn();
+      elements.contextMenu.classList.add("hidden");
+    });
+    elements.contextMenu.appendChild(btn);
+  }
+  elements.contextMenu.style.left = `${x}px`;
+  elements.contextMenu.style.top = `${y}px`;
+  elements.contextMenu.classList.remove("hidden");
 }
 
 function handleDropOnTile(targetId) {
@@ -469,11 +674,89 @@ function removeNodeFromLocation(id) {
   }
 }
 
+
 function moveNodeInList(list, id, index) {
   const next = list.filter((nid) => nid !== id);
   const safeIndex = Math.max(0, Math.min(index, next.length));
   next.splice(safeIndex, 0, id);
   return next;
+}
+
+function dedupeData(input) {
+  let changed = false;
+  input.nodes = { ...(input.nodes || {}) };
+
+  for (const group of input.groups || []) {
+    const uniq = [];
+    const set = new Set();
+    for (const id of group.nodes || []) {
+      if (!input.nodes[id]) {
+        changed = true;
+        continue;
+      }
+      if (set.has(id)) {
+        changed = true;
+        continue;
+      }
+      set.add(id);
+      uniq.push(id);
+    }
+    group.nodes = uniq;
+  }
+
+  for (const node of Object.values(input.nodes)) {
+    if (node.type === "folder" && Array.isArray(node.children)) {
+      const uniq = [];
+      const set = new Set();
+      for (const id of node.children) {
+        if (!input.nodes[id]) {
+          changed = true;
+          continue;
+        }
+        if (set.has(id)) {
+          changed = true;
+          continue;
+        }
+        set.add(id);
+        uniq.push(id);
+      }
+      node.children = uniq;
+    }
+  }
+
+  return changed;
+}
+
+function moveGroupBefore(sourceId, targetId) {
+  const ids = data.groups.map((g) => g.id).filter((id) => id !== sourceId);
+  const targetIndex = ids.indexOf(targetId);
+  ids.splice(targetIndex, 0, sourceId);
+  ids.forEach((id, idx) => {
+    const group = data.groups.find((g) => g.id === id);
+    if (group) group.order = idx;
+  });
+  persistData();
+  render();
+}
+
+function renameGroup(group) {
+  const name = prompt("分组名称", group.name);
+  if (!name) return;
+  group.name = name.trim();
+  persistData();
+  render();
+}
+
+function deleteGroup(group) {
+  if (data.groups.length <= 1) {
+    toast("至少保留一个分组");
+    return;
+  }
+  if (!confirm(`删除分组「${group.name}」？`)) return;
+  data.groups = data.groups.filter((g) => g.id !== group.id);
+  if (activeGroupId === group.id) activeGroupId = data.groups[0].id;
+  persistData();
+  render();
 }
 
 function deleteNodes(ids) {
@@ -516,6 +799,8 @@ function closeModal() {
   elements.modalOverlay.classList.add("hidden");
   elements.modalOverlay.setAttribute("aria-hidden", "true");
   elements.modal.innerHTML = "";
+  settingsOpen = false;
+  settingsSaving = false;
 }
 
 function openAddModal() {
@@ -579,13 +864,16 @@ function openAddModal() {
 
   $("btnCancel").addEventListener("click", closeModal);
   $("btnSave").addEventListener("click", async () => {
+    const snapshot = JSON.parse(JSON.stringify(data));
     const url = normalizeUrl($("fieldUrl").value.trim());
     if (!url) {
       toast("URL 不合法");
       return;
     }
-    const title = $("fieldTitle").value.trim() || new URL(url).hostname;
-    const iconType = iconTypeEl.value;
+    let title = $("fieldTitle").value.trim();
+    const titlePending = !title;
+    if (!title) title = new URL(url).hostname;
+    let iconType = iconTypeEl.value;
     let iconData = "";
     let color = "";
 
@@ -600,6 +888,11 @@ function openAddModal() {
       iconData = $("fieldRemote").value.trim();
     }
 
+    const iconPending = iconType === "auto";
+    if (iconType === "auto") {
+      iconType = "letter";
+    }
+
     pushBackup();
     const id = `itm_${Date.now()}`;
     data.nodes[id] = {
@@ -610,6 +903,8 @@ function openAddModal() {
       iconType,
       iconData,
       color,
+      titlePending,
+      iconPending,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -617,12 +912,41 @@ function openAddModal() {
     if (openFolderId) {
       data.nodes[openFolderId].children.push(id);
     } else {
-      getActiveGroup().nodes.push(id);
+      const targetGroup = getActiveGroup();
+      targetGroup.nodes.push(id);
+      if (activeGroupId === RECENT_GROUP_ID) {
+        activeGroupId = targetGroup.id;
+      }
     }
-    await persistData();
+    data.settings.lastActiveGroupId = getActiveGroup().id;
+    debugLog("add_item", {
+      id,
+      url,
+      groupId: openFolderId ? openFolderId : getActiveGroup().id,
+      openFolderId: openFolderId || "",
+    });
+    const result = await persistData();
+    if (!result.ok) {
+      data = snapshot;
+      render();
+      toast("保存失败：本地存储空间不足");
+      return;
+    }
     render();
     closeModal();
-    toast("新增成功");
+    if (titlePending) fetchTitleInBackground(id, url);
+    if (iconPending) fetchFaviconInBackground(id, url);
+    if (result.warning === "local_trimmed_backups") {
+      toast("新增成功（已清理备份以释放空间）");
+    } else if (result.warning === "local_trimmed_icons") {
+      toast("新增成功（已重置上传图标以释放空间）");
+    } else if (result.warning === "local_trimmed_background") {
+      toast("新增成功（已清理自定义背景以释放空间）");
+    } else if (result.warning === "sync_quota_exceeded") {
+      toast("新增成功（同步空间不足，已保存到本地）");
+    } else {
+      toast("新增成功");
+    }
   });
 }
 
@@ -658,7 +982,7 @@ function openEditModal(node) {
 
   if (node.type === "item") {
     const iconTypeEl = $("fieldIconType");
-    iconTypeEl.value = node.iconType || "auto";
+    iconTypeEl.value = node.iconType === "letter" ? "auto" : (node.iconType || "auto");
     const iconExtra = $("iconExtra");
     function renderIconExtra(type) {
       iconExtra.innerHTML = "";
@@ -676,6 +1000,7 @@ function openEditModal(node) {
 
   $("btnCancel").addEventListener("click", closeModal);
   $("btnSave").addEventListener("click", async () => {
+    const snapshot = JSON.parse(JSON.stringify(data));
     pushBackup();
     node.title = $("fieldTitle").value.trim() || node.title;
     if (node.type === "item") {
@@ -700,40 +1025,45 @@ function openEditModal(node) {
       }
     }
     node.updatedAt = Date.now();
-    await persistData();
+    const result = await persistData();
+    if (!result.ok) {
+      data = snapshot;
+      render();
+      toast("保存失败：本地存储空间不足");
+      return;
+    }
     render();
     closeModal();
-    toast("保存成功");
+    if (result.warning === "local_trimmed_backups") {
+      toast("保存成功（已清理备份以释放空间）");
+    } else if (result.warning === "local_trimmed_icons") {
+      toast("保存成功（已重置上传图标以释放空间）");
+    } else if (result.warning === "local_trimmed_background") {
+      toast("保存成功（已清理自定义背景以释放空间）");
+    } else if (result.warning === "sync_quota_exceeded") {
+      toast("保存成功（同步空间不足，已保存到本地）");
+    } else {
+      toast("保存成功");
+    }
   });
 }
 
 function openOpenModeMenu() {
-  const html = `
-    <h2>打开方式</h2>
-    <div class="section">
-      <select id="fieldOpenMode">
-        <option value="current">当前标签打开</option>
-        <option value="new">新标签打开</option>
-        <option value="background">后台新标签打开</option>
-      </select>
-    </div>
-    <div class="actions">
-      <button id="btnCancel" class="icon-btn">取消</button>
-      <button id="btnSave" class="icon-btn">保存</button>
-    </div>
-  `;
-  openModal(html);
-  $("fieldOpenMode").value = data.settings.openMode;
-  $("btnCancel").addEventListener("click", closeModal);
-  $("btnSave").addEventListener("click", async () => {
-    data.settings.openMode = $("fieldOpenMode").value;
-    await persistData();
-    closeModal();
-    toast("已更新打开方式");
-  });
+  const modes = [
+    { id: "current", label: "当前标签打开" },
+    { id: "new", label: "新标签打开" },
+    { id: "background", label: "后台新标签打开" },
+  ];
+  const idx = modes.findIndex((m) => m.id === data.settings.openMode);
+  const next = modes[(idx + 1) % modes.length];
+  data.settings.openMode = next.id;
+  persistData();
+  updateOpenModeButton();
+  toast(`${next.label}`);
 }
 
 function openSettingsModal() {
+  settingsOpen = true;
   const groupsHtml = data.groups
     .sort((a, b) => a.order - b.order)
     .map(
@@ -755,7 +1085,17 @@ function openSettingsModal() {
       <label><input id="settingShowSearch" type="checkbox"> 显示顶部搜索框</label>
       <label><input id="settingEnableSearchEngine" type="checkbox"> 回车使用默认搜索引擎</label>
       <label>默认搜索引擎 URL</label>
-      <input id="settingSearchEngine" type="text" placeholder="https://www.bing.com/search?q=" />
+      <div class="row">
+        <select id="settingSearchEnginePreset">
+          <option value="https://www.google.com/search?q=">Google</option>
+          <option value="https://www.baidu.com/s?wd=">百度</option>
+          <option value="https://www.bing.com/search?q=">Bing</option>
+          <option value="https://www.so.com/s?q=">360</option>
+          <option value="https://www.yandex.com/search/?text=">Yandex</option>
+          <option value="custom">自定义</option>
+        </select>
+        <input id="settingSearchEngine" type="text" placeholder="https://www.bing.com/search?q=" />
+      </div>
     </div>
 
     <div class="section">
@@ -780,11 +1120,11 @@ function openSettingsModal() {
         </div>
       </div>
       <label>网格密度</label>
-      <select id="settingDensity">
-        <option value="compact">紧凑</option>
-        <option value="standard">标准</option>
-        <option value="spacious">宽松</option>
-      </select>
+      <div class="row">
+        <label><input type="radio" name="density" value="compact" /> 紧凑</label>
+        <label><input type="radio" name="density" value="standard" /> 标准</label>
+        <label><input type="radio" name="density" value="spacious" /> 宽松</label>
+      </div>
     </div>
 
     <div class="section">
@@ -795,10 +1135,18 @@ function openSettingsModal() {
         <option value="gradient">渐变</option>
         <option value="custom">自定义图片</option>
       </select>
-      <label>背景颜色</label>
-      <input id="settingBgColor" type="color" />
-      <label>渐变 CSS</label>
-      <input id="settingBgGradient" type="text" placeholder="linear-gradient(...)" />
+      <div id="bgColorWrap">
+        <label>背景颜色</label>
+        <input id="settingBgColor" type="color" />
+      </div>
+      <div id="bgGradientWrap">
+        <label>渐变颜色</label>
+        <div class="row">
+          <input id="settingBgGradientA" type="color" />
+          <input id="settingBgGradientB" type="color" />
+        </div>
+      </div>
+      <input id="settingBgGradient" type="hidden" />
       <label>自定义图片</label>
       <input id="settingBgFile" type="file" accept="image/*" />
     </div>
@@ -809,8 +1157,35 @@ function openSettingsModal() {
     </div>
 
     <div class="section">
+      <label>主题颜色</label>
+      <select id="settingTheme">
+        <option value="system">跟随系统</option>
+        <option value="light">浅色</option>
+        <option value="dark">深色</option>
+      </select>
+    </div>
+
+    <div class="section">
+      <label>字体大小</label>
+      <input id="settingFontSize" type="number" min="10" max="24" />
+    </div>
+
+    <div class="section">
+      <label>默认保存分组</label>
+      <select id="settingDefaultGroupMode">
+        <option value="last">上次添加的分组</option>
+        <option value="fixed">固定分组</option>
+      </select>
+      <select id="settingDefaultGroupId"></select>
+    </div>
+
+    <div class="section">
+      <label><input id="settingSidebarCollapsed" type="checkbox"> 收起左侧分组</label>
+      <button id="btnToggleSidebarSetting" class="icon-btn">收起/展开</button>
+    </div>
+
+    <div class="section">
       <label><input id="settingSync" type="checkbox"> 启用同步</label>
-      <label><input id="settingTrash" type="checkbox"> 删除进入回收站（预留）</label>
       <label>最大备份数量（0 表示不备份）</label>
       <input id="settingBackup" type="number" min="0" />
       <label><input id="settingIconRetry" type="checkbox"> 18:00 自动重试图标</label>
@@ -840,25 +1215,74 @@ function openSettingsModal() {
   $("settingShowSearch").checked = data.settings.showSearch;
   $("settingEnableSearchEngine").checked = data.settings.enableSearchEngine;
   $("settingSearchEngine").value = data.settings.searchEngineUrl;
+  const presets = {
+    "https://www.google.com/search?q=": "https://www.google.com/search?q=",
+    "https://www.baidu.com/s?wd=": "https://www.baidu.com/s?wd=",
+    "https://www.bing.com/search?q=": "https://www.bing.com/search?q=",
+    "https://www.so.com/s?q=": "https://www.so.com/s?q=",
+    "https://www.yandex.com/search/?text=": "https://www.yandex.com/search/?text=",
+  };
+  const presetValue = presets[data.settings.searchEngineUrl] || "custom";
+  $("settingSearchEnginePreset").value = presetValue;
+  $("settingSearchEngine").disabled = presetValue !== "custom";
   $("settingOpenMode").value = data.settings.openMode;
   $("settingFixedLayout").checked = data.settings.fixedLayout;
   $("settingRows").value = data.settings.fixedRows;
   $("settingCols").value = data.settings.fixedCols;
-  $("settingDensity").value = data.settings.gridDensity;
+  const densityRadios = qsa("input[name='density']", elements.modal);
+  densityRadios.forEach((radio) => {
+    radio.checked = radio.value === data.settings.gridDensity;
+  });
   $("settingBgType").value = data.settings.backgroundType;
   $("settingBgColor").value = data.settings.backgroundColor;
   $("settingBgGradient").value = data.settings.backgroundGradient;
+  const match = /linear-gradient\\([^,]+,\\s*([^,]+),\\s*([^\\)]+)\\)/.exec(data.settings.backgroundGradient || "");
+  $("settingBgGradientA").value = match?.[1]?.trim() || "#1d2a3b";
+  $("settingBgGradientB").value = match?.[2]?.trim() || "#0b0f14";
   $("settingTooltip").checked = data.settings.tooltipEnabled;
   $("settingKeyboard").checked = data.settings.keyboardNav;
+  $("settingTheme").value = data.settings.theme || "system";
+  $("settingFontSize").value = data.settings.fontSize || 13;
   $("settingSync").checked = data.settings.syncEnabled;
-  $("settingTrash").checked = data.settings.trashEnabled;
   $("settingBackup").value = data.settings.maxBackups;
   $("settingIconRetry").checked = data.settings.iconRetryAtSix;
+  $("settingSidebarCollapsed").checked = data.settings.sidebarCollapsed;
+
+  const defaultGroupMode = $("settingDefaultGroupMode");
+  const defaultGroupId = $("settingDefaultGroupId");
+  defaultGroupMode.value = data.settings.defaultGroupMode || "last";
+  defaultGroupId.innerHTML = "";
+  data.groups
+    .sort((a, b) => a.order - b.order)
+    .forEach((g) => {
+      const opt = document.createElement("option");
+      opt.value = g.id;
+      opt.textContent = g.name;
+      defaultGroupId.appendChild(opt);
+    });
+  if (data.settings.defaultGroupId) defaultGroupId.value = data.settings.defaultGroupId;
 
   $("btnAddGroup").addEventListener("click", () => {
     const groupId = `grp_${Date.now()}`;
     data.groups.push({ id: groupId, name: "新分组", order: data.groups.length, nodes: [] });
     openSettingsModal();
+  });
+
+  $("btnToggleSidebarSetting").addEventListener("click", () => {
+    data.settings.sidebarCollapsed = !data.settings.sidebarCollapsed;
+    $("settingSidebarCollapsed").checked = data.settings.sidebarCollapsed;
+    applySidebarState();
+  });
+
+  $("settingSearchEnginePreset").addEventListener("change", (e) => {
+    const val = e.target.value;
+    if (val === "custom") {
+      $("settingSearchEngine").disabled = false;
+      $("settingSearchEngine").focus();
+    } else {
+      $("settingSearchEngine").value = val;
+      $("settingSearchEngine").disabled = true;
+    }
   });
 
   qsa(".group-up", elements.modal).forEach((btn) => {
@@ -921,8 +1345,9 @@ function openSettingsModal() {
     toast("图标刷新完成");
   });
 
-  $("btnCancel").addEventListener("click", closeModal);
-  $("btnSave").addEventListener("click", async () => {
+  const saveSettings = async () => {
+    if (settingsSaving) return;
+    settingsSaving = true;
     qsa(".group-name", elements.modal).forEach((input) => {
       const row = input.closest("[data-group]");
       const id = row.dataset.group;
@@ -937,14 +1362,21 @@ function openSettingsModal() {
     data.settings.fixedLayout = $("settingFixedLayout").checked;
     data.settings.fixedRows = Number($("settingRows").value) || 3;
     data.settings.fixedCols = Number($("settingCols").value) || 8;
-    data.settings.gridDensity = $("settingDensity").value;
+    const selectedDensity = qsa("input[name='density']", elements.modal).find((r) => r.checked);
+    data.settings.gridDensity = selectedDensity ? selectedDensity.value : data.settings.gridDensity;
     data.settings.backgroundType = $("settingBgType").value;
     data.settings.backgroundColor = $("settingBgColor").value;
-    data.settings.backgroundGradient = $("settingBgGradient").value.trim() || data.settings.backgroundGradient;
+    const gA = $("settingBgGradientA").value || "#1d2a3b";
+    const gB = $("settingBgGradientB").value || "#0b0f14";
+    data.settings.backgroundGradient = `linear-gradient(120deg, ${gA}, ${gB})`;
     data.settings.tooltipEnabled = $("settingTooltip").checked;
     data.settings.keyboardNav = $("settingKeyboard").checked;
+    data.settings.fontSize = Number($("settingFontSize").value) || data.settings.fontSize;
+    data.settings.theme = $("settingTheme").value;
+    data.settings.defaultGroupMode = $("settingDefaultGroupMode").value;
+    data.settings.defaultGroupId = $("settingDefaultGroupId").value;
+    data.settings.sidebarCollapsed = $("settingSidebarCollapsed").checked;
     data.settings.syncEnabled = $("settingSync").checked;
-    data.settings.trashEnabled = $("settingTrash").checked;
     data.settings.maxBackups = Number($("settingBackup").value) || 0;
     data.settings.iconRetryAtSix = $("settingIconRetry").checked;
 
@@ -954,12 +1386,24 @@ function openSettingsModal() {
     }
 
     applyDensity();
+    applyTheme();
     await persistData();
     await loadBackground();
     closeModal();
     render();
     toast("设置已保存");
-  });
+  };
+
+  $("btnCancel").addEventListener("click", closeModal);
+  $("btnSave").addEventListener("click", saveSettings);
+
+  const updateBgControls = () => {
+    const type = $("settingBgType").value;
+    $("bgColorWrap").classList.toggle("hidden", type === "bing" || type === "gradient");
+    $("bgGradientWrap").classList.toggle("hidden", type !== "gradient");
+  };
+  $("settingBgType").addEventListener("change", updateBgControls);
+  updateBgControls();
 }
 
 function openExportModal() {
@@ -1064,6 +1508,85 @@ function readFileAsDataUrl(file) {
   });
 }
 
+function probeImage(url, timeoutMs = 6000) {
+  return new Promise((resolve) => {
+    let done = false;
+    const img = new Image();
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      img.onload = null;
+      img.onerror = null;
+      resolve(ok);
+    };
+    img.onload = () => finish(true);
+    img.onerror = () => finish(false);
+    img.src = url;
+  });
+}
+
+async function fetchTitleInBackground(nodeId, url) {
+  const title = await fetchTitleViaTab(url);
+  if (!title) return;
+  const target = data?.nodes?.[nodeId];
+  if (!target || !target.titlePending) return;
+  target.title = title;
+  target.titlePending = false;
+  await persistData();
+  render();
+}
+
+async function fetchFaviconInBackground(nodeId, url) {
+  if (!data?.settings?.iconFetch) return;
+  const candidates = getFaviconCandidates(url);
+  if (!candidates.length) return;
+  const cache = await loadIconCache();
+  const siteKey = getSiteKey(url);
+  for (const candidate of candidates) {
+    const ok = await probeImage(candidate);
+    if (!ok) continue;
+    cache[url] = { url: candidate, ts: Date.now() };
+    if (siteKey) cache[siteKey] = { url: candidate, ts: Date.now() };
+    await saveIconCache(cache);
+    const target = data?.nodes?.[nodeId];
+    if (target) target.iconPending = false;
+    await persistData();
+    render();
+    return;
+  }
+  const target = data?.nodes?.[nodeId];
+  if (target) {
+    target.iconPending = false;
+    await persistData();
+    render();
+  }
+}
+
+async function fetchTitleViaTab(url) {
+  const api = getChromeApi();
+  if (!api?.tabs) return "";
+  return new Promise((resolve) => {
+    api.tabs.create({ url, active: false }, (tab) => {
+      if (!tab?.id) return resolve("");
+      const tabId = tab.id;
+      const timeout = setTimeout(() => finish(""), 6000);
+      const finish = (title) => {
+        clearTimeout(timeout);
+        api.tabs.onUpdated.removeListener(onUpdated);
+        api.tabs.remove(tabId, () => resolve(title || ""));
+      };
+      const onUpdated = (id, info, updatedTab) => {
+        if (id === tabId && info.status === "complete") {
+          finish(updatedTab?.title || "");
+        }
+      };
+      api.tabs.onUpdated.addListener(onUpdated);
+    });
+  });
+}
+
 async function loadRecentHistory() {
   const api = getChromeApi();
   if (!api?.history?.search) return [];
@@ -1073,8 +1596,16 @@ async function loadRecentHistory() {
     const items = typeof result?.then === "function" ? await result : await new Promise((resolve) => {
       api.history.search({ text: "", startTime, maxResults: RECENT_LIMIT }, (res) => resolve(res || []));
     });
+    const seen = new Set();
     return (items || [])
       .filter((item) => item.url)
+      .filter((item) => {
+        let norm = item.url;
+        try { norm = new URL(item.url).href; } catch {}
+        if (seen.has(norm)) return false;
+        seen.add(norm);
+        return true;
+      })
       .map((item, idx) => ({
         id: `recent_${idx}`,
         type: "history",
@@ -1121,6 +1652,38 @@ function handleSearchInput() {
   });
 }
 
+function ensureSelectionBox() {
+  if (!selectionBox) {
+    selectionBox = document.createElement("div");
+    selectionBox.className = "selection-box hidden";
+    document.body.appendChild(selectionBox);
+  }
+}
+
+function updateSelectionBox(x1, y1, x2, y2) {
+  const left = Math.min(x1, x2);
+  const top = Math.min(y1, y2);
+  const width = Math.abs(x1 - x2);
+  const height = Math.abs(y1 - y2);
+  selectionBox.style.left = `${left}px`;
+  selectionBox.style.top = `${top}px`;
+  selectionBox.style.width = `${width}px`;
+  selectionBox.style.height = `${height}px`;
+  selectionBox.classList.remove("hidden");
+}
+
+function selectTilesInBox(grid, x1, y1, x2, y2) {
+  const left = Math.min(x1, x2);
+  const right = Math.max(x1, x2);
+  const top = Math.min(y1, y2);
+  const bottom = Math.max(y1, y2);
+  qsa(".tile", grid).forEach((tile) => {
+    const rect = tile.getBoundingClientRect();
+    const hit = rect.left < right && rect.right > left && rect.top < bottom && rect.bottom > top;
+    if (hit) selectedIds.add(tile.dataset.id);
+  });
+}
+
 function getDropIndex(grid, x, y) {
   const tiles = qsa(".tile", grid);
   for (let i = 0; i < tiles.length; i++) {
@@ -1131,17 +1694,54 @@ function getDropIndex(grid, x, y) {
 }
 
 async function init() {
-  data = await loadData();
-  if (data.settings.syncEnabled) {
+  debugLog("init_start", getRuntimeInfo());
+  const localData = await loadData();
+  debugLog("init_local", {
+    groups: localData.groups?.length || 0,
+    nodes: Object.keys(localData.nodes || {}).length,
+    lastUpdated: localData.lastUpdated || 0,
+    syncEnabled: !!localData.settings?.syncEnabled,
+  });
+  if (localData.settings.syncEnabled) {
     const syncData = await loadDataFromArea(true);
-    if (syncData && syncData.groups?.length) data = syncData;
+    if (syncData && syncData.groups?.length) {
+      const localTs = Number(localData.lastUpdated || 0);
+      const syncTs = Number(syncData.lastUpdated || 0);
+      data = syncTs >= localTs ? syncData : localData;
+      if (data === localData) {
+        await saveData(localData, true);
+      }
+    } else {
+      data = localData;
+    }
+  } else {
+    data = localData;
   }
-  activeGroupId = data.settings.lastActiveGroupId || RECENT_GROUP_ID;
-  if (activeGroupId !== RECENT_GROUP_ID && !data.groups.find((g) => g.id === activeGroupId)) {
+  const deduped = dedupeData(data);
+  if (deduped) {
+    await saveData(data, data.settings.syncEnabled);
+    if (data.settings.syncEnabled) await saveData(data, false);
+  }
+  debugLog("init_ready", {
+    groups: data.groups?.length || 0,
+    nodes: Object.keys(data.nodes || {}).length,
+    lastUpdated: data.lastUpdated || 0,
+    deduped,
+    activeGroupId,
+  });
+  const preferredGroupId = data.settings.lastActiveGroupId;
+  if (preferredGroupId === RECENT_GROUP_ID) {
     activeGroupId = RECENT_GROUP_ID;
+  } else if (preferredGroupId && data.groups.find((g) => g.id === preferredGroupId)) {
+    activeGroupId = preferredGroupId;
+  } else {
+    activeGroupId = data.groups?.[0]?.id || RECENT_GROUP_ID;
+    data.settings.lastActiveGroupId = activeGroupId;
   }
   recentItems = await loadRecentHistory();
   applyDensity();
+  applyTheme();
+  applySidebarState();
   closeModal();
   closeFolder();
   await loadBackground();
@@ -1154,6 +1754,19 @@ function render() {
   renderGrid();
   elements.topSearchWrap.classList.toggle("hidden", !data.settings.showSearch);
   elements.emptyHintToggle.checked = data.settings.emptyHintDisabled;
+  elements.btnSelectAll.classList.toggle("hidden", !selectionMode);
+  elements.btnBatchDelete.textContent = selectionMode ? "删除" : "批量删除";
+  updateOpenModeButton();
+}
+
+function updateOpenModeButton() {
+  const map = {
+    current: "当前标签打开",
+    new: "新标签打开",
+    background: "后台新标签打开",
+  };
+  const label = map[data.settings.openMode] || "当前标签打开";
+  elements.btnOpenMode.textContent = `${label}`;
 }
 
 function bindEvents() {
@@ -1161,6 +1774,11 @@ function bindEvents() {
 
   elements.btnAdd.addEventListener("click", openAddModal);
   elements.btnFolderAdd.addEventListener("click", openAddModal);
+  elements.btnToggleSidebar?.addEventListener("click", () => {
+    data.settings.sidebarCollapsed = !data.settings.sidebarCollapsed;
+    applySidebarState();
+    persistData();
+  });
   elements.recentTab.addEventListener("click", async () => {
     activeGroupId = RECENT_GROUP_ID;
     openFolderId = null;
@@ -1191,7 +1809,8 @@ function bindEvents() {
     }
     const ids = Array.from(selectedIds);
     if (!ids.length) {
-      toast("未选择任何按钮");
+      clearSelection();
+      render();
       return;
     }
     deleteNodes(ids);
@@ -1212,7 +1831,8 @@ function bindEvents() {
     }
     const ids = Array.from(selectedIds);
     if (!ids.length) {
-      toast("未选择任何按钮");
+      clearSelection();
+      render();
       return;
     }
     deleteNodes(ids);
@@ -1220,9 +1840,34 @@ function bindEvents() {
     render();
   });
 
+  elements.btnSelectAll.addEventListener("click", () => {
+    if (!selectionMode) return;
+    const grid = openFolderId ? elements.folderGrid : elements.grid;
+    qsa(".tile", grid).forEach((tile) => selectedIds.add(tile.dataset.id));
+    render();
+  });
+
+  elements.main?.addEventListener?.("click", (e) => {
+    if (suppressBlankClick) {
+      suppressBlankClick = false;
+      return;
+    }
+    if (!selectionMode || boxSelecting) return;
+    if (e.target.closest(".tile")) return;
+    clearSelection();
+    render();
+  });
+
   elements.btnOpenMode.addEventListener("click", openOpenModeMenu);
   elements.btnSettings.addEventListener("click", openSettingsModal);
-  elements.btnSearch.addEventListener("click", () => elements.topSearch.focus());
+  elements.btnSearch.addEventListener("click", () => {
+    const query = elements.topSearch.value.trim();
+    if (!query) {
+      elements.topSearch.focus();
+      return;
+    }
+    openUrl(`${data.settings.searchEngineUrl}${encodeURIComponent(query)}`, "new");
+  });
 
   elements.topSearch.addEventListener("input", handleSearchInput);
   elements.topSearch.addEventListener("keydown", (e) => {
@@ -1249,8 +1894,55 @@ function bindEvents() {
   elements.btnCloseFolder.addEventListener("click", closeFolder);
 
   elements.modalOverlay.addEventListener("click", (e) => {
-    if (e.target === elements.modalOverlay) closeModal();
+    if (e.target !== elements.modalOverlay) return;
+    if (settingsOpen) {
+      const btn = $("btnSave");
+      if (btn) btn.click();
+      return;
+    }
+    closeModal();
   });
+
+  const handleBoxSelectStart = (e, grid) => {
+    if (e.button !== 0) return;
+    if (e.target.closest(".tile")) return;
+    if (!selectionMode) return;
+    boxSelecting = true;
+    isDraggingBox = false;
+    ensureSelectionBox();
+    selectionStart = { x: e.clientX, y: e.clientY, grid };
+    updateSelectionBox(e.clientX, e.clientY, e.clientX, e.clientY);
+  };
+
+  const handleBoxSelectMove = (e) => {
+    if (!boxSelecting || !selectionStart) return;
+    const dx = Math.abs(e.clientX - selectionStart.x);
+    const dy = Math.abs(e.clientY - selectionStart.y);
+    if (dx + dy > 6) isDraggingBox = true;
+    updateSelectionBox(selectionStart.x, selectionStart.y, e.clientX, e.clientY);
+  };
+
+  const handleBoxSelectEnd = (e) => {
+    if (!boxSelecting || !selectionStart) return;
+    if (isDraggingBox) {
+      selectTilesInBox(selectionStart.grid, selectionStart.x, selectionStart.y, e.clientX, e.clientY);
+      suppressBlankClick = true;
+    }
+    boxSelecting = false;
+    selectionStart = null;
+    isDraggingBox = false;
+    if (selectionBox) selectionBox.classList.add("hidden");
+    render();
+  };
+
+  elements.grid.addEventListener("mousedown", (e) => handleBoxSelectStart(e, elements.grid));
+  elements.folderGrid.addEventListener("mousedown", (e) => handleBoxSelectStart(e, elements.folderGrid));
+  elements.main?.addEventListener?.("mousedown", (e) => {
+    if (openFolderId) return;
+    handleBoxSelectStart(e, elements.grid);
+  });
+  document.addEventListener("mousemove", handleBoxSelectMove);
+  document.addEventListener("mouseup", handleBoxSelectEnd);
 
   document.addEventListener("click", (e) => {
     if (!elements.contextMenu.contains(e.target)) closeContextMenu();

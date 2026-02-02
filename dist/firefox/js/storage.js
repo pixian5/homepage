@@ -1,6 +1,7 @@
 ﻿const ROOT_KEY = "homepage_data";
 const ICON_CACHE_KEY = "homepage_icon_cache";
 const BG_CACHE_KEY = "homepage_bg_cache";
+const SYNC_ITEM_QUOTA_BYTES = 7500;
 
 const DEFAULT_SETTINGS = {
   showSearch: true,
@@ -11,6 +12,7 @@ const DEFAULT_SETTINGS = {
   fixedRows: 3,
   fixedCols: 8,
   gridDensity: "standard",
+  fontSize: 13,
   tooltipEnabled: true,
   emptyHintDisabled: false,
   backgroundType: "bing",
@@ -20,11 +22,16 @@ const DEFAULT_SETTINGS = {
   backgroundFade: true,
   iconFetch: true,
   iconRetryAtSix: true,
-  trashEnabled: false,
   syncEnabled: false,
   maxBackups: 30,
   keyboardNav: true,
   lastActiveGroupId: "",
+  defaultGroupMode: "last",
+  defaultGroupId: "",
+  theme: "system",
+  lastSaveUrl: "",
+  lastSaveTs: 0,
+  sidebarCollapsed: false,
 };
 
 function nowTs() {
@@ -57,21 +64,76 @@ function storageArea(useSync) {
   return useSync ? api.storage.sync : api.storage.local;
 }
 
+function getLastError() {
+  const api = getChrome();
+  return api?.runtime?.lastError || null;
+}
+
+function estimateBytes(value) {
+  const str = JSON.stringify(value);
+  if (typeof TextEncoder !== "undefined") {
+    return new TextEncoder().encode(str).length;
+  }
+  return str.length;
+}
+
+function isQuotaError(err) {
+  return typeof err === "string" && err.toLowerCase().includes("quota");
+}
+
+function trimLocalBackups(data) {
+  if (Array.isArray(data.backups) && data.backups.length) {
+    data.backups = [];
+    return true;
+  }
+  return false;
+}
+
+function trimLocalUploadIcons(data) {
+  let changed = false;
+  for (const node of Object.values(data.nodes || {})) {
+    if (node.iconType === "upload" && node.iconData) {
+      node.iconData = "";
+      node.iconType = "auto";
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function trimLocalBackground(data) {
+  if (data.settings?.backgroundType === "custom" && data.settings.backgroundCustom) {
+    data.settings.backgroundCustom = "";
+    return true;
+  }
+  return false;
+}
+
 async function storageGet(area, key) {
   return new Promise((resolve) => {
-    area.get(key, (res) => resolve(res[key]));
+    area.get(key, (res) => {
+      const err = getLastError();
+      if (err) return resolve(undefined);
+      resolve(res[key]);
+    });
   });
 }
 
 async function storageSet(area, obj) {
   return new Promise((resolve) => {
-    area.set(obj, () => resolve());
+    area.set(obj, () => {
+      const err = getLastError();
+      resolve(err ? err.message : null);
+    });
   });
 }
 
 async function storageRemove(area, key) {
   return new Promise((resolve) => {
-    area.remove(key, () => resolve());
+    area.remove(key, () => {
+      const err = getLastError();
+      resolve(err ? err.message : null);
+    });
   });
 }
 
@@ -114,7 +176,35 @@ export async function saveData(data, useSync = false) {
   if (!api) return;
   const area = storageArea(useSync);
   data.lastUpdated = nowTs();
-  await storageSet(area, { [ROOT_KEY]: data });
+  const payload = useSync ? sanitizeForSync(data) : data;
+  if (useSync) {
+    const size = estimateBytes(payload);
+    if (size > SYNC_ITEM_QUOTA_BYTES) {
+      data.settings.syncEnabled = false;
+      await storageSet(storageArea(false), { [ROOT_KEY]: data });
+      return "sync_quota_exceeded";
+    }
+  }
+  let err = await storageSet(area, { [ROOT_KEY]: payload });
+  if (!useSync && err && isQuotaError(err)) {
+    if (trimLocalBackups(data)) {
+      err = await storageSet(area, { [ROOT_KEY]: data });
+      if (!err) return "local_trimmed_backups";
+    }
+    if (trimLocalUploadIcons(data)) {
+      err = await storageSet(area, { [ROOT_KEY]: data });
+      if (!err) return "local_trimmed_icons";
+    }
+    if (trimLocalBackground(data)) {
+      err = await storageSet(area, { [ROOT_KEY]: data });
+      if (!err) return "local_trimmed_background";
+    }
+  }
+  if (err && useSync) {
+    data.settings.syncEnabled = false;
+    await storageSet(storageArea(false), { [ROOT_KEY]: data });
+  }
+  return err;
 }
 
 export async function clearData(useSync = false) {
@@ -150,6 +240,23 @@ export async function saveBgCache(cache) {
   if (!api) return;
   const local = storageArea(false);
   await storageSet(local, { [BG_CACHE_KEY]: cache });
+}
+
+function sanitizeForSync(data) {
+  const clone = JSON.parse(JSON.stringify(data));
+  if (clone.settings) {
+    if (clone.settings.backgroundType === "custom") {
+      clone.settings.backgroundCustom = "";
+    }
+  }
+  clone.backups = [];
+  for (const node of Object.values(clone.nodes || {})) {
+    if (node.iconType === "upload" && node.iconData && node.iconData.length > 2048) {
+      node.iconData = "";
+      node.iconType = "auto";
+    }
+  }
+  return clone;
 }
 
 export function createBackupSnapshot(data) {

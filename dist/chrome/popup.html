@@ -1,0 +1,29 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>添加当前标签页</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="header">
+    <div class="title">添加当前标签页</div>
+  </div>
+
+  <div id="tabCard" class="tab-card"></div>
+
+  <div class="section">
+    <label class="label">保存到分组</label>
+    <select id="groupSelect" class="select"></select>
+  </div>
+
+  <div class="actions">
+    <button id="btnSave" class="btn primary">保存</button>
+  </div>
+
+  <div id="empty" class="empty hidden">未获取到当前标签页</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

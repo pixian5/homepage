@@ -207,13 +207,13 @@ html, body {
   overflow: hidden;
   min-height: 0;
   margin-right: calc(-1 * var(--app-padding-x));
-  padding-right: var(--app-padding-x);
+  padding-right: 0;
 }
 
 .grid {
   display: grid;
   gap: var(--grid-gap);
-  padding: 18px 0 40px 4px;
+  padding: 18px var(--app-padding-x) 40px 4px;
   grid-auto-rows: minmax(var(--tile-size), auto);
   position: relative;
   align-content: start;
@@ -224,7 +224,7 @@ html, body {
   scrollbar-width: auto;
 }
 .grid::-webkit-scrollbar { width: 20px; height: 20px; }
-.grid::-webkit-scrollbar-thumb { background: rgba(100, 110, 130, 0.45); border-radius: 999px; }
+.grid::-webkit-scrollbar-thumb { background: rgba(90, 100, 120, 0.6); border-radius: 999px; }
 .grid::-webkit-scrollbar-track { background: transparent; }
 
 .tile {

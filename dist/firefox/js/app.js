@@ -626,11 +626,11 @@ function openContextMenu(x, y, node) {
   elements.contextMenu.innerHTML = "";
   const actions = [];
   if (activeGroupId === RECENT_GROUP_ID && node.type === "history") {
-    actions.push({ label: "打开", fn: () => openUrl(normalizeUrl(node.url)) });
+    actions.push({ label: "在本页打开", fn: () => openUrl(normalizeUrl(node.url)) });
     actions.push({ label: "新标签打开", fn: () => openUrl(normalizeUrl(node.url), "new") });
     actions.push({ label: "添加到快捷", fn: () => openAddHistoryToGroup(node) });
   } else if (node.type !== "folder") {
-    actions.push({ label: "打开", fn: () => openUrl(normalizeUrl(node.url)) });
+    actions.push({ label: "在本页打开", fn: () => openUrl(normalizeUrl(node.url)) });
     actions.push({ label: "新标签打开", fn: () => openUrl(normalizeUrl(node.url), "new") });
     actions.push({ label: "后台打开", fn: () => openUrl(normalizeUrl(node.url), "background") });
   } else {

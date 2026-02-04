@@ -70,6 +70,8 @@ export function getSiteKey(pageUrl) {
   try {
     if (!isHttpUrl(pageUrl)) return "";
     const host = new URL(pageUrl).hostname;
+    if (!host.includes(".")) return "";
+    if (host === "localhost" || host.endsWith(".local")) return "";
     const root = getRootDomain(host);
     return root ? `site:${root}` : "";
   } catch {
@@ -82,6 +84,8 @@ export function getFaviconCandidates(pageUrl) {
     if (!isHttpUrl(pageUrl)) return [];
     const u = new URL(pageUrl);
     const host = u.hostname;
+    if (!host.includes(".")) return [];
+    if (host === "localhost" || host.endsWith(".local")) return [];
     return [
       `${u.origin}/favicon.ico`,
       `${FAVICON_API}${encodeURIComponent(host)}&sz=128`,

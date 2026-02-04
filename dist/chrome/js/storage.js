@@ -9,7 +9,6 @@ const DEFAULT_SETTINGS = {
   searchEngineUrl: "https://www.bing.com/search?q=",
   openMode: "current",
   fixedLayout: false,
-  fixedRows: 3,
   fixedCols: 8,
   gridDensity: "standard",
   fontSize: 13,

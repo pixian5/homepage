@@ -66,6 +66,7 @@ let isDraggingBox = false;
 let settingsOpen = false;
 let settingsSaving = false;
 let renderSeq = 0;
+let lastMainLayout = null;
 const DEBUG_LOG_KEY = "homepage_debug_log";
 
 const RECENT_GROUP_ID = "__recent__";
@@ -75,6 +76,11 @@ const densityMap = {
   compact: { gap: 10, size: 80, font: 12, icon: 32 },
   standard: { gap: 16, size: 96, font: 13, icon: 38 },
   spacious: { gap: 22, size: 112, font: 14, icon: 44 },
+};
+const bgOverlayMap = {
+  light: "rgba(245, 246, 250, 0.85)",
+  dark: "rgba(12, 15, 20, 0.72)",
+  image: "rgba(0, 0, 0, 0.08)",
 };
 
 function debugLog(event, payload = {}) {
@@ -129,11 +135,12 @@ window.homepageDebugEnv = async () => {
 function applyDensity() {
   const d = densityMap[data.settings.gridDensity] || densityMap.standard;
   document.documentElement.style.setProperty("--grid-gap", `${d.gap}px`);
-  document.documentElement.style.setProperty("--tile-size", `${d.size}px`);
   const baseFont = Number(data.settings.fontSize) || d.font;
   document.documentElement.style.setProperty("--tile-font", `${baseFont}px`);
   document.documentElement.style.setProperty("--base-font", `${baseFont}px`);
-  document.documentElement.style.setProperty("--tile-icon", `${d.icon}px`);
+  if (!data.settings.lastTileSize || data.settings.lastTileSize <= 0) {
+    data.settings.lastTileSize = d.size;
+  }
 }
 
 function applyTheme() {
@@ -141,9 +148,11 @@ function applyTheme() {
   if (theme === "system") {
     const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
     document.documentElement.setAttribute("data-theme", prefersDark ? "dark" : "light");
+    applyBackgroundOverlay();
     return;
   }
   document.documentElement.setAttribute("data-theme", theme);
+  applyBackgroundOverlay();
 }
 
 function applySidebarState() {
@@ -151,6 +160,22 @@ function applySidebarState() {
   if (elements.btnToggleSidebar) {
     elements.btnToggleSidebar.textContent = data.settings.sidebarCollapsed ? "展开" : "收起";
   }
+  syncSidebarTabLabels();
+}
+
+function syncSidebarTabLabels() {
+  if (!elements.recentTab) return;
+  const collapsed = !!data.settings.sidebarCollapsed;
+  const recentLabel = elements.recentTab.dataset.label || elements.recentTab.textContent || "最近浏览";
+  elements.recentTab.dataset.label = recentLabel;
+  elements.recentTab.setAttribute("aria-label", recentLabel);
+  elements.recentTab.textContent = collapsed ? "" : recentLabel;
+  qsa(".group-tab", elements.groupTabs).forEach((btn) => {
+    const label = btn.dataset.label || btn.textContent || "";
+    btn.dataset.label = label;
+    btn.setAttribute("aria-label", label || "分组");
+    btn.textContent = collapsed ? "" : label;
+  });
 }
 
 function toast(message, actionLabel, action) {
@@ -223,6 +248,17 @@ function setBackground(style) {
   }
 }
 
+function applyBackgroundOverlay() {
+  const type = data?.settings?.backgroundType || "bing";
+  const isImage = type === "bing" || type === "custom";
+  if (isImage) {
+    document.documentElement.style.setProperty("--bg-overlay", bgOverlayMap.image);
+    return;
+  }
+  const theme = document.documentElement.getAttribute("data-theme") || "dark";
+  document.documentElement.style.setProperty("--bg-overlay", bgOverlayMap[theme] || bgOverlayMap.dark);
+}
+
 async function loadBackground() {
   const settings = data.settings;
   elements.background.classList.add("is-loading");
@@ -232,7 +268,7 @@ async function loadBackground() {
     if (info.dataUrl) {
       setBackground(info.dataUrl);
       if (info.failed) toast("壁纸获取失败，已回退到缓存");
-      else toast("已更新今日 Bing 壁纸");
+      else if (!info.fromCache) toast("已更新今日 Bing 壁纸");
     } else {
       elements.background.style.background = settings.backgroundColor;
       toast("壁纸获取失败，已使用默认背景");
@@ -246,6 +282,7 @@ async function loadBackground() {
     setBackground(settings.backgroundCustom || settings.backgroundColor);
   }
 
+  applyBackgroundOverlay();
   elements.background.classList.remove("is-loading");
 }
 
@@ -330,12 +367,20 @@ function uniqueNodes(nodes) {
 function renderGroups() {
   elements.groupTabs.innerHTML = "";
   elements.recentTab.classList.toggle("active", activeGroupId === RECENT_GROUP_ID);
+  const recentLabel = elements.recentTab.dataset.label || elements.recentTab.textContent || "最近浏览";
+  elements.recentTab.dataset.label = recentLabel;
+  elements.recentTab.setAttribute("aria-label", recentLabel);
+  elements.recentTab.textContent = data.settings.sidebarCollapsed ? "" : recentLabel;
+  elements.recentTab.dataset.short = "0";
   data.groups
     .sort((a, b) => a.order - b.order)
-    .forEach((group) => {
+    .forEach((group, idx) => {
       const btn = document.createElement("button");
       btn.className = `group-tab draggable ${group.id === activeGroupId ? "active" : ""}`;
-      btn.textContent = group.name;
+      btn.dataset.label = group.name;
+      btn.setAttribute("aria-label", group.name);
+      btn.textContent = data.settings.sidebarCollapsed ? "" : group.name;
+      btn.dataset.short = String(idx + 1);
       btn.draggable = true;
       btn.addEventListener("click", () => {
         activeGroupId = group.id;
@@ -380,19 +425,40 @@ async function renderGrid() {
   const nodes = uniqueNodes(getCurrentNodes());
   grid.innerHTML = "";
 
-  const width = grid.getBoundingClientRect().width || grid.clientWidth || window.innerWidth;
+  const referenceGrid = openFolderId ? elements.grid : grid;
+  const width = referenceGrid.getBoundingClientRect().width || referenceGrid.clientWidth || window.innerWidth;
   const density = densityMap[data.settings.gridDensity] || densityMap.standard;
-  const tileSize = density.size || 96;
   const gap = density.gap || 16;
-  const style = getComputedStyle(grid);
+  const style = getComputedStyle(referenceGrid);
   const paddingX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
   const available = Math.max(0, width - paddingX);
-  const maxColumns = Math.max(1, Math.floor((available + gap) / (tileSize + gap)));
-  let columns = Math.max(1, maxColumns);
+  const minTile = 64;
+  const maxTile = 220;
+  const baseSize = data.settings.lastTileSize || density.size || 96;
+  let maxColumns = Math.max(1, Math.floor((available + gap) / (baseSize + gap)));
+  let columns = maxColumns;
   if (data.settings.fixedLayout) {
     const desired = Math.max(1, data.settings.fixedCols || 8);
     columns = Math.min(desired, maxColumns);
   }
+  let tileSize = baseSize;
+  if (columns <= 1 && available > 0) {
+    tileSize = Math.max(minTile, Math.min(maxTile, Math.floor(available)));
+  } else {
+    tileSize = Math.max(minTile, Math.min(maxTile, baseSize));
+  }
+  const iconRatio = density.icon && density.size ? density.icon / density.size : 0.4;
+  let iconSize = Math.max(18, Math.round(tileSize * iconRatio));
+  if (!openFolderId) {
+    lastMainLayout = { columns, tileSize, iconSize };
+  } else if (lastMainLayout) {
+    columns = lastMainLayout.columns;
+    tileSize = lastMainLayout.tileSize;
+    const iconRatioOverride = density.icon && density.size ? density.icon / density.size : 0.4;
+    iconSize = Math.max(18, Math.round(tileSize * iconRatioOverride));
+  }
+  grid.style.setProperty("--tile-size", `${tileSize}px`);
+  grid.style.setProperty("--tile-icon", `${iconSize}px`);
   grid.style.gridTemplateColumns = `repeat(${columns}, minmax(${tileSize}px, 1fr))`;
 
   for (const [idx, node] of nodes.entries()) {
@@ -619,6 +685,17 @@ function handleDropOnTile(targetId) {
 
   if (targetNode.type !== "folder") {
     pushBackup();
+    const inFolder = !!openFolderId;
+    const container = inFolder ? data.nodes[openFolderId] : getActiveGroup();
+    const list = inFolder ? container.children || [] : container.nodes;
+    const targetIndex = list.indexOf(targetId);
+    const sourceIndex = list.indexOf(sourceId);
+    let insertIndex = targetIndex >= 0 ? targetIndex : list.length;
+    if (sourceIndex >= 0 && sourceIndex < insertIndex) insertIndex -= 1;
+
+    removeNodeFromLocation(sourceId);
+    removeNodeFromLocation(targetId);
+
     const folderId = `fld_${Date.now()}`;
     const folder = {
       id: folderId,
@@ -630,11 +707,15 @@ function handleDropOnTile(targetId) {
     };
     data.nodes[folderId] = folder;
 
-    removeNodeFromLocation(sourceId);
-    removeNodeFromLocation(targetId);
-
-    const group = getActiveGroup();
-    group.nodes.push(folderId);
+    if (inFolder) {
+      const next = (container.children || []).filter((nid) => nid !== sourceId && nid !== targetId);
+      next.splice(Math.max(0, Math.min(insertIndex, next.length)), 0, folderId);
+      container.children = next;
+    } else {
+      const next = container.nodes.filter((nid) => nid !== sourceId && nid !== targetId);
+      next.splice(Math.max(0, Math.min(insertIndex, next.length)), 0, folderId);
+      container.nodes = next;
+    }
     persistData();
     render();
     toast("已创建文件夹");
@@ -728,9 +809,18 @@ function dedupeData(input) {
 }
 
 function moveGroupBefore(sourceId, targetId) {
-  const ids = data.groups.map((g) => g.id).filter((id) => id !== sourceId);
-  const targetIndex = ids.indexOf(targetId);
-  ids.splice(targetIndex, 0, sourceId);
+  const targetIndex = data.groups
+    .sort((a, b) => a.order - b.order)
+    .map((g) => g.id)
+    .indexOf(targetId);
+  moveGroupToIndex(sourceId, targetIndex);
+}
+
+function moveGroupToIndex(sourceId, index) {
+  const ordered = data.groups.sort((a, b) => a.order - b.order).map((g) => g.id);
+  const ids = ordered.filter((id) => id !== sourceId);
+  const safeIndex = Math.max(0, Math.min(index, ids.length));
+  ids.splice(safeIndex, 0, sourceId);
   ids.forEach((id, idx) => {
     const group = data.groups.find((g) => g.id === id);
     if (group) group.order = idx;
@@ -850,6 +940,11 @@ function openAddModal() {
 
   renderIconExtra(iconTypeEl.value);
   iconTypeEl.addEventListener("change", () => renderIconExtra(iconTypeEl.value));
+  const urlInput = $("fieldUrl");
+  if (urlInput) {
+    urlInput.focus();
+    if (urlInput.select) urlInput.select();
+  }
 
   $("btnFromTab").addEventListener("click", async () => {
     const api = getChromeApi();
@@ -1064,28 +1159,13 @@ function openOpenModeMenu() {
 
 function openSettingsModal() {
   settingsOpen = true;
-  const groupsHtml = data.groups
-    .sort((a, b) => a.order - b.order)
-    .map(
-      (g) => `
-      <div class="row" data-group="${g.id}">
-        <input type="text" value="${g.name}" class="group-name" />
-        <div style="display:flex; gap:8px; justify-content:flex-end;">
-          <button class="icon-btn group-up">上移</button>
-          <button class="icon-btn group-down">下移</button>
-          <button class="icon-btn group-del">删除</button>
-        </div>
-      </div>`
-    )
-    .join("");
-
   const html = `
     <h2>设置</h2>
     <div class="section">
       <label><input id="settingShowSearch" type="checkbox"> 显示顶部搜索框</label>
       <label><input id="settingEnableSearchEngine" type="checkbox"> 回车使用默认搜索引擎</label>
-      <label>默认搜索引擎 URL</label>
-      <div class="row">
+      <label>默认搜索引擎</label>
+      <div class="stack">
         <select id="settingSearchEnginePreset">
           <option value="https://www.google.com/search?q=">Google</option>
           <option value="https://www.baidu.com/s?wd=">百度</option>
@@ -1108,19 +1188,14 @@ function openSettingsModal() {
     </div>
 
     <div class="section">
-      <label><input id="settingFixedLayout" type="checkbox"> 固定布局</label>
-      <div class="row">
-        <div>
-          <label>行数</label>
-          <input id="settingRows" type="number" min="1" />
-        </div>
-        <div>
-          <label>列数</label>
+      <div class="row-inline">
+        <label><input id="settingFixedLayout" type="checkbox"> 固定列数</label>
+        <div class="inline-field">
           <input id="settingCols" type="number" min="1" />
         </div>
       </div>
-      <label>网格密度</label>
-      <div class="row">
+      <div class="row-inline">
+        <span class="inline-label">网格密度</span>
         <label><input type="radio" name="density" value="compact" /> 紧凑</label>
         <label><input type="radio" name="density" value="standard" /> 标准</label>
         <label><input type="radio" name="density" value="spacious" /> 宽松</label>
@@ -1171,12 +1246,14 @@ function openSettingsModal() {
     </div>
 
     <div class="section">
-      <label>默认保存分组</label>
-      <select id="settingDefaultGroupMode">
-        <option value="last">上次添加的分组</option>
-        <option value="fixed">固定分组</option>
-      </select>
-      <select id="settingDefaultGroupId"></select>
+      <div class="row-inline">
+        <span class="inline-label">默认保存分组</span>
+        <select id="settingDefaultGroupMode">
+          <option value="last">上次添加的分组</option>
+          <option value="fixed">固定分组</option>
+        </select>
+        <select id="settingDefaultGroupId"></select>
+      </div>
     </div>
 
     <div class="section">
@@ -1189,12 +1266,6 @@ function openSettingsModal() {
       <label>最大备份数量（0 表示不备份）</label>
       <input id="settingBackup" type="number" min="0" />
       <label><input id="settingIconRetry" type="checkbox"> 18:00 自动重试图标</label>
-    </div>
-
-    <div class="section">
-      <label>分组管理</label>
-      <div id="groupList">${groupsHtml}</div>
-      <button id="btnAddGroup" class="icon-btn">新增分组</button>
     </div>
 
     <div class="section">
@@ -1227,7 +1298,6 @@ function openSettingsModal() {
   $("settingSearchEngine").disabled = presetValue !== "custom";
   $("settingOpenMode").value = data.settings.openMode;
   $("settingFixedLayout").checked = data.settings.fixedLayout;
-  $("settingRows").value = data.settings.fixedRows;
   $("settingCols").value = data.settings.fixedCols;
   const densityRadios = qsa("input[name='density']", elements.modal);
   densityRadios.forEach((radio) => {
@@ -1261,12 +1331,13 @@ function openSettingsModal() {
       defaultGroupId.appendChild(opt);
     });
   if (data.settings.defaultGroupId) defaultGroupId.value = data.settings.defaultGroupId;
-
-  $("btnAddGroup").addEventListener("click", () => {
-    const groupId = `grp_${Date.now()}`;
-    data.groups.push({ id: groupId, name: "新分组", order: data.groups.length, nodes: [] });
-    openSettingsModal();
-  });
+  const updateDefaultGroupControls = () => {
+    const isFixed = defaultGroupMode.value === "fixed";
+    defaultGroupId.classList.toggle("hidden", !isFixed);
+    defaultGroupId.disabled = !isFixed;
+  };
+  defaultGroupMode.addEventListener("change", updateDefaultGroupControls);
+  updateDefaultGroupControls();
 
   $("btnToggleSidebarSetting").addEventListener("click", () => {
     data.settings.sidebarCollapsed = !data.settings.sidebarCollapsed;
@@ -1283,48 +1354,6 @@ function openSettingsModal() {
       $("settingSearchEngine").value = val;
       $("settingSearchEngine").disabled = true;
     }
-  });
-
-  qsa(".group-up", elements.modal).forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const row = btn.closest("[data-group]");
-      const id = row.dataset.group;
-      const idx = data.groups.findIndex((g) => g.id === id);
-      if (idx > 0) {
-        const tmp = data.groups[idx - 1];
-        data.groups[idx - 1] = data.groups[idx];
-        data.groups[idx] = tmp;
-        openSettingsModal();
-      }
-    });
-  });
-
-  qsa(".group-down", elements.modal).forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const row = btn.closest("[data-group]");
-      const id = row.dataset.group;
-      const idx = data.groups.findIndex((g) => g.id === id);
-      if (idx >= 0 && idx < data.groups.length - 1) {
-        const tmp = data.groups[idx + 1];
-        data.groups[idx + 1] = data.groups[idx];
-        data.groups[idx] = tmp;
-        openSettingsModal();
-      }
-    });
-  });
-
-  qsa(".group-del", elements.modal).forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const row = btn.closest("[data-group]");
-      const id = row.dataset.group;
-      if (data.groups.length <= 1) {
-        toast("至少保留一个分组");
-        return;
-      }
-      data.groups = data.groups.filter((g) => g.id !== id);
-      if (activeGroupId === id) activeGroupId = data.groups[0].id;
-      openSettingsModal();
-    });
   });
 
   $("btnExport").addEventListener("click", () => openExportModal());
@@ -1360,10 +1389,10 @@ function openSettingsModal() {
     data.settings.searchEngineUrl = $("settingSearchEngine").value.trim() || data.settings.searchEngineUrl;
     data.settings.openMode = $("settingOpenMode").value;
     data.settings.fixedLayout = $("settingFixedLayout").checked;
-    data.settings.fixedRows = Number($("settingRows").value) || 3;
     data.settings.fixedCols = Number($("settingCols").value) || 8;
     const selectedDensity = qsa("input[name='density']", elements.modal).find((r) => r.checked);
     data.settings.gridDensity = selectedDensity ? selectedDensity.value : data.settings.gridDensity;
+    data.settings.lastTileSize = (densityMap[data.settings.gridDensity] || densityMap.standard).size;
     data.settings.backgroundType = $("settingBgType").value;
     data.settings.backgroundColor = $("settingBgColor").value;
     const gA = $("settingBgGradientA").value || "#1d2a3b";
@@ -1892,6 +1921,11 @@ function bindEvents() {
   });
 
   elements.btnCloseFolder.addEventListener("click", closeFolder);
+  elements.folderOverlay.addEventListener("click", (e) => {
+    if (e.target.closest(".tile")) return;
+    if (e.target.closest(".overlay-header")) return;
+    closeFolder();
+  });
 
   elements.modalOverlay.addEventListener("click", (e) => {
     if (e.target !== elements.modalOverlay) return;
@@ -2001,6 +2035,32 @@ function bindEvents() {
     folder.children = moveNodeInList(folder.children || [], sourceId, index);
     persistData();
     render();
+  });
+
+  elements.groupTabs.addEventListener("dragover", (e) => {
+    if (!draggingGroupId) return;
+    e.preventDefault();
+    const rect = elements.groupTabs.getBoundingClientRect();
+    const edge = 24;
+    if (e.clientY < rect.top + edge) {
+      elements.groupTabs.scrollTop -= 16;
+    } else if (e.clientY > rect.bottom - edge) {
+      elements.groupTabs.scrollTop += 16;
+    }
+  });
+
+  elements.groupTabs.addEventListener("drop", (e) => {
+    if (!draggingGroupId) return;
+    e.preventDefault();
+    const rect = elements.groupTabs.getBoundingClientRect();
+    const edge = 24;
+    const total = data.groups.length;
+    if (e.clientY < rect.top + edge) {
+      moveGroupToIndex(draggingGroupId, 0);
+    } else if (e.clientY > rect.bottom - edge) {
+      moveGroupToIndex(draggingGroupId, total);
+    }
+    qsa(".group-tab", elements.groupTabs).forEach((el) => el.classList.remove("drop-target"));
   });
 }
 

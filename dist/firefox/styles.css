@@ -344,6 +344,7 @@ html, body {
   text-align: right;
 }
 .modal .actions { margin-top: 18px; display: flex; justify-content: flex-end; gap: 10px; }
+.modal .row-actions { display: inline-flex; gap: 8px; }
 
 .context-menu {
   position: fixed; z-index: 30; min-width: 160px;

@@ -628,7 +628,7 @@ function openContextMenu(x, y, node) {
   if (activeGroupId === RECENT_GROUP_ID && node.type === "history") {
     actions.push({ label: "打开", fn: () => openUrl(normalizeUrl(node.url)) });
     actions.push({ label: "新标签打开", fn: () => openUrl(normalizeUrl(node.url), "new") });
-    actions.push({ label: "添加到快捷", fn: () => addHistoryToShortcuts(node) });
+    actions.push({ label: "添加到快捷", fn: () => openAddHistoryToGroup(node) });
   } else if (node.type !== "folder") {
     actions.push({ label: "打开", fn: () => openUrl(normalizeUrl(node.url)) });
     actions.push({ label: "新标签打开", fn: () => openUrl(normalizeUrl(node.url), "new") });
@@ -1420,7 +1420,11 @@ function openSettingsModal() {
     data.settings.defaultGroupId = $("settingDefaultGroupId").value;
     data.settings.sidebarHidden = $("settingSidebarCollapsed").checked;
     data.settings.syncEnabled = $("settingSync").checked;
-    data.settings.maxBackups = Number($("settingBackup").value) || 0;
+    const nextMaxBackups = Number($("settingBackup").value) || 0;
+    if (nextMaxBackups > 0 && data.backups.length > nextMaxBackups) {
+      data.backups = data.backups.slice(0, nextMaxBackups);
+    }
+    data.settings.maxBackups = nextMaxBackups;
     data.settings.iconRetryAtSix = $("settingIconRetry").checked;
 
     const bgFile = $("settingBgFile").files?.[0];
@@ -1548,7 +1552,7 @@ function openImportModal() {
 
 function openBackupModal() {
   const list = data.backups
-    .map((b) => `<div class="row" data-backup="${b.id}"><div>${new Date(b.ts).toLocaleString()}</div><button class="icon-btn backup-restore">恢复</button></div>`)
+    .map((b) => `<div class="row" data-backup="${b.id}"><div>${new Date(b.ts).toLocaleString()}</div><div class="row-actions"><button class="icon-btn backup-restore">恢复</button><button class="icon-btn backup-delete">删除</button></div></div>`)
     .join("");
   const html = `
     <h2>备份管理</h2>
@@ -1566,6 +1570,18 @@ function openBackupModal() {
       closeModal();
       render();
       toast("已恢复备份");
+    });
+  });
+  qsa(".backup-delete", elements.modal).forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const row = btn.closest("[data-backup]");
+      if (!row) return;
+      const id = row.dataset.backup;
+      if (!id) return;
+      data.backups = (data.backups || []).filter((b) => b.id !== id);
+      persistData();
+      openBackupModal();
+      toast("已删除备份");
     });
   });
   $("btnClose").addEventListener("click", closeModal);
@@ -1691,6 +1707,65 @@ async function loadRecentHistory() {
 
 async function addHistoryToShortcuts(node) {
   if (!node?.url) return;
+  const targetGroupId = getPreferredGroupIdForNewItem();
+  if (!targetGroupId) {
+    toast("没有可用分组");
+    return;
+  }
+  return addHistoryToShortcutsInGroup(node, targetGroupId);
+}
+
+function getPreferredGroupIdForNewItem() {
+  if (data.settings.defaultGroupMode === "fixed" && data.settings.defaultGroupId) {
+    const fixed = data.groups.find((g) => g.id === data.settings.defaultGroupId);
+    if (fixed) return fixed.id;
+  }
+  if (data.settings.lastActiveGroupId && data.settings.lastActiveGroupId !== RECENT_GROUP_ID) {
+    const last = data.groups.find((g) => g.id === data.settings.lastActiveGroupId);
+    if (last) return last.id;
+  }
+  return data.groups?.[0]?.id || "";
+}
+
+function openAddHistoryToGroup(node) {
+  if (!node?.url) return;
+  if (!data.groups?.length) {
+    toast("没有可用分组");
+    return;
+  }
+  const options = data.groups
+    .sort((a, b) => a.order - b.order)
+    .map((g) => `<option value="${g.id}">${g.name}</option>`)
+    .join("");
+  const html = `
+    <h2>添加到快捷</h2>
+    <div class="section">
+      <label>选择分组</label>
+      <select id="addHistoryGroup">${options}</select>
+    </div>
+    <div class="actions">
+      <button id="btnAddHistoryCancel" class="icon-btn">取消</button>
+      <button id="btnAddHistorySave" class="icon-btn">保存</button>
+    </div>
+  `;
+  openModal(html);
+  const preferred = getPreferredGroupIdForNewItem();
+  if (preferred) $("addHistoryGroup").value = preferred;
+  $("btnAddHistoryCancel").addEventListener("click", closeModal);
+  $("btnAddHistorySave").addEventListener("click", async () => {
+    const groupId = $("addHistoryGroup").value;
+    await addHistoryToShortcutsInGroup(node, groupId);
+    closeModal();
+  });
+}
+
+async function addHistoryToShortcutsInGroup(node, groupId) {
+  if (!node?.url) return;
+  const targetGroup = data.groups.find((g) => g.id === groupId);
+  if (!targetGroup) {
+    toast("分组不存在");
+    return;
+  }
   pushBackup();
   const id = `itm_${Date.now()}`;
   data.nodes[id] = {
@@ -1704,7 +1779,7 @@ async function addHistoryToShortcuts(node) {
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
-  getActiveGroup().nodes.push(id);
+  targetGroup.nodes.push(id);
   await persistData();
   render();
   toast("已添加到快捷");

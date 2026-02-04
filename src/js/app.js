@@ -65,6 +65,9 @@ let suppressBlankClick = false;
 let isDraggingBox = false;
 let settingsOpen = false;
 let settingsSaving = false;
+let settingsSaveTimer = null;
+let settingsSaveQueued = false;
+let settingsSaveNow = null;
 let renderSeq = 0;
 let lastMainLayout = null;
 const DEBUG_LOG_KEY = "homepage_debug_log";
@@ -72,15 +75,16 @@ const DEBUG_LOG_KEY = "homepage_debug_log";
 const RECENT_GROUP_ID = "__recent__";
 const RECENT_LIMIT = 24;
 
+const DEFAULT_TILE_SIZE = 96;
+const DEFAULT_BASE_FONT = 13;
 const densityMap = {
-  compact: { gap: 10, size: 80, font: 12, icon: 32 },
-  standard: { gap: 16, size: 96, font: 13, icon: 38 },
-  spacious: { gap: 22, size: 112, font: 14, icon: 44 },
+  compact: { gap: 10 },
+  standard: { gap: 16 },
+  spacious: { gap: 22 },
 };
 const bgOverlayMap = {
   light: "rgba(245, 246, 250, 0.85)",
   dark: "rgba(12, 15, 20, 0.72)",
-  image: "rgba(0, 0, 0, 0.08)",
 };
 
 function debugLog(event, payload = {}) {
@@ -135,11 +139,11 @@ window.homepageDebugEnv = async () => {
 function applyDensity() {
   const d = densityMap[data.settings.gridDensity] || densityMap.standard;
   document.documentElement.style.setProperty("--grid-gap", `${d.gap}px`);
-  const baseFont = Number(data.settings.fontSize) || d.font;
+  const baseFont = Number(data.settings.fontSize) || DEFAULT_BASE_FONT;
   document.documentElement.style.setProperty("--tile-font", `${baseFont}px`);
   document.documentElement.style.setProperty("--base-font", `${baseFont}px`);
   if (!data.settings.lastTileSize || data.settings.lastTileSize <= 0) {
-    data.settings.lastTileSize = d.size;
+    data.settings.lastTileSize = DEFAULT_TILE_SIZE;
   }
 }
 
@@ -157,6 +161,7 @@ function applyTheme() {
 
 function applySidebarState() {
   document.body.classList.toggle("sidebar-collapsed", !!data.settings.sidebarCollapsed);
+  document.body.classList.toggle("sidebar-hidden", !!data.settings.sidebarHidden);
   if (elements.btnToggleSidebar) {
     elements.btnToggleSidebar.textContent = data.settings.sidebarCollapsed ? "展开" : "收起";
   }
@@ -251,12 +256,12 @@ function setBackground(style) {
 function applyBackgroundOverlay() {
   const type = data?.settings?.backgroundType || "bing";
   const isImage = type === "bing" || type === "custom";
+  const strength = Math.min(0.6, Math.max(0, Number(data?.settings?.backgroundOverlayStrength)));
   if (isImage) {
-    document.documentElement.style.setProperty("--bg-overlay", bgOverlayMap.image);
+    document.documentElement.style.setProperty("--bg-overlay", `rgba(0, 0, 0, ${strength})`);
     return;
   }
-  const theme = document.documentElement.getAttribute("data-theme") || "dark";
-  document.documentElement.style.setProperty("--bg-overlay", bgOverlayMap[theme] || bgOverlayMap.dark);
+  document.documentElement.style.setProperty("--bg-overlay", "rgba(0, 0, 0, 0)");
 }
 
 async function loadBackground() {
@@ -891,6 +896,12 @@ function closeModal() {
   elements.modal.innerHTML = "";
   settingsOpen = false;
   settingsSaving = false;
+  settingsSaveQueued = false;
+  settingsSaveNow = null;
+  if (settingsSaveTimer) {
+    clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = null;
+  }
 }
 
 function openAddModal() {
@@ -1178,14 +1189,6 @@ function openSettingsModal() {
       </div>
     </div>
 
-    <div class="section">
-      <label>打开方式</label>
-      <select id="settingOpenMode">
-        <option value="current">当前标签打开</option>
-        <option value="new">新标签打开</option>
-        <option value="background">后台新标签打开</option>
-      </select>
-    </div>
 
     <div class="section">
       <div class="row-inline">
@@ -1203,15 +1206,17 @@ function openSettingsModal() {
     </div>
 
     <div class="section">
-      <label>背景</label>
-      <select id="settingBgType">
-        <option value="bing">每日 Bing</option>
-        <option value="color">纯色</option>
-        <option value="gradient">渐变</option>
-        <option value="custom">自定义图片</option>
-      </select>
+      <div class="row-inline">
+        <span class="inline-label">背景</span>
+        <select id="settingBgType" class="inline-select">
+          <option value="bing">每日 Bing</option>
+          <option value="color">纯色</option>
+          <option value="gradient">渐变</option>
+          <option value="custom">自定义图片</option>
+        </select>
+      </div>
       <div id="bgColorWrap">
-        <label>背景颜色</label>
+        
         <input id="settingBgColor" type="color" />
       </div>
       <div id="bgGradientWrap">
@@ -1222,8 +1227,15 @@ function openSettingsModal() {
         </div>
       </div>
       <input id="settingBgGradient" type="hidden" />
-      <label>自定义图片</label>
       <input id="settingBgFile" type="file" accept="image/*" />
+    </div>
+
+    <div class="section">
+      <div class="row-inline">
+        <span class="inline-label">背景遮罩</span>
+        <input id="settingBgOverlay" type="range" min="0" max="0.6" step="0.01" class="inline-range" />
+        <span id="settingBgOverlayValue" class="inline-value"></span>
+      </div>
     </div>
 
     <div class="section">
@@ -1232,17 +1244,21 @@ function openSettingsModal() {
     </div>
 
     <div class="section">
-      <label>主题颜色</label>
-      <select id="settingTheme">
-        <option value="system">跟随系统</option>
-        <option value="light">浅色</option>
-        <option value="dark">深色</option>
-      </select>
+      <div class="row-inline">
+        <span class="inline-label">主题颜色</span>
+        <select id="settingTheme" class="inline-select">
+          <option value="system">跟随系统</option>
+          <option value="light">浅色</option>
+          <option value="dark">深色</option>
+        </select>
+      </div>
     </div>
 
     <div class="section">
-      <label>字体大小</label>
-      <input id="settingFontSize" type="number" min="10" max="24" />
+      <div class="row-inline">
+        <span class="inline-label">字体大小</span>
+        <input id="settingFontSize" type="number" min="10" max="24" class="inline-number" />
+      </div>
     </div>
 
     <div class="section">
@@ -1257,13 +1273,12 @@ function openSettingsModal() {
     </div>
 
     <div class="section">
-      <label><input id="settingSidebarCollapsed" type="checkbox"> 收起左侧分组</label>
-      <button id="btnToggleSidebarSetting" class="icon-btn">收起/展开</button>
+      <label><input id="settingSidebarCollapsed" type="checkbox"> 隐藏左侧分组</label>
     </div>
 
     <div class="section">
       <label><input id="settingSync" type="checkbox"> 启用同步</label>
-      <label>最大备份数量（0 表示不备份）</label>
+      <label>最大备份数量（0 表示不备份）</label>重新获取不存在图标
       <input id="settingBackup" type="number" min="0" />
       <label><input id="settingIconRetry" type="checkbox"> 18:00 自动重试图标</label>
     </div>
@@ -1276,10 +1291,6 @@ function openSettingsModal() {
       <button id="btnRefreshIcons" class="icon-btn">刷新所有图标</button>
     </div>
 
-    <div class="actions">
-      <button id="btnCancel" class="icon-btn">关闭</button>
-      <button id="btnSave" class="icon-btn">保存设置</button>
-    </div>
   `;
   openModal(html);
 
@@ -1296,7 +1307,6 @@ function openSettingsModal() {
   const presetValue = presets[data.settings.searchEngineUrl] || "custom";
   $("settingSearchEnginePreset").value = presetValue;
   $("settingSearchEngine").disabled = presetValue !== "custom";
-  $("settingOpenMode").value = data.settings.openMode;
   $("settingFixedLayout").checked = data.settings.fixedLayout;
   $("settingCols").value = data.settings.fixedCols;
   const densityRadios = qsa("input[name='density']", elements.modal);
@@ -1309,6 +1319,8 @@ function openSettingsModal() {
   const match = /linear-gradient\\([^,]+,\\s*([^,]+),\\s*([^\\)]+)\\)/.exec(data.settings.backgroundGradient || "");
   $("settingBgGradientA").value = match?.[1]?.trim() || "#1d2a3b";
   $("settingBgGradientB").value = match?.[2]?.trim() || "#0b0f14";
+  $("settingBgOverlay").value = Number(data.settings.backgroundOverlayStrength ?? 0.08);
+  $("settingBgOverlayValue").textContent = `${Math.round(Number($("settingBgOverlay").value) * 100)}%`;
   $("settingTooltip").checked = data.settings.tooltipEnabled;
   $("settingKeyboard").checked = data.settings.keyboardNav;
   $("settingTheme").value = data.settings.theme || "system";
@@ -1316,7 +1328,11 @@ function openSettingsModal() {
   $("settingSync").checked = data.settings.syncEnabled;
   $("settingBackup").value = data.settings.maxBackups;
   $("settingIconRetry").checked = data.settings.iconRetryAtSix;
-  $("settingSidebarCollapsed").checked = data.settings.sidebarCollapsed;
+  $("settingSidebarCollapsed").checked = data.settings.sidebarHidden;
+  $("settingSidebarCollapsed").addEventListener("change", (e) => {
+    data.settings.sidebarHidden = e.target.checked;
+    applySidebarState();
+  });
 
   const defaultGroupMode = $("settingDefaultGroupMode");
   const defaultGroupId = $("settingDefaultGroupId");
@@ -1338,12 +1354,6 @@ function openSettingsModal() {
   };
   defaultGroupMode.addEventListener("change", updateDefaultGroupControls);
   updateDefaultGroupControls();
-
-  $("btnToggleSidebarSetting").addEventListener("click", () => {
-    data.settings.sidebarCollapsed = !data.settings.sidebarCollapsed;
-    $("settingSidebarCollapsed").checked = data.settings.sidebarCollapsed;
-    applySidebarState();
-  });
 
   $("settingSearchEnginePreset").addEventListener("change", (e) => {
     const val = e.target.value;
@@ -1374,8 +1384,11 @@ function openSettingsModal() {
     toast("图标刷新完成");
   });
 
-  const saveSettings = async () => {
-    if (settingsSaving) return;
+  const saveSettings = async ({ close = false, toastOnSave = false } = {}) => {
+    if (settingsSaving) {
+      settingsSaveQueued = true;
+      return;
+    }
     settingsSaving = true;
     qsa(".group-name", elements.modal).forEach((input) => {
       const row = input.closest("[data-group]");
@@ -1387,24 +1400,25 @@ function openSettingsModal() {
     data.settings.showSearch = $("settingShowSearch").checked;
     data.settings.enableSearchEngine = $("settingEnableSearchEngine").checked;
     data.settings.searchEngineUrl = $("settingSearchEngine").value.trim() || data.settings.searchEngineUrl;
-    data.settings.openMode = $("settingOpenMode").value;
     data.settings.fixedLayout = $("settingFixedLayout").checked;
     data.settings.fixedCols = Number($("settingCols").value) || 8;
     const selectedDensity = qsa("input[name='density']", elements.modal).find((r) => r.checked);
     data.settings.gridDensity = selectedDensity ? selectedDensity.value : data.settings.gridDensity;
-    data.settings.lastTileSize = (densityMap[data.settings.gridDensity] || densityMap.standard).size;
     data.settings.backgroundType = $("settingBgType").value;
     data.settings.backgroundColor = $("settingBgColor").value;
-    const gA = $("settingBgGradientA").value || "#1d2a3b";
-    const gB = $("settingBgGradientB").value || "#0b0f14";
-    data.settings.backgroundGradient = `linear-gradient(120deg, ${gA}, ${gB})`;
+    if ($("settingBgType").value === "gradient") {
+      const gA = $("settingBgGradientA").value || "#1d2a3b";
+      const gB = $("settingBgGradientB").value || "#0b0f14";
+      data.settings.backgroundGradient = `linear-gradient(120deg, ${gA}, ${gB})`;
+    }
+    data.settings.backgroundOverlayStrength = Number($("settingBgOverlay").value);
     data.settings.tooltipEnabled = $("settingTooltip").checked;
     data.settings.keyboardNav = $("settingKeyboard").checked;
     data.settings.fontSize = Number($("settingFontSize").value) || data.settings.fontSize;
     data.settings.theme = $("settingTheme").value;
     data.settings.defaultGroupMode = $("settingDefaultGroupMode").value;
     data.settings.defaultGroupId = $("settingDefaultGroupId").value;
-    data.settings.sidebarCollapsed = $("settingSidebarCollapsed").checked;
+    data.settings.sidebarHidden = $("settingSidebarCollapsed").checked;
     data.settings.syncEnabled = $("settingSync").checked;
     data.settings.maxBackups = Number($("settingBackup").value) || 0;
     data.settings.iconRetryAtSix = $("settingIconRetry").checked;
@@ -1418,21 +1432,50 @@ function openSettingsModal() {
     applyTheme();
     await persistData();
     await loadBackground();
-    closeModal();
     render();
-    toast("设置已保存");
+    if (toastOnSave) toast("设置已保存");
+    if (close) closeModal();
+    settingsSaving = false;
+    if (settingsSaveQueued) {
+      settingsSaveQueued = false;
+      saveSettings({ close: false, toastOnSave: false });
+      return;
+    }
+    return;
+  };
+  settingsSaveNow = saveSettings;
+
+  const scheduleSettingsSave = (immediate = false) => {
+    if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
+    const delay = immediate ? 0 : 120;
+    settingsSaveTimer = setTimeout(() => {
+      settingsSaveTimer = null;
+      saveSettings({ close: false, toastOnSave: false });
+    }, delay);
   };
 
-  $("btnCancel").addEventListener("click", closeModal);
-  $("btnSave").addEventListener("click", saveSettings);
-
-  const updateBgControls = () => {
+  const updateBgControls = (triggerSave = true) => {
     const type = $("settingBgType").value;
-    $("bgColorWrap").classList.toggle("hidden", type === "bing" || type === "gradient");
+    $("bgColorWrap").classList.toggle("hidden", type !== "color");
     $("bgGradientWrap").classList.toggle("hidden", type !== "gradient");
+    const bgFile = $("settingBgFile");
+    bgFile.classList.toggle("hidden", type !== "custom");
+    bgFile.disabled = type !== "custom";
+    if (triggerSave) scheduleSettingsSave();
   };
-  $("settingBgType").addEventListener("change", updateBgControls);
-  updateBgControls();
+  $("settingBgType").addEventListener("change", () => updateBgControls(true));
+  updateBgControls(false);
+
+  qsa("input, select, textarea", elements.modal).forEach((el) => {
+    const type = el.getAttribute("type") || "";
+    const useInput = type === "text" || type === "url" || type === "number" || type === "color" || type === "range";
+    const eventName = useInput ? "input" : "change";
+    el.addEventListener(eventName, () => scheduleSettingsSave(useInput));
+  });
+  $("settingBgFile").addEventListener("change", () => scheduleSettingsSave(true));
+  $("settingBgOverlay").addEventListener("input", () => {
+    $("settingBgOverlayValue").textContent = `${Math.round(Number($("settingBgOverlay").value) * 100)}%`;
+  });
 }
 
 function openExportModal() {
@@ -1927,11 +1970,18 @@ function bindEvents() {
     closeFolder();
   });
 
-  elements.modalOverlay.addEventListener("click", (e) => {
+  elements.modalOverlay.addEventListener("click", async (e) => {
     if (e.target !== elements.modalOverlay) return;
     if (settingsOpen) {
-      const btn = $("btnSave");
-      if (btn) btn.click();
+      if (settingsSaveTimer) {
+        clearTimeout(settingsSaveTimer);
+        settingsSaveTimer = null;
+      }
+      if (typeof settingsSaveNow === "function") {
+        await settingsSaveNow({ close: true, toastOnSave: false });
+      } else {
+        closeModal();
+      }
       return;
     }
     closeModal();

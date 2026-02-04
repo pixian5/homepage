@@ -118,12 +118,20 @@ html, body {
 .group-tabs.vertical::-webkit-scrollbar { width: 0; height: 0; }
 .recent-tab { margin-bottom: 10px; }
 .recent-tab {
-  background: rgba(246, 226, 140, 0.45);
-  border-color: rgba(246, 226, 140, 0.65);
+  background: rgba(246, 226, 140, 0.75);
+  border-color: rgba(246, 226, 140, 0.95);
 }
 .recent-tab.active {
-  background: rgba(246, 226, 140, 0.65);
-  border-color: rgba(246, 226, 140, 0.85);
+  background: rgba(246, 226, 140, 0.9);
+  border-color: rgba(246, 226, 140, 1);
+}
+.add-group {
+  background: rgba(99, 150, 255, 0.35);
+  border-color: rgba(99, 150, 255, 0.65);
+}
+.add-group:hover {
+  background: rgba(99, 150, 255, 0.5);
+  border-color: rgba(99, 150, 255, 0.85);
 }
 .group-tab {
   border: 1px solid var(--control-border, rgba(255,255,255,0.08));
@@ -336,6 +344,21 @@ html, body {
 .modal .inline-field label { margin: 0; }
 .modal .inline-field input[type="number"] { width: 90px; }
 .modal .inline-label { color: var(--muted); }
+.modal .inline-select {
+  width: auto;
+  min-width: 180px;
+}
+.modal .inline-number {
+  width: 120px;
+}
+.modal .inline-range {
+  width: 180px;
+}
+.modal .inline-value {
+  color: var(--muted);
+  min-width: 44px;
+  text-align: right;
+}
 .modal .actions { margin-top: 18px; display: flex; justify-content: flex-end; gap: 10px; }
 
 .context-menu {
@@ -399,10 +422,16 @@ html, body {
 .sidebar::-webkit-scrollbar { width: 0; height: 0; }
 
 .sidebar > .add-group { margin-top: 0; }
-.sidebar > .add-group:nth-last-child(2) { margin-top: auto; }
+.sidebar > .add-group:last-child { margin-top: auto; }
 
 .sidebar-collapsed .layout {
   grid-template-columns: 64px 1fr;
+}
+.sidebar-hidden .layout {
+  grid-template-columns: 1fr;
+}
+.sidebar-hidden .sidebar {
+  display: none;
 }
 .sidebar-collapsed .group-tab,
 .sidebar-collapsed .add-group {

@@ -19,6 +19,7 @@ const DEFAULT_SETTINGS = {
   backgroundGradient: "linear-gradient(120deg,#1d2a3b,#0b0f14)",
   backgroundCustom: "",
   backgroundFade: true,
+  backgroundOverlayStrength: 0.08,
   iconFetch: true,
   iconRetryAtSix: true,
   syncEnabled: false,
@@ -31,6 +32,7 @@ const DEFAULT_SETTINGS = {
   lastSaveUrl: "",
   lastSaveTs: 0,
   sidebarCollapsed: false,
+  sidebarHidden: false,
 };
 
 function nowTs() {

@@ -117,22 +117,6 @@ html, body {
 }
 .group-tabs.vertical::-webkit-scrollbar { width: 0; height: 0; }
 .recent-tab { margin-bottom: 10px; }
-.recent-tab {
-  background: rgba(246, 226, 140, 0.75);
-  border-color: rgba(246, 226, 140, 0.95);
-}
-.recent-tab.active {
-  background: rgba(246, 226, 140, 0.9);
-  border-color: rgba(246, 226, 140, 1);
-}
-.add-group {
-  background: rgba(99, 150, 255, 0.35);
-  border-color: rgba(99, 150, 255, 0.65);
-}
-.add-group:hover {
-  background: rgba(99, 150, 255, 0.5);
-  border-color: rgba(99, 150, 255, 0.85);
-}
 .group-tab {
   border: 1px solid var(--control-border, rgba(255,255,255,0.08));
   background: var(--control-bg, rgba(22, 28, 38, 0.6));
@@ -363,8 +347,8 @@ html, body {
 
 .context-menu {
   position: fixed; z-index: 30; min-width: 160px;
-  background: rgba(16, 21, 30, 0.95); border-radius: 12px; padding: 8px;
-  border: 1px solid rgba(255,255,255,0.12);
+  background: var(--panel-strong); border-radius: 12px; padding: 8px;
+  border: 1px solid var(--control-border, rgba(255,255,255,0.12));
 }
 .context-menu.hidden { display: none; }
 .context-menu button {
@@ -423,6 +407,23 @@ html, body {
 
 .sidebar > .add-group { margin-top: 0; }
 .sidebar > .add-group:last-child { margin-top: auto; }
+
+.sidebar .recent-tab {
+  background: rgba(246, 226, 140, 0.75);
+  border-color: rgba(246, 226, 140, 0.95);
+}
+.sidebar .recent-tab.active {
+  background: rgba(246, 226, 140, 0.9);
+  border-color: rgba(246, 226, 140, 1);
+}
+.sidebar .add-group.icon-btn {
+  background: rgba(99, 150, 255, 0.35);
+  border-color: rgba(99, 150, 255, 0.65);
+}
+.sidebar .add-group.icon-btn:hover {
+  background: rgba(99, 150, 255, 0.5);
+  border-color: rgba(99, 150, 255, 0.85);
+}
 
 .sidebar-collapsed .layout {
   grid-template-columns: 64px 1fr;

@@ -226,6 +226,20 @@ async function showToastInTab(tabId, message) {
       } catch {}
     }
     if (api?.scripting?.executeScript) {
+      try {
+        await new Promise((resolve, reject) => {
+          api.scripting.executeScript(
+            { target: { tabId }, files: ["js/content-toast.js"] },
+            () => {
+              const err = api.runtime?.lastError;
+              if (err) return reject(err);
+              resolve();
+            }
+          );
+        });
+        const res = await api.tabs.sendMessage(tabId, { type: "homepage_show_toast", text: message });
+        if (res?.ok) return true;
+      } catch {}
       await new Promise((resolve, reject) => {
         api.scripting.executeScript(
           {
@@ -267,6 +281,17 @@ async function showToastInTab(tabId, message) {
       return true;
     }
     if (api?.tabs?.executeScript) {
+      try {
+        await new Promise((resolve, reject) => {
+          api.tabs.executeScript(tabId, { file: "js/content-toast.js" }, () => {
+            const err = api.runtime?.lastError;
+            if (err) return reject(err);
+            resolve();
+          });
+        });
+        const res = await api.tabs.sendMessage(tabId, { type: "homepage_show_toast", text: message });
+        if (res?.ok) return true;
+      } catch {}
       const msg = JSON.stringify(message || "");
       const code = `(function(){var toastId="homepage-save-toast";var existing=document.getElementById(toastId);if(existing){existing.remove();}var el=document.createElement("div");el.id=toastId;el.textContent=${msg};el.style.position="fixed";el.style.top="20px";el.style.right="20px";el.style.zIndex="2147483647";el.style.background="rgba(15, 20, 28, 0.88)";el.style.color="#ffffff";el.style.padding="10px 14px";el.style.borderRadius="10px";el.style.fontSize="14px";el.style.lineHeight="1.2";el.style.boxShadow="0 10px 30px rgba(0,0,0,0.35)";el.style.backdropFilter="blur(6px)";el.style.fontFamily="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,'PingFang SC','Microsoft YaHei',sans-serif";document.body.appendChild(el);setTimeout(function(){el.remove();},3000);})();`;
       await new Promise((resolve, reject) => {

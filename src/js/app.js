@@ -153,6 +153,7 @@ async function reloadFromStorage() {
   }
   selectedIds = new Set([...prevSelected].filter((id) => data.nodes?.[id]));
   render();
+  await consumeSaveToast();
 }
 
 function scheduleStorageReload() {
@@ -260,6 +261,19 @@ function toast(message, actionLabel, action) {
   }
   elements.toastContainer.appendChild(el);
   setTimeout(() => el.remove(), 5000);
+}
+
+function listenForExternalToast() {
+  const api = getChromeApi();
+  if (!api?.runtime?.onMessage) return;
+  api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === "homepage_show_toast" && message?.text) {
+      toast(message.text);
+      sendResponse?.({ ok: true });
+      return true;
+    }
+    return false;
+  });
 }
 
 async function consumeSaveToast() {
@@ -2115,6 +2129,7 @@ function getDropIndex(grid, x, y) {
 
 async function init() {
   debugLog("init_start", getRuntimeInfo());
+  listenForExternalToast();
   attachStorageListener();
   const localData = await loadData();
   debugLog("init_local", {

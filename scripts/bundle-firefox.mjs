@@ -81,7 +81,8 @@ async function updateCspHash(scriptBody) {
   let manifestRaw = await fs.readFile(manifestPath, "utf8");
   manifestRaw = manifestRaw.replace(/^\uFEFF/, "");
   const manifest = JSON.parse(manifestRaw);
-  const hash = crypto.createHash("sha256").update(scriptBody, "utf8").digest("base64");
+  const normalized = scriptBody.replace(/\r\n/g, "\n");
+  const hash = crypto.createHash("sha256").update(normalized, "utf8").digest("base64");
   const csp = `script-src 'self' 'sha256-${hash}'; object-src 'self'; img-src 'self' data: https: http:;`;
   manifest.content_security_policy = csp;
   await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");

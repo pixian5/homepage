@@ -262,6 +262,21 @@ function toast(message, actionLabel, action) {
   setTimeout(() => el.remove(), 5000);
 }
 
+async function consumeSaveToast() {
+  const toastInfo = data?.settings?.lastSaveToast;
+  if (!toastInfo) return;
+  const ts = Number(toastInfo.ts || 0);
+  if (!ts || Date.now() - ts > 15000) {
+    data.settings.lastSaveToast = null;
+    await persistData();
+    return;
+  }
+  const groupName = toastInfo.groupName || "未命名";
+  toast(`已保存到分组：${groupName}`);
+  data.settings.lastSaveToast = null;
+  await persistData();
+}
+
 function showTooltip(text, x, y) {
   if (!data.settings.tooltipEnabled) return;
   elements.tooltip.textContent = text;
@@ -2153,6 +2168,7 @@ async function init() {
   await loadBackground();
   await retryFailedIconsIfDue(data.settings);
   render();
+  await consumeSaveToast();
 }
 
 function render() {

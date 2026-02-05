@@ -189,6 +189,7 @@ async function saveToGroup(tab, selectedGroupId) {
   data.settings.lastActiveGroupId = group.id;
   data.settings.lastSaveUrl = url;
   data.settings.lastSaveTs = Date.now();
+  data.settings.lastSaveToast = { ts: Date.now(), groupId: group.id, groupName: group.name || "" };
   data.lastUpdated = Date.now();
   const payload = useSync ? sanitizeForSync(data) : data;
   if (useSync) {
@@ -216,11 +217,20 @@ async function saveToGroup(tab, selectedGroupId) {
 async function init() {
   const { data } = await loadLatestData();
   const tab = await getCurrentTab();
+  const fixedId = data?.settings?.defaultGroupId;
+  const isFixed = data?.settings?.defaultGroupMode === "fixed";
+  const hasFixedGroup = !!(fixedId && data?.groups?.some((g) => g.id === fixedId));
+  if (isFixed && hasFixedGroup) {
+    if (tab) await saveToGroup(tab, fixedId);
+    window.close();
+    return;
+  }
   renderTab(tab);
   renderGroups(data);
   if (data?.settings?.fontSize) {
     document.body.style.fontSize = `${data.settings.fontSize}px`;
   }
+  document.body.classList.remove("hidden");
   let saving = false;
   const btnSave = document.getElementById("btnSave");
   btnSave.addEventListener("click", async () => {

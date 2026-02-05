@@ -1719,7 +1719,7 @@ async function openImportModal() {
       </select>
     </div>
     <div class="section">
-      <textarea id="importText" placeholder="自动读取剪切板..."></textarea>
+      <textarea id="importText" placeholder="正在读取剪切板内设置，如果没导出设置你得先从你其它浏览器导出设置才能导入设置..."></textarea>
     </div>
     <div class="actions">
       <button id="btnCancel" class="icon-btn">取消</button>
@@ -1750,7 +1750,7 @@ async function openImportModal() {
       render();
       toast("导入设置成功");
     } catch (err) {
-      toast(`导入设置失败：${err.message}`);
+      toast(`导入设置失败，你检查一下你的设置对了嘛，先去你其它浏览器导出设置才能导入设置：${err.message}`);
     }
   });
 

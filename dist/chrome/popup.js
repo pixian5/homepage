@@ -90,6 +90,23 @@ function sanitizeForSync(data) {
   return clone;
 }
 
+function pickLatestData(localData, syncData) {
+  if (!syncData) return localData || null;
+  if (!localData) return syncData || null;
+  const localTs = Number(localData.lastUpdated || 0);
+  const syncTs = Number(syncData.lastUpdated || 0);
+  return syncTs >= localTs ? syncData : localData;
+}
+
+async function loadLatestData() {
+  const localData = (await storageGet(ROOT_KEY, false)) || null;
+  const useSync = !!localData?.settings?.syncEnabled;
+  if (!useSync) return { data: localData, useSync: false };
+  const syncData = (await storageGet(ROOT_KEY, true)) || null;
+  const data = pickLatestData(localData, syncData);
+  return { data, useSync: true };
+}
+
 async function getCurrentTab() {
   const api = getChrome();
   if (!api?.tabs) return null;
@@ -143,9 +160,7 @@ async function saveToGroup(tab, selectedGroupId) {
     await appendLog({ ts: Date.now(), stage: "invalid_url", raw: tab?.url || "" });
     return;
   }
-  const localData = (await storageGet(ROOT_KEY, false)) || null;
-  const useSync = !!localData?.settings?.syncEnabled;
-  const data = useSync ? (await storageGet(ROOT_KEY, true)) || localData : localData;
+  const { data, useSync } = await loadLatestData();
   if (!data || !data.groups || !data.nodes) {
     await appendLog({ ts: Date.now(), stage: "no_data" });
     return;
@@ -156,6 +171,7 @@ async function saveToGroup(tab, selectedGroupId) {
     await appendLog({ ts: Date.now(), stage: "no_group" });
     return;
   }
+  if (!Array.isArray(group.nodes)) group.nodes = [];
 
   const id = `itm_${Date.now()}_${Math.random().toString(16).slice(2)}`;
   data.nodes[id] = {
@@ -173,6 +189,7 @@ async function saveToGroup(tab, selectedGroupId) {
   data.settings.lastActiveGroupId = group.id;
   data.settings.lastSaveUrl = url;
   data.settings.lastSaveTs = Date.now();
+  data.lastUpdated = Date.now();
   const payload = useSync ? sanitizeForSync(data) : data;
   if (useSync) {
     const size = estimateBytes(payload);
@@ -197,9 +214,7 @@ async function saveToGroup(tab, selectedGroupId) {
 }
 
 async function init() {
-  const localData = (await storageGet(ROOT_KEY, false)) || null;
-  const useSync = !!localData?.settings?.syncEnabled;
-  const data = useSync ? (await storageGet(ROOT_KEY, true)) || localData : localData;
+  const { data } = await loadLatestData();
   const tab = await getCurrentTab();
   renderTab(tab);
   renderGroups(data);

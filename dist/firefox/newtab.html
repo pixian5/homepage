@@ -712,6 +712,8 @@ let settingsSaveQueued = false;
 let settingsSaveNow = null;
 let renderSeq = 0;
 let lastMainLayout = null;
+let storageReloadTimer = null;
+let pendingStorageReload = false;
 const DEBUG_LOG_KEY = "homepage_debug_log";
 
 const RECENT_GROUP_ID = "__recent__";
@@ -757,6 +759,63 @@ function shouldDebugPersist() {
   } catch {
     return false;
   }
+}
+
+async function loadLatestDataForApp() {
+  const localData = await loadData();
+  if (localData.settings.syncEnabled) {
+    const syncData = await loadDataFromArea(true);
+    if (syncData && syncData.groups?.length) {
+      const localTs = Number(localData.lastUpdated || 0);
+      const syncTs = Number(syncData.lastUpdated || 0);
+      return syncTs >= localTs ? syncData : localData;
+    }
+  }
+  return localData;
+}
+
+async function reloadFromStorage() {
+  const prevActive = activeGroupId;
+  const prevOpenFolder = openFolderId;
+  const prevSelected = new Set(selectedIds);
+  data = await loadLatestDataForApp();
+  if (prevActive === RECENT_GROUP_ID) {
+    activeGroupId = RECENT_GROUP_ID;
+  } else if (prevActive && data.groups.find((g) => g.id === prevActive)) {
+    activeGroupId = prevActive;
+  } else {
+    activeGroupId = data.groups?.[0]?.id || RECENT_GROUP_ID;
+  }
+  if (prevOpenFolder && data.nodes?.[prevOpenFolder]?.type === "folder") {
+    openFolderId = prevOpenFolder;
+  } else {
+    openFolderId = null;
+  }
+  selectedIds = new Set([...prevSelected].filter((id) => data.nodes?.[id]));
+  render();
+}
+
+function scheduleStorageReload() {
+  if (settingsOpen) {
+    pendingStorageReload = true;
+    return;
+  }
+  if (storageReloadTimer) clearTimeout(storageReloadTimer);
+  storageReloadTimer = setTimeout(async () => {
+    storageReloadTimer = null;
+    await reloadFromStorage();
+  }, 120);
+}
+
+function attachStorageListener() {
+  const api = getChromeApi();
+  if (!api?.storage?.onChanged) return;
+  const key = getStorageKey();
+  api.storage.onChanged.addListener((changes, areaName) => {
+    if (!changes || !changes[key]) return;
+    if (areaName !== "local" && areaName !== "sync") return;
+    scheduleStorageReload();
+  });
 }
 
 window.homepageDebugLog = () => {
@@ -1543,6 +1602,10 @@ function closeModal() {
   if (settingsSaveTimer) {
     clearTimeout(settingsSaveTimer);
     settingsSaveTimer = null;
+  }
+  if (pendingStorageReload) {
+    pendingStorageReload = false;
+    scheduleStorageReload();
   }
 }
 
@@ -2536,6 +2599,7 @@ function getDropIndex(grid, x, y) {
 
 async function init() {
   debugLog("init_start", getRuntimeInfo());
+  attachStorageListener();
   const localData = await loadData();
   debugLog("init_local", {
     groups: localData.groups?.length || 0,

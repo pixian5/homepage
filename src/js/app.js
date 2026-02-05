@@ -1676,9 +1676,9 @@ async function exportJsonToClipboard() {
   try {
     const payload = JSON.stringify(data, null, 2);
     await navigator.clipboard.writeText(payload);
-    toast("已导出并复制到剪切板");
+    toast("设置、卡片、分组数据都已复制到剪切板");
   } catch (err) {
-    toast(`导出失败：${err.message || "无法写入剪切板"}`);
+    toast(`导出设置失败：${err.message || "无法写入剪切板，給我剪切板权限，你看看左上角弹窗了吗"}`);
   }
 }
 
@@ -1723,9 +1723,9 @@ async function openImportModal() {
       await persistData();
       closeModal();
       render();
-      toast("导入成功");
+      toast("导入设置成功");
     } catch (err) {
-      toast(`导入失败：${err.message}`);
+      toast(`导入设置失败：${err.message}`);
     }
   });
 

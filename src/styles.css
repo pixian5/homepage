@@ -224,10 +224,10 @@ html, body {
   background: var(--panel);
   border: 2px solid var(--tile-border);
   border-radius: var(--radius);
-  padding: 14px 14px 16px;
+  padding: var(--tile-pad, 8px);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   height: var(--tile-size);
-  gap: 8px; position: relative;
+  gap: var(--tile-gap, 4px); position: relative;
   cursor: pointer;
   transition: transform .18s ease, border .2s ease, background .2s ease;
 }
@@ -249,7 +249,7 @@ html, body {
   font-size: var(--tile-font); text-align: center; color: var(--text);
   max-width: 110px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   line-height: 1.35;
-  padding-bottom: 2px;
+  padding-bottom: 0;
   margin-top: 0;
 }
 

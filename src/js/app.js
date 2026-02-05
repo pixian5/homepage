@@ -514,35 +514,44 @@ async function renderGrid() {
   const style = getComputedStyle(referenceGrid);
   const paddingX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
   const available = Math.max(0, width - paddingX);
-  const minTile = 64;
+  const minTile = 32;
   const maxTile = 220;
   const baseSize = data.settings.lastTileSize || density.size || 96;
   let maxColumns = Math.max(1, Math.floor((available + gap) / (baseSize + gap)));
   let columns = maxColumns;
   if (data.settings.fixedLayout) {
     const desired = Math.max(1, data.settings.fixedCols || 8);
-    columns = Math.min(desired, maxColumns);
+    columns = desired;
   }
   let tileSize = baseSize;
-  if (columns <= 1 && available > 0) {
+  if (data.settings.fixedLayout && available > 0) {
+    const fitSize = Math.floor((available - gap * (columns - 1)) / columns);
+    tileSize = Math.max(minTile, Math.min(maxTile, fitSize));
+  } else if (columns <= 1 && available > 0) {
     tileSize = Math.max(minTile, Math.min(maxTile, Math.floor(available)));
   } else {
     tileSize = Math.max(minTile, Math.min(maxTile, baseSize));
   }
-  const iconRatio = density.icon && density.size ? density.icon / density.size : 0.4;
-  let iconSize = Math.max(18, Math.round(tileSize * (iconRatio || 0.4)));
-  const maxIcon = Math.floor(tileSize * 0.36);
+  const iconRatio = density.icon && density.size ? density.icon / density.size : 0.58;
+  let iconSize = Math.max(18, Math.round(tileSize * (iconRatio || 0.58)));
+  const maxIcon = Math.floor(tileSize * 0.52);
   if (iconSize > maxIcon) iconSize = maxIcon;
   if (!openFolderId) {
     lastMainLayout = { columns, tileSize, iconSize };
   } else if (lastMainLayout) {
     columns = lastMainLayout.columns;
     tileSize = lastMainLayout.tileSize;
-    const iconRatioOverride = density.icon && density.size ? density.icon / density.size : 0.4;
+    const iconRatioOverride = density.icon && density.size ? density.icon / density.size : 0.58;
     iconSize = Math.max(18, Math.round(tileSize * iconRatioOverride));
   }
   grid.style.setProperty("--tile-size", `${tileSize}px`);
   grid.style.setProperty("--tile-icon", `${iconSize}px`);
+  const tightLayout = columns >= 8;
+  const mediumLayout = columns >= 6;
+  const tilePad = tightLayout ? "4px 4px 6px" : mediumLayout ? "6px 6px 8px" : "8px 8px 10px";
+  const tileGap = tightLayout ? "2px" : mediumLayout ? "3px" : "4px";
+  grid.style.setProperty("--tile-pad", tilePad);
+  grid.style.setProperty("--tile-gap", tileGap);
   grid.style.gridTemplateColumns = `repeat(${columns}, minmax(${tileSize}px, 1fr))`;
 
   for (const [idx, node] of nodes.entries()) {

@@ -134,9 +134,20 @@ export function getFaviconCandidates(pageUrl) {
   }
 }
 
+function isExtensionContext() {
+  try {
+    if (typeof window === "undefined" || !window.location?.protocol) return false;
+    const protocol = window.location.protocol;
+    return protocol === "chrome-extension:" || protocol === "moz-extension:" || protocol === "edge-extension:";
+  } catch {
+    return false;
+  }
+}
+
 async function resolveFinalUrl(pageUrl, timeoutMs = 6000) {
   try {
     if (!isHttpUrl(pageUrl)) return pageUrl;
+    if (isExtensionContext()) return pageUrl;
     const cached = FINAL_URL_CACHE.get(pageUrl);
     if (cached && Date.now() - cached.ts < 12 * 60 * 60 * 1000) {
       return cached.url;

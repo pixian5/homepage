@@ -9,6 +9,7 @@ set FIREFOX=%DIST%\firefox
 
 if exist "%CHROME%" rmdir /s /q "%CHROME%"
 if exist "%FIREFOX%" rmdir /s /q "%FIREFOX%"
+if exist "%DIST%\chrome.zip" del /q "%DIST%\chrome.zip"
 if exist "%DIST%\firefox.zip" del /q "%DIST%\firefox.zip"
 
 mkdir "%CHROME%"
@@ -23,6 +24,7 @@ copy /Y "%ROOT%manifest.firefox.json" "%FIREFOX%\manifest.json" >nul
 node "%ROOT%scripts\\bundle-firefox.mjs"
 
 powershell -NoProfile -Command "Compress-Archive -Path '%DIST%\firefox\*' -DestinationPath '%DIST%\firefox.zip' -Force"
+powershell -NoProfile -Command "Compress-Archive -Path '%DIST%\chrome\*' -DestinationPath '%DIST%\chrome.zip' -Force"
 
 echo Build done
 endlocal

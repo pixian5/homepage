@@ -227,13 +227,22 @@ html, body {
   align-content: start;
   align-items: start;
   height: 100%;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   scrollbar-gutter: stable;
   scrollbar-width: auto;
 }
 .grid::-webkit-scrollbar { width: 20px; height: 20px; }
 .grid::-webkit-scrollbar-thumb { background: rgba(90, 100, 120, 0.6); border-radius: 999px; }
 .grid::-webkit-scrollbar-track { background: transparent; }
+
+@supports (-moz-appearance: none) {
+  .grid {
+    scrollbar-width: none;
+    scrollbar-color: transparent transparent;
+    scrollbar-gutter: auto;
+  }
+}
 
 .tile {
   background: var(--panel);

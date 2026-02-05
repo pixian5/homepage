@@ -1678,8 +1678,33 @@ async function exportJsonToClipboard() {
     await navigator.clipboard.writeText(payload);
     toast("设置、卡片、分组数据都已复制到剪切板");
   } catch (err) {
-    toast(`导出设置失败：${err.message || "无法写入剪切板，給我剪切板权限，你看看左上角弹窗了吗"}`);
+    toast(`导出设置失败：${err.message || "无法写入剪切板"}`);
+    openManualExportModal();
   }
+}
+
+function openManualExportModal() {
+  const payload = JSON.stringify(data, null, 2);
+  const html = `
+    <h2>导出设置</h2>
+    <div class="section">
+      <textarea readonly>${payload}</textarea>
+    </div>
+    <div class="actions">
+      <button id="btnCopy" class="icon-btn">复制</button>
+      <button id="btnClose" class="icon-btn">关闭</button>
+    </div>
+  `;
+  openModal(html);
+  $("btnCopy").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(payload);
+      toast("已复制到剪切板");
+    } catch (err) {
+      toast(`复制失败：${err.message || "无法写入剪切板"}`);
+    }
+  });
+  $("btnClose").addEventListener("click", closeModal);
 }
 
 async function openImportModal() {

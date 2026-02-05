@@ -23,6 +23,7 @@
   --sidebar-tab-text: #0b0f14;
   --sidebar-tab-text-active: #f5f6fa;
   --sidebar-tab-stroke-active: rgba(0, 0, 0, 0.7);
+  --empty-stroke: rgba(0, 0, 0, 0.7);
 }
 
 :root[data-theme="light"] {
@@ -40,6 +41,7 @@
   --sidebar-tab-text: #0b0f14;
   --sidebar-tab-text-active: #f5f6fa;
   --sidebar-tab-stroke-active: rgba(0, 0, 0, 0.7);
+  --empty-stroke: rgba(255, 255, 255, 0.8);
 }
 
 :root[data-theme="dark"] {
@@ -53,6 +55,7 @@
   --sidebar-tab-text: #f5f6fa;
   --sidebar-tab-text-active: #0b0f14;
   --sidebar-tab-stroke-active: rgba(255, 255, 255, 0.75);
+  --empty-stroke: rgba(0, 0, 0, 0.7);
 }
 
 * { box-sizing: border-box; }
@@ -289,9 +292,9 @@ html, body {
   border-radius: 16px;
 }
 .empty-state.hidden { display: none; }
-.empty-title { font-size: 20px; color: var(--text); }
-.empty-desc { margin-top: 6px; font-size: 14px; }
-.empty-check { margin-top: 12px; display: inline-flex; gap: 8px; align-items: center; }
+.empty-title { font-size: 20px; color: var(--text); text-shadow: 0 1px 0 var(--empty-stroke), 0 -1px 0 var(--empty-stroke), 1px 0 0 var(--empty-stroke), -1px 0 0 var(--empty-stroke); }
+.empty-desc { margin-top: 6px; font-size: 14px; text-shadow: 0 1px 0 var(--empty-stroke), 0 -1px 0 var(--empty-stroke), 1px 0 0 var(--empty-stroke), -1px 0 0 var(--empty-stroke); }
+.empty-check { margin-top: 12px; display: inline-flex; gap: 8px; align-items: center; text-shadow: 0 1px 0 var(--empty-stroke), 0 -1px 0 var(--empty-stroke), 1px 0 0 var(--empty-stroke), -1px 0 0 var(--empty-stroke); }
 
 .overlay {
   position: absolute; inset: 0;
@@ -452,29 +455,13 @@ html, body {
 }
 .sidebar .group-tab.active {
   color: var(--sidebar-tab-text-active);
-  text-shadow:
-    0 1px 0 var(--sidebar-tab-stroke-active),
-    0 -1px 0 var(--sidebar-tab-stroke-active),
-    1px 0 0 var(--sidebar-tab-stroke-active),
-    -1px 0 0 var(--sidebar-tab-stroke-active),
-    0 2px 0 var(--sidebar-tab-stroke-active),
-    0 -2px 0 var(--sidebar-tab-stroke-active),
-    2px 0 0 var(--sidebar-tab-stroke-active),
-    -2px 0 0 var(--sidebar-tab-stroke-active);
+  text-shadow: 0 1px 0 var(--sidebar-tab-stroke-active), 0 -1px 0 var(--sidebar-tab-stroke-active), 1px 0 0 var(--sidebar-tab-stroke-active), -1px 0 0 var(--sidebar-tab-stroke-active);
 }
 .sidebar .add-group.icon-btn {
   background: rgba(99, 150, 255, 0.35);
   border-color: rgba(99, 150, 255, 0.65);
   color: var(--sidebar-tab-text-active);
-  text-shadow:
-    0 1px 0 var(--sidebar-tab-stroke-active),
-    0 -1px 0 var(--sidebar-tab-stroke-active),
-    1px 0 0 var(--sidebar-tab-stroke-active),
-    -1px 0 0 var(--sidebar-tab-stroke-active),
-    0 2px 0 var(--sidebar-tab-stroke-active),
-    0 -2px 0 var(--sidebar-tab-stroke-active),
-    2px 0 0 var(--sidebar-tab-stroke-active),
-    -2px 0 0 var(--sidebar-tab-stroke-active);
+  text-shadow: 0 1px 0 var(--sidebar-tab-stroke-active), 0 -1px 0 var(--sidebar-tab-stroke-active), 1px 0 0 var(--sidebar-tab-stroke-active), -1px 0 0 var(--sidebar-tab-stroke-active);
 }
 .sidebar .add-group.icon-btn:hover {
   background: rgba(99, 150, 255, 0.5);
@@ -508,15 +495,7 @@ html, body {
   content: attr(data-short);
   font-size: 16px;
   color: var(--sidebar-tab-text);
-  text-shadow:
-    0 1px 0 var(--sidebar-tab-stroke-active),
-    0 -1px 0 var(--sidebar-tab-stroke-active),
-    1px 0 0 var(--sidebar-tab-stroke-active),
-    -1px 0 0 var(--sidebar-tab-stroke-active),
-    0 2px 0 var(--sidebar-tab-stroke-active),
-    0 -2px 0 var(--sidebar-tab-stroke-active),
-    2px 0 0 var(--sidebar-tab-stroke-active),
-    -2px 0 0 var(--sidebar-tab-stroke-active);
+  text-shadow: 0 1px 0 var(--sidebar-tab-stroke-active), 0 -1px 0 var(--sidebar-tab-stroke-active), 1px 0 0 var(--sidebar-tab-stroke-active), -1px 0 0 var(--sidebar-tab-stroke-active);
   position: absolute;
   left: 50%;
   top: 50%;

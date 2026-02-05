@@ -22,6 +22,16 @@
     "https://www.bing.com/*",
     "https://www.google.com/*"
   ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "js/content-toast.js"
+      ]
+    }
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' data: https: http:;"
   },

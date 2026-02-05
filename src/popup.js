@@ -219,6 +219,12 @@ async function showToastInTab(tabId, message) {
   const api = getChrome();
   if (!tabId) return false;
   try {
+    if (api?.tabs?.sendMessage) {
+      try {
+        const res = await api.tabs.sendMessage(tabId, { type: "homepage_show_toast", text: message });
+        if (res?.ok) return true;
+      } catch {}
+    }
     if (api?.scripting?.executeScript) {
       await new Promise((resolve, reject) => {
         api.scripting.executeScript(

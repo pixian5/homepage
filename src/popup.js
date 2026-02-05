@@ -158,18 +158,18 @@ async function saveToGroup(tab, selectedGroupId) {
   const url = normalizeUrl(tab?.url);
   if (!url) {
     await appendLog({ ts: Date.now(), stage: "invalid_url", raw: tab?.url || "" });
-    return;
+    return null;
   }
   const { data, useSync } = await loadLatestData();
   if (!data || !data.groups || !data.nodes) {
     await appendLog({ ts: Date.now(), stage: "no_data" });
-    return;
+    return null;
   }
 
   const group = data.groups.find((g) => g.id === selectedGroupId) || data.groups[0];
   if (!group) {
     await appendLog({ ts: Date.now(), stage: "no_group" });
-    return;
+    return null;
   }
   if (!Array.isArray(group.nodes)) group.nodes = [];
 
@@ -198,20 +198,69 @@ async function saveToGroup(tab, selectedGroupId) {
       data.settings.syncEnabled = false;
       await storageSet({ [ROOT_KEY]: data }, false);
       await appendLog({ ts: Date.now(), stage: "sync_quota_disable", bytes: size });
-      return;
+      return null;
     }
     const err = await storageSet({ [ROOT_KEY]: payload }, true);
     if (err) {
       data.settings.syncEnabled = false;
       await storageSet({ [ROOT_KEY]: data }, false);
       await appendLog({ ts: Date.now(), stage: "sync_error", error: err });
-      return;
+      return null;
     }
     await storageSet({ [ROOT_KEY]: data }, false);
   } else {
     await storageSet({ [ROOT_KEY]: data }, false);
   }
   await appendLog({ ts: Date.now(), stage: "saved", url, group: group.id });
+  return { groupId: group.id, groupName: group.name || "" };
+}
+
+async function showToastInTab(tabId, message) {
+  const api = getChrome();
+  if (!tabId) return false;
+  try {
+    if (api?.scripting?.executeScript) {
+      await api.scripting.executeScript({
+        target: { tabId },
+        func: (msg) => {
+          const toastId = "homepage-save-toast";
+          const existing = document.getElementById(toastId);
+          if (existing) existing.remove();
+          const el = document.createElement("div");
+          el.id = toastId;
+          el.textContent = msg;
+          Object.assign(el.style, {
+            position: "fixed",
+            top: "20px",
+            right: "20px",
+            zIndex: "2147483647",
+            background: "rgba(15, 20, 28, 0.88)",
+            color: "#ffffff",
+            padding: "10px 14px",
+            borderRadius: "10px",
+            fontSize: "14px",
+            lineHeight: "1.2",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+            backdropFilter: "blur(6px)",
+            fontFamily: "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,'PingFang SC','Microsoft YaHei',sans-serif",
+          });
+          document.body.appendChild(el);
+          setTimeout(() => el.remove(), 2500);
+        },
+        args: [message],
+      });
+      return true;
+    }
+    if (api?.tabs?.executeScript) {
+      const msg = JSON.stringify(message || "");
+      const code = `(function(){var toastId="homepage-save-toast";var existing=document.getElementById(toastId);if(existing){existing.remove();}var el=document.createElement("div");el.id=toastId;el.textContent=${msg};el.style.position="fixed";el.style.top="20px";el.style.right="20px";el.style.zIndex="2147483647";el.style.background="rgba(15, 20, 28, 0.88)";el.style.color="#ffffff";el.style.padding="10px 14px";el.style.borderRadius="10px";el.style.fontSize="14px";el.style.lineHeight="1.2";el.style.boxShadow="0 10px 30px rgba(0,0,0,0.35)";el.style.backdropFilter="blur(6px)";el.style.fontFamily="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,'PingFang SC','Microsoft YaHei',sans-serif";document.body.appendChild(el);setTimeout(function(){el.remove();},2500);})();`;
+      await api.tabs.executeScript(tabId, { code });
+      return true;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function init() {
@@ -221,7 +270,12 @@ async function init() {
   const isFixed = data?.settings?.defaultGroupMode === "fixed";
   const hasFixedGroup = !!(fixedId && data?.groups?.some((g) => g.id === fixedId));
   if (isFixed && hasFixedGroup) {
-    if (tab) await saveToGroup(tab, fixedId);
+    if (tab) {
+      const result = await saveToGroup(tab, fixedId);
+      if (result) {
+        await showToastInTab(tab.id, `已保存到分组：${result.groupName || "未命名"}`);
+      }
+    }
     window.close();
     return;
   }
@@ -239,7 +293,10 @@ async function init() {
     saving = true;
     btnSave.disabled = true;
     const selectedGroupId = document.getElementById("groupSelect").value;
-    await saveToGroup(tab, selectedGroupId);
+    const result = await saveToGroup(tab, selectedGroupId);
+    if (result) {
+      await showToastInTab(tab.id, `已保存到分组：${result.groupName || "未命名"}`);
+    }
     window.close();
   });
 }

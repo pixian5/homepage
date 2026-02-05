@@ -12,6 +12,7 @@
   },
   "permissions": [
     "storage",
+    "scripting",
     "tabs",
     "activeTab",
     "history"

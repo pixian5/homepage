@@ -16,6 +16,8 @@ cp -R "$SRC_DIR/." "$FIREFOX_DIR/"
 cp "$ROOT_DIR/manifest.chrome.json" "$CHROME_DIR/manifest.json"
 cp "$ROOT_DIR/manifest.firefox.json" "$FIREFOX_DIR/manifest.json"
 
+node "$ROOT_DIR/scripts/bundle-firefox.mjs"
+
 (
   cd "$DIST_DIR"
   zip -r -q firefox.zip firefox

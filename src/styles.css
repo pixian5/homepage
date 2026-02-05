@@ -135,8 +135,8 @@ html, body {
 .group-tab.dragging { opacity: 0.6; }
 .group-tab.drop-target { border-color: rgba(77, 214, 168, 0.6); }
 .group-tab.active {
-  background: var(--control-active, rgba(63, 224, 193, 0.15));
-  border-color: rgba(63, 224, 193, 0.45);
+  background: rgba(37, 96, 201, 0.35);
+  border-color: rgba(58, 123, 232, 0.75);
   color: var(--text);
 }
 

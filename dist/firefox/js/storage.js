@@ -17,6 +17,8 @@ const DEFAULT_SETTINGS = {
   backgroundType: "bing",
   backgroundColor: "#0b0f14",
   backgroundGradient: "linear-gradient(120deg,#1d2a3b,#0b0f14)",
+  backgroundGradientA: "#1d2a3b",
+  backgroundGradientB: "#0b0f14",
   backgroundCustom: "",
   backgroundFade: true,
   backgroundOverlayStrength: 0.08,
@@ -113,29 +115,68 @@ function trimLocalBackground(data) {
 
 async function storageGet(area, key) {
   return new Promise((resolve) => {
-    area.get(key, (res) => {
-      const err = getLastError();
-      if (err) return resolve(undefined);
-      resolve(res[key]);
-    });
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      resolve(value);
+    };
+    try {
+      const result = area.get(key, (res) => {
+        const err = getLastError();
+        if (err) return finish(undefined);
+        finish(res?.[key]);
+      });
+      if (result && typeof result.then === "function") {
+        result.then((res) => finish(res?.[key]), () => finish(undefined));
+      }
+    } catch {
+      finish(undefined);
+    }
   });
 }
 
 async function storageSet(area, obj) {
   return new Promise((resolve) => {
-    area.set(obj, () => {
-      const err = getLastError();
-      resolve(err ? err.message : null);
-    });
+    let done = false;
+    const finish = (errMsg) => {
+      if (done) return;
+      done = true;
+      resolve(errMsg);
+    };
+    try {
+      const result = area.set(obj, () => {
+        const err = getLastError();
+        finish(err ? err.message : null);
+      });
+      if (result && typeof result.then === "function") {
+        result.then(() => finish(null), (err) => finish(err?.message || String(err)));
+      }
+    } catch (err) {
+      finish(err?.message || String(err));
+    }
   });
 }
 
 async function storageRemove(area, key) {
   return new Promise((resolve) => {
-    area.remove(key, () => {
-      const err = getLastError();
-      resolve(err ? err.message : null);
-    });
+    let done = false;
+    const finish = (errMsg) => {
+      if (done) return;
+      done = true;
+      resolve(errMsg);
+    };
+    try {
+      const result = area.remove(key, () => {
+        const err = getLastError();
+        finish(err ? err.message : null);
+      });
+      if (result && typeof result.then === "function") {
+        result.then(() => finish(null), (err) => finish(err?.message || String(err)));
+      }
+    } catch (err) {
+      finish(err?.message || String(err));
+    }
   });
 }
 

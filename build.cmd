@@ -20,6 +20,8 @@ xcopy "%SRC%" "%FIREFOX%" /E /I /H /Y >nul
 copy /Y "%ROOT%manifest.chrome.json" "%CHROME%\manifest.json" >nul
 copy /Y "%ROOT%manifest.firefox.json" "%FIREFOX%\manifest.json" >nul
 
+node "%ROOT%scripts\\bundle-firefox.mjs"
+
 powershell -NoProfile -Command "Compress-Archive -Path '%DIST%\firefox\*' -DestinationPath '%DIST%\firefox.zip' -Force"
 
 echo Build done

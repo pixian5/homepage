@@ -1347,8 +1347,10 @@ function openSettingsModal() {
   $("settingBgColor").value = data.settings.backgroundColor;
   $("settingBgGradient").value = data.settings.backgroundGradient;
   const match = /linear-gradient\\([^,]+,\\s*([^,]+),\\s*([^\\)]+)\\)/.exec(data.settings.backgroundGradient || "");
-  $("settingBgGradientA").value = match?.[1]?.trim() || "#1d2a3b";
-  $("settingBgGradientB").value = match?.[2]?.trim() || "#0b0f14";
+  const gA = data.settings.backgroundGradientA || match?.[1]?.trim() || "#1d2a3b";
+  const gB = data.settings.backgroundGradientB || match?.[2]?.trim() || "#0b0f14";
+  $("settingBgGradientA").value = gA;
+  $("settingBgGradientB").value = gB;
   $("settingBgOverlay").value = Number(data.settings.backgroundOverlayStrength ?? 0.08);
   $("settingBgOverlayValue").textContent = `${Math.round(Number($("settingBgOverlay").value) * 100)}%`;
   $("settingTooltip").checked = data.settings.tooltipEnabled;
@@ -1449,11 +1451,11 @@ function openSettingsModal() {
     data.settings.gridDensity = selectedDensity ? selectedDensity.value : data.settings.gridDensity;
     data.settings.backgroundType = $("settingBgType").value;
     data.settings.backgroundColor = $("settingBgColor").value;
-    if ($("settingBgType").value === "gradient") {
-      const gA = $("settingBgGradientA").value || "#1d2a3b";
-      const gB = $("settingBgGradientB").value || "#0b0f14";
-      data.settings.backgroundGradient = `linear-gradient(120deg, ${gA}, ${gB})`;
-    }
+    const gA = $("settingBgGradientA").value || "#1d2a3b";
+    const gB = $("settingBgGradientB").value || "#0b0f14";
+    data.settings.backgroundGradientA = gA;
+    data.settings.backgroundGradientB = gB;
+    data.settings.backgroundGradient = `linear-gradient(120deg, ${gA}, ${gB})`;
     data.settings.backgroundOverlayStrength = Number($("settingBgOverlay").value);
     data.settings.tooltipEnabled = $("settingTooltip").checked;
     data.settings.keyboardNav = $("settingKeyboard").checked;
@@ -2056,7 +2058,21 @@ function bindEvents() {
   });
 
   elements.btnOpenMode.addEventListener("click", openOpenModeMenu);
-  elements.btnSettings.addEventListener("click", openSettingsModal);
+  elements.btnSettings.addEventListener("click", async () => {
+    if (settingsOpen) {
+      if (settingsSaveTimer) {
+        clearTimeout(settingsSaveTimer);
+        settingsSaveTimer = null;
+      }
+      if (typeof settingsSaveNow === "function") {
+        await settingsSaveNow({ close: true, toastOnSave: false });
+      } else {
+        closeModal();
+      }
+      return;
+    }
+    openSettingsModal();
+  });
   elements.btnSearch.addEventListener("click", () => {
     const query = elements.topSearch.value.trim();
     if (!query) {

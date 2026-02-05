@@ -73,12 +73,13 @@ let renderSeq = 0;
 let lastMainLayout = null;
 let storageReloadTimer = null;
 let pendingStorageReload = false;
+let suppressStorageUntil = 0;
 const DEBUG_LOG_KEY = "homepage_debug_log";
 
 const RECENT_GROUP_ID = "__recent__";
 const RECENT_LIMIT = 24;
 
-const DEFAULT_TILE_SIZE = 96;
+const DEFAULT_TILE_SIZE = 150;
 const DEFAULT_BASE_FONT = 13;
 const densityMap = {
   compact: { gap: 10 },
@@ -171,6 +172,7 @@ function attachStorageListener() {
   if (!api?.storage?.onChanged) return;
   const key = getStorageKey();
   api.storage.onChanged.addListener((changes, areaName) => {
+    if (Date.now() < suppressStorageUntil) return;
     if (!changes || !changes[key]) return;
     if (areaName !== "local" && areaName !== "sync") return;
     scheduleStorageReload();
@@ -202,7 +204,7 @@ function applyDensity() {
   const baseFont = Number(data.settings.fontSize) || DEFAULT_BASE_FONT;
   document.documentElement.style.setProperty("--tile-font", `${baseFont}px`);
   document.documentElement.style.setProperty("--base-font", `${baseFont}px`);
-  if (!data.settings.lastTileSize || data.settings.lastTileSize <= 0) {
+  if (!data.settings.lastTileSize || data.settings.lastTileSize <= 0 || data.settings.lastTileSize < DEFAULT_TILE_SIZE) {
     data.settings.lastTileSize = DEFAULT_TILE_SIZE;
   }
 }
@@ -288,6 +290,20 @@ function normalizeUrl(input) {
   }
 }
 
+function normalizeUrlWithScheme(input, scheme) {
+  if (!input) return "";
+  const raw = input.trim();
+  if (!raw) return "";
+  const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw);
+  const candidate = hasScheme ? raw : `${scheme}://${raw.replace(/^\/+/, "")}`;
+  try {
+    const url = new URL(candidate);
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
 async function openUrl(url, mode) {
   const api = getChromeApi();
   const openMode = mode || data.settings.openMode;
@@ -361,6 +377,7 @@ function pushBackup() {
 }
 
 async function persistData() {
+  suppressStorageUntil = Date.now() + 350;
   debugLog("persist_start", {
     useSync: data.settings.syncEnabled,
     groups: data.groups?.length || 0,
@@ -513,7 +530,9 @@ async function renderGrid() {
     tileSize = Math.max(minTile, Math.min(maxTile, baseSize));
   }
   const iconRatio = density.icon && density.size ? density.icon / density.size : 0.4;
-  let iconSize = Math.max(18, Math.round(tileSize * iconRatio));
+  let iconSize = Math.max(18, Math.round(tileSize * (iconRatio || 0.4)));
+  const maxIcon = Math.floor(tileSize * 0.36);
+  if (iconSize > maxIcon) iconSize = maxIcon;
   if (!openFolderId) {
     lastMainLayout = { columns, tileSize, iconSize };
   } else if (lastMainLayout) {
@@ -669,7 +688,7 @@ function toggleSelect(id, index, range) {
   if (lastSelectedIndex === null && typeof index === "number") {
     lastSelectedIndex = index;
   }
-  render();
+  updateSelectionStyles();
 }
 
 function clearSelection() {
@@ -680,6 +699,19 @@ function clearSelection() {
     selectionBox.remove();
     selectionBox = null;
   }
+}
+
+function updateSelectionControls() {
+  elements.btnSelectAll.classList.toggle("hidden", !selectionMode);
+  elements.btnBatchDelete.textContent = selectionMode ? "删除" : "批量删除";
+  elements.btnFolderBatchDelete.textContent = selectionMode ? "删除" : "批量删除";
+}
+
+function updateSelectionStyles() {
+  const grid = openFolderId ? elements.folderGrid : elements.grid;
+  qsa(".tile", grid).forEach((tile) => {
+    tile.classList.toggle("selected", selectedIds.has(tile.dataset.id));
+  });
 }
 
 function openContextMenu(x, y, node) {
@@ -932,7 +964,7 @@ function deleteNodes(ids) {
   toast(`已删除 ${ids.length} 个快捷按钮`, "撤销", () => undoDelete());
   setTimeout(() => {
     pendingDeletion = null;
-  }, 5000);
+  }, 10000);
 }
 
 function undoDelete() {
@@ -1380,9 +1412,10 @@ function openSettingsModal() {
     <div class="section">
       <button id="btnExport" class="icon-btn">导出 JSON</button>
       <button id="btnImport" class="icon-btn">导入 JSON</button>
+      <button id="btnImportUrl" class="icon-btn">导入网址</button>
       <button id="btnBackupManage" class="icon-btn">备份管理</button>
       <button id="btnClearData" class="icon-btn danger strong-label">清空数据</button>
-      <button id="btnClearCards" class="icon-btn danger">清空所有卡片</button>
+      <button id="btnClearCards" class="icon-btn danger">删除所有分组、卡片</button>
       <button id="btnRefreshIcons" class="icon-btn">刷新所有图标</button>
     </div>
 
@@ -1465,6 +1498,7 @@ function openSettingsModal() {
 
   $("btnExport").addEventListener("click", () => openExportModal());
   $("btnImport").addEventListener("click", () => openImportModal());
+  $("btnImportUrl").addEventListener("click", () => openImportUrlModal());
   $("btnBackupManage").addEventListener("click", () => openBackupModal());
   $("btnClearData").addEventListener("click", async () => {
     if (!confirm("确认清空全部数据？")) return;
@@ -1477,16 +1511,18 @@ function openSettingsModal() {
     toast("已清空");
   });
   $("btnClearCards").addEventListener("click", async () => {
-    if (!confirm("确认清空所有卡片？（分组与设置将保留）")) return;
+    if (!confirm("确认删除所有分组、卡片与卡片？（设置将保留）")) return;
     pushBackup();
+    const preservedSettings = JSON.parse(JSON.stringify(data.settings || {}));
+    const groupId = `grp_${Date.now()}`;
     data.nodes = {};
-    data.groups.forEach((g) => {
-      g.nodes = [];
-    });
+    data.groups = [{ id: groupId, name: "默认", order: 0, nodes: [] }];
+    data.settings = preservedSettings;
+    activeGroupId = groupId;
     await persistData();
     closeModal();
     render();
-    toast("已清空所有卡片");
+    toast("已删除所有分组、卡片与卡片，可在【备份管理】中恢复");
   });
   $("btnRefreshIcons").addEventListener("click", async () => {
     await refreshAllIcons(Object.values(data.nodes));
@@ -1666,7 +1702,104 @@ function openImportModal() {
   });
 }
 
+function openImportUrlModal() {
+  if (!data.groups?.length) {
+    toast("没有可用分组");
+    return;
+  }
+  const options = data.groups
+    .sort((a, b) => a.order - b.order)
+    .map((g) => `<option value="${g.id}">${g.name}</option>`)
+    .join("");
+  const html = `
+    <h2>导入网址</h2>
+    <div class="section">
+      <label>选择分组</label>
+      <select id="importUrlGroup">${options}</select>
+    </div>
+    <div class="section">
+      <div class="row-inline">
+        <button id="btnImportUrlHttp" class="icon-btn">导入为HTTP</button>
+        <button id="btnImportUrlHttps" class="icon-btn">导入为HTTPS</button>
+        <button id="btnImportUrlCancel" class="icon-btn">取消</button>
+      </div>
+    </div>
+    <div class="section">
+      <textarea id="importUrlText" placeholder="每行一个网址"></textarea>
+    </div>
+  `;
+  openModal(html);
+  const groupSelect = $("importUrlGroup");
+  const defaultGroupId = activeGroupId && activeGroupId !== RECENT_GROUP_ID ? activeGroupId : data.groups[0].id;
+  groupSelect.value = defaultGroupId;
+
+  const closeWithCleanup = () => {
+    elements.modalOverlay.removeEventListener("click", onOverlayClick);
+    closeModal();
+  };
+  const onOverlayClick = (e) => {
+    if (e.target === elements.modalOverlay) closeWithCleanup();
+  };
+  elements.modalOverlay.addEventListener("click", onOverlayClick);
+
+  const importWithScheme = async (scheme) => {
+    const groupId = groupSelect.value;
+    const group = data.groups.find((g) => g.id === groupId);
+    if (!group) {
+      toast("分组不存在");
+      return;
+    }
+    const rawText = $("importUrlText").value || "";
+    const lines = rawText.split(/\r?\n/);
+    const urls = [];
+    let invalid = 0;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const token = trimmed.split(/\s+/)[0];
+      const normalized = normalizeUrlWithScheme(token, scheme);
+      if (!normalized) {
+        invalid += 1;
+        continue;
+      }
+      urls.push(normalized);
+    }
+    if (!urls.length) {
+      toast("没有可导入的网址");
+      return;
+    }
+    if (!Array.isArray(group.nodes)) group.nodes = [];
+    pushBackup();
+    const now = Date.now();
+    urls.forEach((url) => {
+      const id = `itm_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      data.nodes[id] = {
+        id,
+        type: "item",
+        title: new URL(url).hostname,
+        url,
+        iconType: "auto",
+        iconData: "",
+        color: "",
+        createdAt: now,
+        updatedAt: now,
+      };
+      group.nodes.push(id);
+    });
+    data.settings.lastActiveGroupId = group.id;
+    await persistData();
+    closeModal();
+    render();
+    toast(invalid ? `已导入 ${urls.length} 条，忽略 ${invalid} 条` : `已导入 ${urls.length} 条`);
+  };
+
+  $("btnImportUrlCancel").addEventListener("click", closeWithCleanup);
+  $("btnImportUrlHttp").addEventListener("click", () => importWithScheme("http"));
+  $("btnImportUrlHttps").addEventListener("click", () => importWithScheme("https"));
+}
+
 function openBackupModal() {
+  settingsOpen = false;
   const list = data.backups
     .map((b) => `<div class="row" data-backup="${b.id}"><div>${new Date(b.ts).toLocaleString()}</div><div class="row-actions"><button class="icon-btn backup-restore">恢复</button><button class="icon-btn backup-delete">删除</button></div></div>`)
     .join("");
@@ -2068,18 +2201,19 @@ function bindEvents() {
     if (!selectionMode) {
       selectionMode = true;
       toast("进入批量选择模式");
-      render();
+      updateSelectionControls();
       return;
     }
     const ids = Array.from(selectedIds);
     if (!ids.length) {
       clearSelection();
-      render();
+      updateSelectionControls();
+      updateSelectionStyles();
       return;
     }
-    deleteNodes(ids);
     clearSelection();
-    render();
+    deleteNodes(ids);
+    updateSelectionControls();
   });
 
   elements.btnFolderBatchDelete.addEventListener("click", () => {
@@ -2090,25 +2224,26 @@ function bindEvents() {
     if (!selectionMode) {
       selectionMode = true;
       toast("进入批量选择模式");
-      render();
+      updateSelectionControls();
       return;
     }
     const ids = Array.from(selectedIds);
     if (!ids.length) {
       clearSelection();
-      render();
+      updateSelectionControls();
+      updateSelectionStyles();
       return;
     }
-    deleteNodes(ids);
     clearSelection();
-    render();
+    deleteNodes(ids);
+    updateSelectionControls();
   });
 
   elements.btnSelectAll.addEventListener("click", () => {
     if (!selectionMode) return;
     const grid = openFolderId ? elements.folderGrid : elements.grid;
     qsa(".tile", grid).forEach((tile) => selectedIds.add(tile.dataset.id));
-    render();
+    updateSelectionStyles();
   });
 
   elements.main?.addEventListener?.("click", (e) => {
@@ -2119,7 +2254,8 @@ function bindEvents() {
     if (!selectionMode || boxSelecting) return;
     if (e.target.closest(".tile")) return;
     clearSelection();
-    render();
+    updateSelectionControls();
+    updateSelectionStyles();
   });
 
   elements.btnOpenMode.addEventListener("click", openOpenModeMenu);
@@ -2222,7 +2358,7 @@ function bindEvents() {
     selectionStart = null;
     isDraggingBox = false;
     if (selectionBox) selectionBox.classList.add("hidden");
-    render();
+    updateSelectionStyles();
   };
 
   elements.grid.addEventListener("mousedown", (e) => handleBoxSelectStart(e, elements.grid));

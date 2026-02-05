@@ -1535,7 +1535,7 @@ function openSettingsModal() {
   });
 
   $("btnExport").addEventListener("click", () => exportJsonToClipboard());
-  $("btnImport").addEventListener("click", () => importJsonFromClipboard());
+  $("btnImport").addEventListener("click", () => openImportModal());
   $("btnImportUrl").addEventListener("click", () => openImportUrlModal());
   $("btnBackupManage").addEventListener("click", () => openBackupModal());
   $("btnClearData").addEventListener("click", async () => {
@@ -1682,22 +1682,63 @@ async function exportJsonToClipboard() {
   }
 }
 
-async function importJsonFromClipboard() {
+async function openImportModal() {
+  const html = `
+    <h2>导入 JSON</h2>
+    <div class="section">
+      <label>导入策略</label>
+      <select id="importMode">
+        <option value="replace">覆盖所有</option>
+        <option value="merge">合并现有</option>
+        <option value="add">仅新增不覆盖</option>
+      </select>
+    </div>
+    <div class="section">
+      <textarea id="importText" placeholder="自动读取剪切板..."></textarea>
+    </div>
+    <div class="actions">
+      <button id="btnCancel" class="icon-btn">取消</button>
+      <button id="btnImportNow" class="icon-btn">导入</button>
+    </div>
+  `;
+  openModal(html);
+  $("btnCancel").addEventListener("click", closeModal);
+  $("btnImportNow").addEventListener("click", async () => {
+    try {
+      const incoming = JSON.parse($("importText").value.trim());
+      const mode = $("importMode").value;
+      if (!incoming.schemaVersion) throw new Error("无 schemaVersion");
+      pushBackup();
+      if (mode === "replace") {
+        data = incoming;
+      } else if (mode === "merge") {
+        data.groups = [...data.groups, ...incoming.groups];
+        data.nodes = { ...data.nodes, ...incoming.nodes };
+      } else if (mode === "add") {
+        for (const [id, node] of Object.entries(incoming.nodes || {})) {
+          if (!data.nodes[id]) data.nodes[id] = node;
+        }
+        data.groups = [...data.groups, ...incoming.groups.filter((g) => !data.groups.find((x) => x.id === g.id))];
+      }
+      await persistData();
+      closeModal();
+      render();
+      toast("导入成功");
+    } catch (err) {
+      toast(`导入失败：${err.message}`);
+    }
+  });
+
   try {
     const text = await navigator.clipboard.readText();
-    if (!text) {
+    if (text) {
+      $("importText").value = text;
+      toast("已从剪切板读取");
+    } else {
       toast("剪切板为空");
-      return;
     }
-    const incoming = JSON.parse(text.trim());
-    if (!incoming.schemaVersion) throw new Error("无 schemaVersion");
-    pushBackup();
-    data = incoming;
-    await persistData();
-    render();
-    toast("已从剪切板导入");
   } catch (err) {
-    toast(`导入失败：${err.message || "无法读取剪切板"}`);
+    toast(`读取剪切板失败：${err.message || "权限受限"}`);
   }
 }
 

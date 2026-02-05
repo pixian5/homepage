@@ -21,6 +21,38 @@ const MULTI_PART_TLDS = new Set([
   "com.tw",
   "com.hk",
 ]);
+const SPECIAL_FAVICONS = {
+  "gmail.com": [
+    "https://mail.google.com/favicon.ico",
+    "https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico",
+  ],
+  "mail.google.com": [
+    "https://mail.google.com/favicon.ico",
+    "https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico",
+  ],
+  "google.com": [
+    "https://www.google.com/favicon.ico",
+    "https://google.com/favicon.ico",
+  ],
+  "www.google.com": [
+    "https://www.google.com/favicon.ico",
+  ],
+  "chatgpt.com": [
+    "https://chatgpt.com/favicon.ico",
+    "https://chat.openai.com/favicon.ico",
+    "https://openai.com/favicon.ico",
+  ],
+  "openai.com": [
+    "https://openai.com/favicon.ico",
+    "https://chatgpt.com/favicon.ico",
+  ],
+  "chat.openai.com": [
+    "https://chatgpt.com/favicon.ico",
+    "https://openai.com/favicon.ico",
+  ],
+};
+const ROOT_REUSE_BLOCKLIST = new Set(["google.com"]);
+const FINAL_URL_CACHE = new Map();
 
 function hashColor(str) {
   let hash = 0;
@@ -86,13 +118,42 @@ export function getFaviconCandidates(pageUrl) {
     const host = u.hostname;
     if (!host.includes(".")) return [];
     if (host === "localhost" || host.endsWith(".local")) return [];
+    const special = SPECIAL_FAVICONS[host] || [];
+    const root = getRootDomain(host);
+    const rootHost = root && root !== host && !ROOT_REUSE_BLOCKLIST.has(root) ? root : "";
     return [
+      ...special,
       `${u.origin}/favicon.ico`,
+      rootHost ? `${FAVICON_API}${encodeURIComponent(rootHost)}&sz=128` : "",
       `${FAVICON_API}${encodeURIComponent(host)}&sz=128`,
+      rootHost ? `https://icons.duckduckgo.com/ip3/${rootHost}.ico` : "",
       `https://icons.duckduckgo.com/ip3/${host}.ico`,
-    ];
+    ].filter(Boolean);
   } catch {
     return [];
+  }
+}
+
+async function resolveFinalUrl(pageUrl, timeoutMs = 6000) {
+  try {
+    if (!isHttpUrl(pageUrl)) return pageUrl;
+    const cached = FINAL_URL_CACHE.get(pageUrl);
+    if (cached && Date.now() - cached.ts < 12 * 60 * 60 * 1000) {
+      return cached.url;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(pageUrl, {
+      method: "GET",
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    const finalUrl = res?.url || pageUrl;
+    FINAL_URL_CACHE.set(pageUrl, { url: finalUrl, ts: Date.now() });
+    return finalUrl;
+  } catch {
+    return pageUrl;
   }
 }
 
@@ -158,7 +219,8 @@ export async function resolveIcon(node, settings) {
   }
 
   if (settings.iconFetch && node.url) {
-    const url = buildFaviconUrl(node.url);
+    const finalUrl = await resolveFinalUrl(node.url);
+    const url = buildFaviconUrl(finalUrl);
     cache[cacheKey] = { url, ts: Date.now() };
     if (siteKey && !cache[siteKey]) {
       cache[siteKey] = { url, ts: Date.now() };
@@ -172,13 +234,22 @@ export async function resolveIcon(node, settings) {
 
 export async function refreshAllIcons(nodes) {
   const cache = await loadIconCache();
-  for (const node of nodes) {
-    if (!node.url) continue;
-    const url = buildFaviconUrl(node.url);
-    cache[node.url] = { url, ts: Date.now() };
-    const siteKey = getSiteKey(node.url);
-    if (siteKey) cache[siteKey] = { url, ts: Date.now() };
-  }
+  const tasks = nodes.filter((n) => n.url);
+  const limit = 6;
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, async () => {
+    while (cursor < tasks.length) {
+      const idx = cursor++;
+      const node = tasks[idx];
+      if (!node?.url) continue;
+      const finalUrl = await resolveFinalUrl(node.url);
+      const url = buildFaviconUrl(finalUrl);
+      cache[node.url] = { url, ts: Date.now() };
+      const siteKey = getSiteKey(node.url);
+      if (siteKey) cache[siteKey] = { url, ts: Date.now() };
+    }
+  });
+  await Promise.all(workers);
   await saveIconCache(cache);
 }
 

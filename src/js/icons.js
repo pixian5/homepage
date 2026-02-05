@@ -183,9 +183,12 @@ export async function refreshAllIcons(nodes) {
 }
 
 export async function retryFailedIconsIfDue(settings) {
-  if (!settings.iconRetryAtSix) return;
+  const retryHour = settings.iconRetryHour ?? (settings.iconRetryAtSix ? 18 : "");
+  if (retryHour === "" || retryHour === null || retryHour === undefined) return;
+  const targetHour = Number(retryHour);
+  if (!Number.isInteger(targetHour) || targetHour < 0 || targetHour > 23) return;
   const now = new Date();
-  if (now.getHours() !== 18) return;
+  if (now.getHours() !== targetHour) return;
   const cache = await loadIconCache();
   let changed = false;
   for (const key of Object.keys(cache)) {

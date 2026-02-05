@@ -5,7 +5,7 @@ const SYNC_ITEM_QUOTA_BYTES = 7500;
 
 const DEFAULT_SETTINGS = {
   showSearch: true,
-  enableSearchEngine: false,
+  enableSearchEngine: true,
   searchEngineUrl: "https://www.bing.com/search?q=",
   openMode: "current",
   fixedLayout: false,
@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS = {
   backgroundOverlayStrength: 0.08,
   iconFetch: true,
   iconRetryAtSix: true,
+  iconRetryHour: 18,
   syncEnabled: false,
   maxBackups: 30,
   keyboardNav: true,

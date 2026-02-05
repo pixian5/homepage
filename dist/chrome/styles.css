@@ -192,6 +192,7 @@ html, body {
 }
 .icon-btn:hover { transform: translateY(-1px); background: var(--control-hover, rgba(33, 42, 58, 0.9)); }
 .icon-btn.danger { border-color: rgba(255,107,107,.6); color: #ffd9d9; }
+.icon-btn.strong-label { font-weight: 700; }
 
 .main {
   position: relative; flex: 1;
@@ -322,7 +323,7 @@ html, body {
 }
 .modal textarea { min-height: 120px; font-family: monospace; }
 .modal .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.modal .row-inline { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.modal .row-inline { display: flex; flex-wrap: nowrap; gap: 12px; align-items: center; }
 .modal .stack { display: flex; flex-direction: column; gap: 12px; }
 .modal .inline-field { display: flex; align-items: center; gap: 8px; }
 .modal .inline-field label { margin: 0; }
@@ -332,8 +333,16 @@ html, body {
   width: auto;
   min-width: 180px;
 }
+.modal .inline-text {
+  flex: 1 1 auto;
+  min-width: 220px;
+}
 .modal .inline-number {
-  width: 120px;
+  width: 100px;
+  flex: 0 0 auto;
+}
+.modal input.inline-number {
+  width: 100px;
 }
 .modal .inline-range {
   width: 180px;

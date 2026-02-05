@@ -1174,10 +1174,9 @@ function openSettingsModal() {
     <h2>设置</h2>
     <div class="section">
       <label><input id="settingShowSearch" type="checkbox"> 显示顶部搜索框</label>
-      <label><input id="settingEnableSearchEngine" type="checkbox"> 回车使用默认搜索引擎</label>
-      <label>默认搜索引擎</label>
-      <div class="stack">
-        <select id="settingSearchEnginePreset">
+      <div class="row-inline">
+        <span class="inline-label">默认搜索引擎</span>
+        <select id="settingSearchEnginePreset" class="inline-select">
           <option value="https://www.google.com/search?q=">Google</option>
           <option value="https://www.baidu.com/s?wd=">百度</option>
           <option value="https://www.bing.com/search?q=">Bing</option>
@@ -1185,8 +1184,8 @@ function openSettingsModal() {
           <option value="https://www.yandex.com/search/?text=">Yandex</option>
           <option value="custom">自定义</option>
         </select>
-        <input id="settingSearchEngine" type="text" placeholder="https://www.bing.com/search?q=" />
       </div>
+      <input id="settingSearchEngine" type="text" placeholder="https://www.bing.com/search?q=" class="inline-text" />
     </div>
 
 
@@ -1198,7 +1197,7 @@ function openSettingsModal() {
         </div>
       </div>
       <div class="row-inline">
-        <span class="inline-label">网格密度</span>
+        <span class="inline-label">卡片间隙</span>
         <label><input type="radio" name="density" value="compact" /> 紧凑</label>
         <label><input type="radio" name="density" value="standard" /> 标准</label>
         <label><input type="radio" name="density" value="spacious" /> 宽松</label>
@@ -1239,8 +1238,8 @@ function openSettingsModal() {
     </div>
 
     <div class="section">
-      <label><input id="settingTooltip" type="checkbox"> 启用 Tooltip</label>
-      <label><input id="settingKeyboard" type="checkbox"> 启用键盘导航</label>
+      <label data-tooltip="开启后，鼠标悬停在快捷按钮上会显示标题和网址"><input id="settingTooltip" type="checkbox"> 显示提示</label>
+      <label data-tooltip="开启后，可使用键盘进行导航与操作（如方向键移动、回车打开）"><input id="settingKeyboard" type="checkbox"> 启用键盘导航</label>
     </div>
 
     <div class="section">
@@ -1264,11 +1263,11 @@ function openSettingsModal() {
     <div class="section">
       <div class="row-inline">
         <span class="inline-label">默认保存分组</span>
-        <select id="settingDefaultGroupMode">
+        <select id="settingDefaultGroupMode" class="inline-select">
           <option value="last">上次添加的分组</option>
           <option value="fixed">固定分组</option>
         </select>
-        <select id="settingDefaultGroupId"></select>
+        <select id="settingDefaultGroupId" class="inline-select"></select>
       </div>
     </div>
 
@@ -1278,16 +1277,48 @@ function openSettingsModal() {
 
     <div class="section">
       <label><input id="settingSync" type="checkbox"> 启用同步</label>
-      <label>最大备份数量（0 表示不备份）</label>重新获取不存在图标
-      <input id="settingBackup" type="number" min="0" />
-      <label><input id="settingIconRetry" type="checkbox"> 18:00 自动重试图标</label>
+      <div class="row-inline">
+        <span class="inline-label">最大备份数量（0 表示不备份）</span>
+        <input id="settingBackup" type="number" min="0" class="inline-number" />
+      </div>
+      <div class="row-inline">
+        <span class="inline-label">重新获取失败图标（每天）</span>
+        <select id="settingIconRetryHour" class="inline-select">
+          <option value="">不启用</option>
+          <option value="0">00:00</option>
+          <option value="1">01:00</option>
+          <option value="2">02:00</option>
+          <option value="3">03:00</option>
+          <option value="4">04:00</option>
+          <option value="5">05:00</option>
+          <option value="6">06:00</option>
+          <option value="7">07:00</option>
+          <option value="8">08:00</option>
+          <option value="9">09:00</option>
+          <option value="10">10:00</option>
+          <option value="11">11:00</option>
+          <option value="12">12:00</option>
+          <option value="13">13:00</option>
+          <option value="14">14:00</option>
+          <option value="15">15:00</option>
+          <option value="16">16:00</option>
+          <option value="17">17:00</option>
+          <option value="18">18:00</option>
+          <option value="19">19:00</option>
+          <option value="20">20:00</option>
+          <option value="21">21:00</option>
+          <option value="22">22:00</option>
+          <option value="23">23:00</option>
+        </select>
+      </div>
     </div>
 
     <div class="section">
       <button id="btnExport" class="icon-btn">导出 JSON</button>
       <button id="btnImport" class="icon-btn">导入 JSON</button>
       <button id="btnBackupManage" class="icon-btn">备份管理</button>
-      <button id="btnClearData" class="icon-btn danger">清空数据</button>
+      <button id="btnClearData" class="icon-btn danger strong-label">清空数据</button>
+      <button id="btnClearCards" class="icon-btn danger">清空所有卡片</button>
       <button id="btnRefreshIcons" class="icon-btn">刷新所有图标</button>
     </div>
 
@@ -1295,7 +1326,6 @@ function openSettingsModal() {
   openModal(html);
 
   $("settingShowSearch").checked = data.settings.showSearch;
-  $("settingEnableSearchEngine").checked = data.settings.enableSearchEngine;
   $("settingSearchEngine").value = data.settings.searchEngineUrl;
   const presets = {
     "https://www.google.com/search?q=": "https://www.google.com/search?q=",
@@ -1327,7 +1357,8 @@ function openSettingsModal() {
   $("settingFontSize").value = data.settings.fontSize || 13;
   $("settingSync").checked = data.settings.syncEnabled;
   $("settingBackup").value = data.settings.maxBackups;
-  $("settingIconRetry").checked = data.settings.iconRetryAtSix;
+  const retryHour = data.settings.iconRetryHour ?? (data.settings.iconRetryAtSix ? 18 : "");
+  $("settingIconRetryHour").value = retryHour === "" ? "" : String(retryHour);
   $("settingSidebarCollapsed").checked = data.settings.sidebarHidden;
   $("settingSidebarCollapsed").addEventListener("change", (e) => {
     data.settings.sidebarHidden = e.target.checked;
@@ -1379,6 +1410,18 @@ function openSettingsModal() {
     render();
     toast("已清空");
   });
+  $("btnClearCards").addEventListener("click", async () => {
+    if (!confirm("确认清空所有卡片？（分组与设置将保留）")) return;
+    pushBackup();
+    data.nodes = {};
+    data.groups.forEach((g) => {
+      g.nodes = [];
+    });
+    await persistData();
+    closeModal();
+    render();
+    toast("已清空所有卡片");
+  });
   $("btnRefreshIcons").addEventListener("click", async () => {
     await refreshAllIcons(Object.values(data.nodes));
     toast("图标刷新完成");
@@ -1398,7 +1441,7 @@ function openSettingsModal() {
     });
 
     data.settings.showSearch = $("settingShowSearch").checked;
-    data.settings.enableSearchEngine = $("settingEnableSearchEngine").checked;
+    data.settings.enableSearchEngine = true;
     data.settings.searchEngineUrl = $("settingSearchEngine").value.trim() || data.settings.searchEngineUrl;
     data.settings.fixedLayout = $("settingFixedLayout").checked;
     data.settings.fixedCols = Number($("settingCols").value) || 8;
@@ -1425,7 +1468,14 @@ function openSettingsModal() {
       data.backups = data.backups.slice(0, nextMaxBackups);
     }
     data.settings.maxBackups = nextMaxBackups;
-    data.settings.iconRetryAtSix = $("settingIconRetry").checked;
+    const retryVal = $("settingIconRetryHour").value;
+    if (retryVal === "") {
+      data.settings.iconRetryHour = "";
+      data.settings.iconRetryAtSix = false;
+    } else {
+      data.settings.iconRetryHour = Number(retryVal);
+      data.settings.iconRetryAtSix = Number(retryVal) === 18;
+    }
 
     const bgFile = $("settingBgFile").files?.[0];
     if (bgFile) {
@@ -2018,7 +2068,7 @@ function bindEvents() {
 
   elements.topSearch.addEventListener("input", handleSearchInput);
   elements.topSearch.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && data.settings.enableSearchEngine) {
+    if (e.key === "Enter") {
       const query = elements.topSearch.value.trim();
       if (!query) return;
       openUrl(`${data.settings.searchEngineUrl}${encodeURIComponent(query)}`, "new");

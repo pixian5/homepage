@@ -20,6 +20,9 @@
   --control-height: 40px;
   --group-tab-height: var(--control-height);
   --app-padding-x: 32px;
+  --sidebar-tab-text: #0b0f14;
+  --sidebar-tab-text-active: #f5f6fa;
+  --sidebar-tab-stroke-active: rgba(0, 0, 0, 0.7);
 }
 
 :root[data-theme="light"] {
@@ -34,6 +37,9 @@
   --control-hover: rgba(245, 248, 255, 0.95);
   --control-active: rgba(230, 241, 255, 0.95);
   --tile-border: rgba(0,0,0,0.12);
+  --sidebar-tab-text: #0b0f14;
+  --sidebar-tab-text-active: #f5f6fa;
+  --sidebar-tab-stroke-active: rgba(0, 0, 0, 0.7);
 }
 
 :root[data-theme="dark"] {
@@ -44,6 +50,9 @@
   --text: #e7eef8;
   --muted: #9fb0c4;
   --tile-border: rgba(255,255,255,0.18);
+  --sidebar-tab-text: #f5f6fa;
+  --sidebar-tab-text-active: #0b0f14;
+  --sidebar-tab-stroke-active: rgba(255, 255, 255, 0.75);
 }
 
 * { box-sizing: border-box; }
@@ -429,14 +438,43 @@ html, body {
 .sidebar .recent-tab {
   background: rgba(246, 226, 140, 0.75);
   border-color: rgba(246, 226, 140, 0.95);
+  color: var(--sidebar-tab-text);
+  text-shadow: 0 1px 0 var(--sidebar-tab-stroke), 0 -1px 0 var(--sidebar-tab-stroke), 1px 0 0 var(--sidebar-tab-stroke), -1px 0 0 var(--sidebar-tab-stroke);
 }
 .sidebar .recent-tab.active {
   background: rgba(246, 226, 140, 0.9);
   border-color: rgba(246, 226, 140, 1);
+  color: var(--sidebar-tab-text);
+}
+.sidebar .group-tab {
+  color: var(--sidebar-tab-text);
+  text-shadow: none;
+}
+.sidebar .group-tab.active {
+  color: var(--sidebar-tab-text-active);
+  text-shadow:
+    0 1px 0 var(--sidebar-tab-stroke-active),
+    0 -1px 0 var(--sidebar-tab-stroke-active),
+    1px 0 0 var(--sidebar-tab-stroke-active),
+    -1px 0 0 var(--sidebar-tab-stroke-active),
+    0 2px 0 var(--sidebar-tab-stroke-active),
+    0 -2px 0 var(--sidebar-tab-stroke-active),
+    2px 0 0 var(--sidebar-tab-stroke-active),
+    -2px 0 0 var(--sidebar-tab-stroke-active);
 }
 .sidebar .add-group.icon-btn {
   background: rgba(99, 150, 255, 0.35);
   border-color: rgba(99, 150, 255, 0.65);
+  color: var(--sidebar-tab-text-active);
+  text-shadow:
+    0 1px 0 var(--sidebar-tab-stroke-active),
+    0 -1px 0 var(--sidebar-tab-stroke-active),
+    1px 0 0 var(--sidebar-tab-stroke-active),
+    -1px 0 0 var(--sidebar-tab-stroke-active),
+    0 2px 0 var(--sidebar-tab-stroke-active),
+    0 -2px 0 var(--sidebar-tab-stroke-active),
+    2px 0 0 var(--sidebar-tab-stroke-active),
+    -2px 0 0 var(--sidebar-tab-stroke-active);
 }
 .sidebar .add-group.icon-btn:hover {
   background: rgba(99, 150, 255, 0.5);
@@ -469,7 +507,16 @@ html, body {
 .sidebar-collapsed .group-tab::after {
   content: attr(data-short);
   font-size: 16px;
-  color: var(--text);
+  color: var(--sidebar-tab-text);
+  text-shadow:
+    0 1px 0 var(--sidebar-tab-stroke-active),
+    0 -1px 0 var(--sidebar-tab-stroke-active),
+    1px 0 0 var(--sidebar-tab-stroke-active),
+    -1px 0 0 var(--sidebar-tab-stroke-active),
+    0 2px 0 var(--sidebar-tab-stroke-active),
+    0 -2px 0 var(--sidebar-tab-stroke-active),
+    2px 0 0 var(--sidebar-tab-stroke-active),
+    -2px 0 0 var(--sidebar-tab-stroke-active);
   position: absolute;
   left: 50%;
   top: 50%;

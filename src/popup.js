@@ -118,6 +118,49 @@ async function getCurrentTab() {
   return new Promise((resolve) => api.tabs.query({ active: true, currentWindow: true }, (tabs) => resolve(tabs?.[0] || null)));
 }
 
+function getExtensionBaseUrl() {
+  const api = getChrome();
+  if (!api?.runtime?.getURL) return "";
+  return api.runtime.getURL("");
+}
+
+function isExtensionPageUrl(url) {
+  const base = getExtensionBaseUrl();
+  return !!(url && base && url.startsWith(base));
+}
+
+function sendRuntimeMessage(message) {
+  const api = getChrome();
+  if (!api?.runtime?.sendMessage) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      api.runtime.sendMessage(message, (res) => {
+        const err = api.runtime?.lastError;
+        if (err) return resolve(null);
+        resolve(res || null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function sendTabMessage(tabId, message) {
+  const api = getChrome();
+  if (!api?.tabs?.sendMessage) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      api.tabs.sendMessage(tabId, message, (res) => {
+        const err = api.runtime?.lastError;
+        if (err) return resolve(null);
+        resolve(res || null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 function renderTab(tab) {
   const card = document.getElementById("tabCard");
   const empty = document.getElementById("empty");
@@ -212,24 +255,25 @@ async function saveToGroup(tab, selectedGroupId) {
     await storageSet({ [ROOT_KEY]: data }, false);
   }
   await appendLog({ ts: Date.now(), stage: "saved", url, group: group.id });
-  return { groupId: group.id, groupName: group.name || "" };
+  return { groupId: group.id, groupName: group.name || "", fontSize: data.settings.fontSize || 13 };
 }
 
-async function showToastInTab(tabId, message) {
+async function showToastInTab(tab, message, fontSize) {
   const api = getChrome();
-  if (!tabId) return false;
+  if (!tab?.id) return false;
+  const payload = { type: "homepage_show_toast", text: message, fontSize };
+  if (isExtensionPageUrl(tab.url)) {
+    const res = await sendRuntimeMessage(payload);
+    if (res?.ok) return true;
+  }
   try {
-    if (api?.tabs?.sendMessage) {
-      try {
-        const res = await api.tabs.sendMessage(tabId, { type: "homepage_show_toast", text: message });
-        if (res?.ok) return true;
-      } catch {}
-    }
+    const direct = await sendTabMessage(tab.id, payload);
+    if (direct?.ok) return true;
     if (api?.scripting?.executeScript) {
       try {
         await new Promise((resolve, reject) => {
           api.scripting.executeScript(
-            { target: { tabId }, files: ["js/content-toast.js"] },
+            { target: { tabId: tab.id }, files: ["js/content-toast.js"] },
             () => {
               const err = api.runtime?.lastError;
               if (err) return reject(err);
@@ -237,20 +281,21 @@ async function showToastInTab(tabId, message) {
             }
           );
         });
-        const res = await api.tabs.sendMessage(tabId, { type: "homepage_show_toast", text: message });
+        const res = await sendTabMessage(tab.id, payload);
         if (res?.ok) return true;
       } catch {}
       await new Promise((resolve, reject) => {
         api.scripting.executeScript(
           {
-            target: { tabId },
-            func: (msg) => {
+            target: { tabId: tab.id },
+            func: (msg, size) => {
               const toastId = "homepage-save-toast";
               const existing = document.getElementById(toastId);
               if (existing) existing.remove();
               const el = document.createElement("div");
               el.id = toastId;
               el.textContent = msg;
+              const fontSizePx = `${Number(size) || 14}px`;
               Object.assign(el.style, {
                 position: "fixed",
                 top: "20px",
@@ -260,16 +305,16 @@ async function showToastInTab(tabId, message) {
                 color: "#ffffff",
                 padding: "10px 14px",
                 borderRadius: "10px",
-                fontSize: "14px",
+                fontSize: fontSizePx,
                 lineHeight: "1.2",
                 boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
                 backdropFilter: "blur(6px)",
-                fontFamily: "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,'PingFang SC','Microsoft YaHei',sans-serif",
+                fontFamily: "\"Avenir Next\", \"Noto Sans SC\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
               });
               document.body.appendChild(el);
               setTimeout(() => el.remove(), 3000);
             },
-            args: [message],
+            args: [message, fontSize],
           },
           () => {
             const err = api.runtime?.lastError;
@@ -283,19 +328,20 @@ async function showToastInTab(tabId, message) {
     if (api?.tabs?.executeScript) {
       try {
         await new Promise((resolve, reject) => {
-          api.tabs.executeScript(tabId, { file: "js/content-toast.js" }, () => {
+          api.tabs.executeScript(tab.id, { file: "js/content-toast.js" }, () => {
             const err = api.runtime?.lastError;
             if (err) return reject(err);
             resolve();
           });
         });
-        const res = await api.tabs.sendMessage(tabId, { type: "homepage_show_toast", text: message });
+        const res = await sendTabMessage(tab.id, payload);
         if (res?.ok) return true;
       } catch {}
       const msg = JSON.stringify(message || "");
-      const code = `(function(){var toastId="homepage-save-toast";var existing=document.getElementById(toastId);if(existing){existing.remove();}var el=document.createElement("div");el.id=toastId;el.textContent=${msg};el.style.position="fixed";el.style.top="20px";el.style.right="20px";el.style.zIndex="2147483647";el.style.background="rgba(15, 20, 28, 0.88)";el.style.color="#ffffff";el.style.padding="10px 14px";el.style.borderRadius="10px";el.style.fontSize="14px";el.style.lineHeight="1.2";el.style.boxShadow="0 10px 30px rgba(0,0,0,0.35)";el.style.backdropFilter="blur(6px)";el.style.fontFamily="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,'PingFang SC','Microsoft YaHei',sans-serif";document.body.appendChild(el);setTimeout(function(){el.remove();},3000);})();`;
+      const size = Number(fontSize) || 14;
+      const code = `(function(){var toastId="homepage-save-toast";var existing=document.getElementById(toastId);if(existing){existing.remove();}var el=document.createElement("div");el.id=toastId;el.textContent=${msg};el.style.position="fixed";el.style.top="20px";el.style.right="20px";el.style.zIndex="2147483647";el.style.background="rgba(15, 20, 28, 0.88)";el.style.color="#ffffff";el.style.padding="10px 14px";el.style.borderRadius="10px";el.style.fontSize="${size}px";el.style.lineHeight="1.2";el.style.boxShadow="0 10px 30px rgba(0,0,0,0.35)";el.style.backdropFilter="blur(6px)";el.style.fontFamily="Avenir Next, Noto Sans SC, PingFang SC, Microsoft YaHei, sans-serif";document.body.appendChild(el);setTimeout(function(){el.remove();},3000);})();`;
       await new Promise((resolve, reject) => {
-        api.tabs.executeScript(tabId, { code }, () => {
+        api.tabs.executeScript(tab.id, { code }, () => {
           const err = api.runtime?.lastError;
           if (err) return reject(err);
           resolve();
@@ -319,7 +365,7 @@ async function init() {
     if (tab) {
       const result = await saveToGroup(tab, fixedId);
       if (result) {
-        await showToastInTab(tab.id, `已保存到分组：${result.groupName || "未命名"}`);
+        await showToastInTab(tab, `已保存到分组：${result.groupName || "未命名"}`, result.fontSize);
       }
     }
     window.close();
@@ -341,7 +387,7 @@ async function init() {
     const selectedGroupId = document.getElementById("groupSelect").value;
     const result = await saveToGroup(tab, selectedGroupId);
     if (result) {
-      await showToastInTab(tab.id, `已保存到分组：${result.groupName || "未命名"}`);
+      await showToastInTab(tab, `已保存到分组：${result.groupName || "未命名"}`, result.fontSize);
     }
     window.close();
   });

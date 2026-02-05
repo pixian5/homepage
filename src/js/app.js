@@ -1448,8 +1448,8 @@ function openSettingsModal() {
     </div>
 
     <div class="section">
-      <button id="btnExport" class="icon-btn">导出 JSON</button>
-      <button id="btnImport" class="icon-btn">导入 JSON</button>
+      <button id="btnExport" class="icon-btn">导出设置</button>
+      <button id="btnImport" class="icon-btn">导入设置</button>
       <button id="btnImportUrl" class="icon-btn">导入网址</button>
       <button id="btnBackupManage" class="icon-btn">备份管理</button>
       <button id="btnClearData" class="icon-btn danger strong-label">清空数据</button>
@@ -1684,7 +1684,7 @@ async function exportJsonToClipboard() {
 
 async function openImportModal() {
   const html = `
-    <h2>导入 JSON</h2>
+    <h2>导入设置</h2>
     <div class="section">
       <label>导入策略</label>
       <select id="importMode">

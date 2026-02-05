@@ -220,41 +220,56 @@ async function showToastInTab(tabId, message) {
   if (!tabId) return false;
   try {
     if (api?.scripting?.executeScript) {
-      await api.scripting.executeScript({
-        target: { tabId },
-        func: (msg) => {
-          const toastId = "homepage-save-toast";
-          const existing = document.getElementById(toastId);
-          if (existing) existing.remove();
-          const el = document.createElement("div");
-          el.id = toastId;
-          el.textContent = msg;
-          Object.assign(el.style, {
-            position: "fixed",
-            top: "20px",
-            right: "20px",
-            zIndex: "2147483647",
-            background: "rgba(15, 20, 28, 0.88)",
-            color: "#ffffff",
-            padding: "10px 14px",
-            borderRadius: "10px",
-            fontSize: "14px",
-            lineHeight: "1.2",
-            boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
-            backdropFilter: "blur(6px)",
-            fontFamily: "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,'PingFang SC','Microsoft YaHei',sans-serif",
-          });
-          document.body.appendChild(el);
-          setTimeout(() => el.remove(), 2500);
-        },
-        args: [message],
+      await new Promise((resolve, reject) => {
+        api.scripting.executeScript(
+          {
+            target: { tabId },
+            func: (msg) => {
+              const toastId = "homepage-save-toast";
+              const existing = document.getElementById(toastId);
+              if (existing) existing.remove();
+              const el = document.createElement("div");
+              el.id = toastId;
+              el.textContent = msg;
+              Object.assign(el.style, {
+                position: "fixed",
+                top: "20px",
+                right: "20px",
+                zIndex: "2147483647",
+                background: "rgba(15, 20, 28, 0.88)",
+                color: "#ffffff",
+                padding: "10px 14px",
+                borderRadius: "10px",
+                fontSize: "14px",
+                lineHeight: "1.2",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+                backdropFilter: "blur(6px)",
+                fontFamily: "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,'PingFang SC','Microsoft YaHei',sans-serif",
+              });
+              document.body.appendChild(el);
+              setTimeout(() => el.remove(), 3500);
+            },
+            args: [message],
+          },
+          () => {
+            const err = api.runtime?.lastError;
+            if (err) return reject(err);
+            resolve();
+          }
+        );
       });
       return true;
     }
     if (api?.tabs?.executeScript) {
       const msg = JSON.stringify(message || "");
-      const code = `(function(){var toastId="homepage-save-toast";var existing=document.getElementById(toastId);if(existing){existing.remove();}var el=document.createElement("div");el.id=toastId;el.textContent=${msg};el.style.position="fixed";el.style.top="20px";el.style.right="20px";el.style.zIndex="2147483647";el.style.background="rgba(15, 20, 28, 0.88)";el.style.color="#ffffff";el.style.padding="10px 14px";el.style.borderRadius="10px";el.style.fontSize="14px";el.style.lineHeight="1.2";el.style.boxShadow="0 10px 30px rgba(0,0,0,0.35)";el.style.backdropFilter="blur(6px)";el.style.fontFamily="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,'PingFang SC','Microsoft YaHei',sans-serif";document.body.appendChild(el);setTimeout(function(){el.remove();},2500);})();`;
-      await api.tabs.executeScript(tabId, { code });
+      const code = `(function(){var toastId="homepage-save-toast";var existing=document.getElementById(toastId);if(existing){existing.remove();}var el=document.createElement("div");el.id=toastId;el.textContent=${msg};el.style.position="fixed";el.style.top="20px";el.style.right="20px";el.style.zIndex="2147483647";el.style.background="rgba(15, 20, 28, 0.88)";el.style.color="#ffffff";el.style.padding="10px 14px";el.style.borderRadius="10px";el.style.fontSize="14px";el.style.lineHeight="1.2";el.style.boxShadow="0 10px 30px rgba(0,0,0,0.35)";el.style.backdropFilter="blur(6px)";el.style.fontFamily="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,'PingFang SC','Microsoft YaHei',sans-serif";document.body.appendChild(el);setTimeout(function(){el.remove();},3500);})();`;
+      await new Promise((resolve, reject) => {
+        api.tabs.executeScript(tabId, { code }, () => {
+          const err = api.runtime?.lastError;
+          if (err) return reject(err);
+          resolve();
+        });
+      });
       return true;
     }
     return true;

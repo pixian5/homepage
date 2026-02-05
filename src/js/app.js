@@ -1742,11 +1742,26 @@ async function openImportModal() {
           if (!data.nodes[id]) data.nodes[id] = node;
         }
         const existingGroups = new Map(data.groups.map((g) => [g.id, g]));
+        const existingIds = new Set(data.groups.map((g) => g.id));
+        const makeGroupId = () => {
+          let id = `grp_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+          while (existingIds.has(id)) {
+            id = `grp_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+          }
+          existingIds.add(id);
+          return id;
+        };
         for (const group of incoming.groups || []) {
           const target = existingGroups.get(group.id);
           if (!target) {
             data.groups.push(group);
             existingGroups.set(group.id, group);
+            continue;
+          }
+          if ((target.name || "") !== (group.name || "")) {
+            const newGroup = { ...group, id: makeGroupId() };
+            data.groups.push(newGroup);
+            existingGroups.set(newGroup.id, newGroup);
             continue;
           }
           const mergedNodes = new Set([...(target.nodes || []), ...(group.nodes || [])]);

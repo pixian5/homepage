@@ -1737,13 +1737,32 @@ async function openImportModal() {
       if (mode === "replace") {
         data = incoming;
       } else if (mode === "merge") {
-        data.groups = [...data.groups, ...incoming.groups];
-        data.nodes = { ...data.nodes, ...incoming.nodes };
-      } else if (mode === "add") {
-        for (const [id, node] of Object.entries(incoming.nodes || {})) {
+        const incomingNodes = incoming.nodes || {};
+        for (const [id, node] of Object.entries(incomingNodes)) {
           if (!data.nodes[id]) data.nodes[id] = node;
         }
-        data.groups = [...data.groups, ...incoming.groups.filter((g) => !data.groups.find((x) => x.id === g.id))];
+        const existingGroups = new Map(data.groups.map((g) => [g.id, g]));
+        for (const group of incoming.groups || []) {
+          const target = existingGroups.get(group.id);
+          if (!target) {
+            data.groups.push(group);
+            existingGroups.set(group.id, group);
+            continue;
+          }
+          const mergedNodes = new Set([...(target.nodes || []), ...(group.nodes || [])]);
+          target.nodes = Array.from(mergedNodes).filter((id) => data.nodes[id] || incomingNodes[id]);
+        }
+      } else if (mode === "add") {
+        const incomingNodes = incoming.nodes || {};
+        for (const [id, node] of Object.entries(incomingNodes)) {
+          if (!data.nodes[id]) data.nodes[id] = node;
+        }
+        const existingIds = new Set(data.groups.map((g) => g.id));
+        for (const group of incoming.groups || []) {
+          if (existingIds.has(group.id)) continue;
+          data.groups.push(group);
+          existingIds.add(group.id);
+        }
       }
       await persistData();
       closeModal();

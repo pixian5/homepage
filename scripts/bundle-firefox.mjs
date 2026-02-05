@@ -43,17 +43,15 @@ async function bundle() {
 
 async function patchHtml() {
   let html = await fs.readFile(htmlPath, "utf8");
-  let js = await fs.readFile(outFile, "utf8");
-  js = js.replace(/<\/script>/gi, "<\\/script>");
-  const inlineScript = `<script>\n${js}\n</script>`;
+  const externalScript = `<script src="js/app.ff.js"></script>`;
   let updated = html.replace(
     /<script\s+src="js\/app\.ff\.js"\s*><\/script>/i,
-    inlineScript
+    externalScript
   );
   if (updated === html) {
     updated = html.replace(
       /<script\s+type="module"\s+src="js\/app\.js"\s*><\/script>/i,
-      inlineScript
+      externalScript
     );
   }
   if (updated === html) {

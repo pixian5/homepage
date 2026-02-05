@@ -32,7 +32,7 @@
   "web_accessible_resources": [
     "js/*.js"
   ],
-  "content_security_policy": "script-src 'self' 'sha256-1kibaIEOuqdWIncDXreEW40c2goyFn05BRP/CD7e8/I='; object-src 'self'; img-src 'self' data: https: http:;",
+  "content_security_policy": "script-src 'self'; object-src 'self'; img-src 'self' data: https: http:;",
   "browser_specific_settings": {
     "gecko": {
       "id": "newtab@example.com",

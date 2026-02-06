@@ -187,6 +187,7 @@ html, body {
 }
 .search-btn {
   padding: 8px 12px;
+  white-space: nowrap;
 }
 
 .toolbar { display: flex; gap: 8px; }
@@ -250,7 +251,8 @@ html, body {
   border-radius: var(--radius);
   padding: var(--tile-pad, 8px);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  height: var(--tile-size);
+  min-height: var(--tile-size);
+  height: auto;
   gap: var(--tile-gap, 4px); position: relative;
   cursor: pointer;
   transition: transform .18s ease, border .2s ease, background .2s ease;
@@ -526,12 +528,16 @@ html, body {
 @media (max-width: 720px) {
   .app { padding: 16px; }
   .topbar { grid-template-columns: 1fr; height: auto; gap: 10px; }
-  .top-actions { display: flex; flex-wrap: wrap; justify-content: center; }
-  .top-search { flex: 1 1 100%; justify-content: center; order: 1; }
-  .top-search input { width: 100%; max-width: 100%; }
+  .top-actions { display: flex; flex-wrap: wrap; justify-content: center; width: 100%; }
+  .top-search { flex: 1 1 100%; width: 100%; max-width: 100%; justify-content: center; order: 1; }
+  .top-search input { flex: 1 1 auto; width: auto; max-width: none; min-width: 0; }
+  .top-search .search-btn { flex: 0 0 auto; }
   .toolbar { flex: 1 1 100%; justify-content: flex-end; order: 2; flex-wrap: wrap; }
   .layout { grid-template-columns: 1fr; height: auto; }
-  .sidebar { flex-direction: row; flex-wrap: wrap; }
-  .group-tabs.vertical { flex-direction: row; flex-wrap: wrap; max-height: none; }
+  .sidebar { flex-direction: row; flex-wrap: nowrap; align-items: center; overflow-x: auto; overflow-y: hidden; gap: 8px; }
+  .recent-tab { margin-bottom: 0; }
+  .group-tab { flex: 0 0 auto; }
+  .group-tabs.vertical { flex-direction: row; flex-wrap: nowrap; max-height: none; overflow: visible; padding: 0; }
+  .sidebar > .add-group { flex: 0 0 auto; }
   .add-group { margin-top: 0; }
 }

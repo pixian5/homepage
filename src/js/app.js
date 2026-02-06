@@ -74,6 +74,9 @@ let lastMainLayout = null;
 let storageReloadTimer = null;
 let pendingStorageReload = false;
 let suppressStorageUntil = 0;
+let backupFingerprint = "";
+let backupBaselineSnapshot = null;
+let skipAutoBackupOnce = false;
 const DEBUG_LOG_KEY = "homepage_debug_log";
 
 // ==================== 常量定义 ====================
@@ -169,6 +172,7 @@ async function reloadFromStorage() {
     openFolderId = null;
   }
   selectedIds = new Set([...prevSelected].filter((id) => data.nodes?.[id]));
+  syncBackupBaseline(data);
   render();
   await consumeSaveToast();
 }
@@ -418,21 +422,94 @@ async function loadBackground() {
 }
 
 function pushBackup() {
-  if (!data.settings.maxBackups) return;
+  if (!data?.settings?.maxBackups) return false;
   const snapshot = createBackupSnapshot(data);
   data.backups.unshift(snapshot);
   if (data.settings.maxBackups > 0 && data.backups.length > data.settings.maxBackups) {
     data.backups = data.backups.slice(0, data.settings.maxBackups);
   }
+  skipAutoBackupOnce = true;
+  return true;
+}
+
+function cloneDataSnapshot(source) {
+  return JSON.parse(JSON.stringify(source || {}));
+}
+
+function buildBackupFingerprint(source) {
+  const input = source || {};
+  const groups = (input.groups || [])
+    .map((group) => ({
+      id: String(group.id || ""),
+      name: String(group.name || ""),
+      order: Number(group.order) || 0,
+      nodes: Array.isArray(group.nodes) ? group.nodes.map((id) => String(id)) : [],
+    }))
+    .sort((a, b) => (a.order - b.order) || a.id.localeCompare(b.id));
+  const nodes = Object.keys(input.nodes || {})
+    .sort()
+    .map((id) => {
+      const node = input.nodes[id] || {};
+      return {
+        id,
+        type: String(node.type || ""),
+        title: String(node.title || ""),
+        url: String(node.url || ""),
+        iconType: String(node.iconType || ""),
+        color: String(node.color || ""),
+        children: Array.isArray(node.children) ? node.children.map((cid) => String(cid)) : [],
+      };
+    });
+  return JSON.stringify({ groups, nodes });
+}
+
+function syncBackupBaseline(source = data) {
+  backupFingerprint = buildBackupFingerprint(source);
+  backupBaselineSnapshot = cloneDataSnapshot(source);
+}
+
+function ensureAutoBackupBeforePersist() {
+  const currentFingerprint = buildBackupFingerprint(data);
+  if (!backupFingerprint) {
+    backupFingerprint = currentFingerprint;
+    backupBaselineSnapshot = cloneDataSnapshot(data);
+    skipAutoBackupOnce = false;
+    return false;
+  }
+  if (!data?.settings?.maxBackups) {
+    backupFingerprint = currentFingerprint;
+    skipAutoBackupOnce = false;
+    return false;
+  }
+  if (skipAutoBackupOnce) {
+    skipAutoBackupOnce = false;
+    backupFingerprint = currentFingerprint;
+    return false;
+  }
+  if (currentFingerprint === backupFingerprint) return false;
+  if (backupBaselineSnapshot) {
+    const snapshot = createBackupSnapshot(backupBaselineSnapshot);
+    data.backups.unshift(snapshot);
+    if (data.settings.maxBackups > 0 && data.backups.length > data.settings.maxBackups) {
+      data.backups = data.backups.slice(0, data.settings.maxBackups);
+    }
+  } else {
+    pushBackup();
+    skipAutoBackupOnce = false;
+  }
+  backupFingerprint = currentFingerprint;
+  return true;
 }
 
 async function persistData() {
+  const autoBackedUp = ensureAutoBackupBeforePersist();
   suppressStorageUntil = Date.now() + STORAGE_SUPPRESS_MS;
   debugLog("persist_start", {
     useSync: data.settings.syncEnabled,
     groups: data.groups?.length || 0,
     nodes: Object.keys(data.nodes || {}).length,
     lastUpdated: data.lastUpdated || 0,
+    autoBackedUp,
   });
   const useSync = data.settings.syncEnabled;
   const changed = dedupeData(data);
@@ -469,7 +546,10 @@ async function persistData() {
       lastUpdated: verify.lastUpdated || 0,
     });
   }
-  debugLog("persist_done", { err1, changed, warning, err });
+  if (!err) {
+    syncBackupBaseline(data);
+  }
+  debugLog("persist_done", { err1, changed, warning, err, autoBackedUp });
   return { ok: !err, warning, err };
 }
 
@@ -2398,6 +2478,7 @@ async function init() {
     await saveData(data, data.settings.syncEnabled);
     if (data.settings.syncEnabled) await saveData(data, false);
   }
+  syncBackupBaseline(data);
   debugLog("init_ready", {
     groups: data.groups?.length || 0,
     nodes: Object.keys(data.nodes || {}).length,

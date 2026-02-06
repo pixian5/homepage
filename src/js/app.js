@@ -299,7 +299,7 @@ function applySidebarState() {
 function syncSidebarTabLabels() {
   if (!elements.recentTab) return;
   const collapsed = !!data.settings.sidebarCollapsed;
-  const recentLabel = elements.recentTab.dataset.label || elements.recentTab.textContent || "最近浏览";
+  const recentLabel = elements.recentTab.dataset.label || elements.recentTab.textContent || "历史";
   elements.recentTab.dataset.label = recentLabel;
   elements.recentTab.setAttribute("aria-label", recentLabel);
   elements.recentTab.textContent = collapsed ? "" : recentLabel;
@@ -639,7 +639,7 @@ function uniqueNodes(nodes) {
 function renderGroups() {
   elements.groupTabs.innerHTML = "";
   elements.recentTab.classList.toggle("active", activeGroupId === RECENT_GROUP_ID);
-  const recentLabel = elements.recentTab.dataset.label || elements.recentTab.textContent || "最近浏览";
+  const recentLabel = elements.recentTab.dataset.label || elements.recentTab.textContent || "历史";
   elements.recentTab.dataset.label = recentLabel;
   elements.recentTab.setAttribute("aria-label", recentLabel);
   elements.recentTab.textContent = data.settings.sidebarCollapsed ? "" : recentLabel;
@@ -714,15 +714,21 @@ async function renderGrid() {
   const style = getComputedStyle(referenceGrid);
   const paddingX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
   const available = Math.max(0, width - paddingX);
+  const isMobileViewport = !!(window.matchMedia && window.matchMedia("(max-width: 720px)").matches);
   const baseSize = data.settings.lastTileSize || density.size || 96;
   let maxColumns = Math.max(1, Math.floor((available + gap) / (baseSize + gap)));
   let columns = maxColumns;
   if (data.settings.fixedLayout) {
     const desired = Math.max(1, data.settings.fixedCols || 8);
     columns = desired;
+  } else if (isMobileViewport) {
+    columns = Math.max(3, columns);
   }
   let tileSize = baseSize;
   if (data.settings.fixedLayout && available > 0) {
+    const fitSize = Math.floor((available - gap * (columns - 1)) / columns);
+    tileSize = Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, fitSize));
+  } else if (isMobileViewport && available > 0) {
     const fitSize = Math.floor((available - gap * (columns - 1)) / columns);
     tileSize = Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, fitSize));
   } else if (columns <= 1 && available > 0) {
@@ -2897,7 +2903,7 @@ function bindEvents() {
 
   elements.btnBatchDelete.addEventListener("click", () => {
     if (activeGroupId === RECENT_GROUP_ID) {
-      toast("最近浏览不可批量删除");
+      toast("历史不可批量删除");
       return;
     }
     if (!selectionMode) {
@@ -2920,7 +2926,7 @@ function bindEvents() {
 
   elements.btnFolderBatchDelete.addEventListener("click", () => {
     if (activeGroupId === RECENT_GROUP_ID) {
-      toast("最近浏览不可批量删除");
+      toast("历史不可批量删除");
       return;
     }
     if (!selectionMode) {

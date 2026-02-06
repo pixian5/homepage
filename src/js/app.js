@@ -870,12 +870,12 @@ function openContextMenu(x, y, node) {
   elements.contextMenu.innerHTML = "";
   const actions = [];
   if (activeGroupId === RECENT_GROUP_ID && node.type === "history") {
-    actions.push({ label: "在本页打开", fn: () => openUrl(normalizeUrl(node.url)) });
-    actions.push({ label: "新页面打开", fn: () => openUrl(normalizeUrl(node.url), "new") });
+    actions.push({ label: "本页打开", fn: () => openUrl(normalizeUrl(node.url)) });
+    actions.push({ label: "新页打开", fn: () => openUrl(normalizeUrl(node.url), "new") });
     actions.push({ label: "添加到快捷", fn: () => openAddHistoryToGroup(node) });
   } else if (node.type !== "folder") {
-    actions.push({ label: "在本页打开", fn: () => openUrl(normalizeUrl(node.url)) });
-    actions.push({ label: "新页面打开", fn: () => openUrl(normalizeUrl(node.url), "new") });
+    actions.push({ label: "本页打开", fn: () => openUrl(normalizeUrl(node.url)) });
+    actions.push({ label: "新页打开", fn: () => openUrl(normalizeUrl(node.url), "new") });
     actions.push({ label: "后台打开", fn: () => openUrl(normalizeUrl(node.url), "background") });
   } else {
     actions.push({ label: "打开文件夹", fn: () => openFolder(node.id) });
@@ -1536,8 +1536,8 @@ function openEditModal(node) {
 
 async function openOpenModeMenu() {
   const modes = [
-    { id: "current", label: "在本页打开" },
-    { id: "new", label: "新页面打开" },
+    { id: "current", label: "本页打开" },
+    { id: "new", label: "新页打开" },
     { id: "background", label: "在后台打开" },
   ];
   const idx = modes.findIndex((m) => m.id === data.settings.openMode);
@@ -2539,11 +2539,11 @@ function render() {
 
 function updateOpenModeButton() {
   const map = {
-    current: "在本页打开",
-    new: "新页面打开",
+    current: "本页打开",
+    new: "新页打开",
     background: "在后台打开",
   };
-  const label = map[data.settings.openMode] || "在本页打开";
+  const label = map[data.settings.openMode] || "本页打开";
   elements.btnOpenMode.textContent = `${label}`;
 }
 

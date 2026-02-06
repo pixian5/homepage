@@ -2495,7 +2495,11 @@ function openBackupModal() {
       const row = btn.closest("[data-backup]");
       const backup = data.backups.find((b) => b.id === row.dataset.backup);
       if (!backup) return;
-      data = backup.data;
+      const backupsBeforeRestore = Array.isArray(data.backups) ? cloneDataSnapshot(data.backups) : [];
+      const restoredData = cloneDataSnapshot(backup.data);
+      restoredData.backups = backupsBeforeRestore;
+      data = restoredData;
+      skipAutoBackupOnce = true;
       persistData();
       closeModal();
       render();

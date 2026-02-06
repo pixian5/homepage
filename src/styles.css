@@ -599,13 +599,13 @@ html, body {
   .app { padding: 16px; }
   .topbar { grid-template-columns: 1fr; height: auto; gap: 10px; }
   .top-actions { display: flex; flex-wrap: wrap; justify-content: center; width: 100%; }
-  .top-search { flex: 1 1 100%; width: 96%; max-width: 96%; justify-content: center; order: 1; }
+  .top-search { flex: 1 1 100%; width: 92%; max-width: 92%; justify-content: center; order: 1; }
   .top-search input { flex: 1 1 auto; width: auto; max-width: none; min-width: 0; }
   .top-search .search-btn { flex: 0 0 auto; }
   .toolbar { flex: 1 1 100%; width: 100%; justify-content: space-between; order: 2; flex-wrap: nowrap; }
   .toolbar .icon-btn { flex: 1 1 0; min-width: 0; padding: 8px 6px; white-space: nowrap; }
   .toolbar #btnOpenMode { flex: 1.12 1 0; }
-  .toolbar #btnSettings { flex: 0.88 1 0; }
+  .toolbar #btnSettings { flex: 0.76 1 0; }
   .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; gap: 0; height: calc(100% - var(--topbar-height)); min-height: 0; }
   .sidebar { flex-direction: row; flex-wrap: nowrap; align-items: center; justify-content: flex-start; overflow-x: auto; overflow-y: hidden; gap: 8px; padding: 0; min-height: 56px; height: 56px; -webkit-overflow-scrolling: touch; }
   .recent-tab { margin-bottom: 0; flex: 0 0 auto; align-self: center; }

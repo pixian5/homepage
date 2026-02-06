@@ -855,8 +855,8 @@ function clearSelection() {
 
 function updateSelectionControls() {
   elements.btnSelectAll.classList.toggle("hidden", !selectionMode);
-  elements.btnBatchDelete.textContent = selectionMode ? "删除" : "批量删除";
-  elements.btnFolderBatchDelete.textContent = selectionMode ? "删除" : "批量删除";
+  elements.btnBatchDelete.textContent = selectionMode ? "删除" : "批量删";
+  elements.btnFolderBatchDelete.textContent = selectionMode ? "删除" : "批量删";
 }
 
 function updateSelectionStyles() {
@@ -2533,7 +2533,7 @@ function render() {
   elements.topSearchWrap.classList.toggle("hidden", !data.settings.showSearch);
   elements.emptyHintToggle.checked = data.settings.emptyHintDisabled;
   elements.btnSelectAll.classList.toggle("hidden", !selectionMode);
-  elements.btnBatchDelete.textContent = selectionMode ? "删除" : "批量删除";
+  elements.btnBatchDelete.textContent = selectionMode ? "删除" : "批量删";
   updateOpenModeButton();
 }
 

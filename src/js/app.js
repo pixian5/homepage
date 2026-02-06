@@ -1523,7 +1523,7 @@ function openEditModal(node) {
   });
 }
 
-function openOpenModeMenu() {
+async function openOpenModeMenu() {
   const modes = [
     { id: "current", label: "在本页打开" },
     { id: "new", label: "新页面打开" },
@@ -1531,10 +1531,16 @@ function openOpenModeMenu() {
   ];
   const idx = modes.findIndex((m) => m.id === data.settings.openMode);
   const next = modes[(idx + 1) % modes.length];
+  const prevMode = data.settings.openMode;
   data.settings.openMode = next.id;
-  persistData();
   updateOpenModeButton();
   toast(`${next.label}`);
+  const result = await persistData();
+  if (!result?.ok) {
+    data.settings.openMode = prevMode;
+    updateOpenModeButton();
+    toast("打开方式保存失败，已恢复");
+  }
 }
 
 function openSettingsModal() {

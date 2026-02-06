@@ -1989,7 +1989,6 @@ function openSettingsModal() {
         </select>
       </div>
       <div id="settingDefaultGroupIdRow" class="row-inline hidden">
-        <span class="inline-label">固定分组</span>
         <select id="settingDefaultGroupId" class="inline-select"></select>
       </div>
     </div>

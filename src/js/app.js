@@ -1895,7 +1895,7 @@ function openSettingsModal() {
     <div class="section">
       <label><input id="settingShowSearch" type="checkbox"> 显示顶部搜索框</label>
       <div class="row-inline">
-        <span class="inline-label">默认搜索引擎</span>
+        <span class="inline-label">福尔摩斯</span>
         <select id="settingSearchEnginePreset" class="inline-select">
           <option value="https://www.google.com/search?q=">Google</option>
           <option value="https://www.baidu.com/s?wd=">百度</option>
@@ -1985,12 +1985,6 @@ function openSettingsModal() {
         <span class="inline-label">浏览网页时插件保存网页到分组</span>
       </div>
       <div class="row-inline">
-        <select id="settingDefaultGroupMode" class="inline-select">
-          <option value="last">上次添加的分组</option>
-          <option value="fixed">固定分组</option>
-        </select>
-      </div>
-      <div id="settingDefaultGroupIdRow" class="row-inline hidden">
         <select id="settingDefaultGroupId" class="inline-select"></select>
       </div>
     </div>
@@ -2082,11 +2076,12 @@ function openSettingsModal() {
     applySidebarState();
   });
 
-  const defaultGroupMode = $("settingDefaultGroupMode");
-  const defaultGroupIdRow = $("settingDefaultGroupIdRow");
   const defaultGroupId = $("settingDefaultGroupId");
-  defaultGroupMode.value = data.settings.defaultGroupMode || "last";
   defaultGroupId.innerHTML = "";
+  const lastOpt = document.createElement("option");
+  lastOpt.value = "";
+  lastOpt.textContent = "上次添加的分组";
+  defaultGroupId.appendChild(lastOpt);
   data.groups
     .sort((a, b) => a.order - b.order)
     .forEach((g) => {
@@ -2095,14 +2090,8 @@ function openSettingsModal() {
       opt.textContent = g.name;
       defaultGroupId.appendChild(opt);
     });
-  if (data.settings.defaultGroupId) defaultGroupId.value = data.settings.defaultGroupId;
-  const updateDefaultGroupControls = () => {
-    const isFixed = defaultGroupMode.value === "fixed";
-    defaultGroupIdRow.classList.toggle("hidden", !isFixed);
-    defaultGroupId.disabled = !isFixed;
-  };
-  defaultGroupMode.addEventListener("change", updateDefaultGroupControls);
-  updateDefaultGroupControls();
+  const useFixed = data.settings.defaultGroupMode === "fixed" && data.settings.defaultGroupId;
+  defaultGroupId.value = useFixed ? data.settings.defaultGroupId : "";
 
   $("settingSearchEnginePreset").addEventListener("change", (e) => {
     const val = e.target.value;
@@ -2180,8 +2169,9 @@ function openSettingsModal() {
     data.settings.keyboardNav = $("settingKeyboard").checked;
     data.settings.fontSize = Number($("settingFontSize").value) || data.settings.fontSize;
     data.settings.theme = $("settingTheme").value;
-    data.settings.defaultGroupMode = $("settingDefaultGroupMode").value;
-    data.settings.defaultGroupId = $("settingDefaultGroupId").value;
+    const selectedDefaultGroupId = $("settingDefaultGroupId").value;
+    data.settings.defaultGroupMode = selectedDefaultGroupId ? "fixed" : "last";
+    data.settings.defaultGroupId = selectedDefaultGroupId;
     data.settings.sidebarHidden = $("settingSidebarCollapsed").checked;
     data.settings.syncEnabled = $("settingSync").checked;
     const nextMaxBackups = Number($("settingBackup").value) || 0;

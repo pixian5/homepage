@@ -403,6 +403,9 @@ html, body {
   width: auto;
   min-width: 180px;
 }
+.modal #settingIconRetryHour.inline-select {
+  min-width: 108px;
+}
 .modal .inline-text {
   flex: 1 1 auto;
   min-width: 220px;

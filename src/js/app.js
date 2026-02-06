@@ -1982,7 +1982,7 @@ function openSettingsModal() {
 
     <div class="section">
       <div class="row-inline">
-        <span class="inline-label">默认保存分组</span>
+        <span class="inline-label">浏览网页时插件保存网页到分组</span>
         <select id="settingDefaultGroupMode" class="inline-select">
           <option value="last">上次添加的分组</option>
           <option value="fixed">固定分组</option>

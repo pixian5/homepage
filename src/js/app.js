@@ -503,7 +503,7 @@ function renderGroups() {
   elements.recentTab.dataset.label = recentLabel;
   elements.recentTab.setAttribute("aria-label", recentLabel);
   elements.recentTab.textContent = data.settings.sidebarCollapsed ? "" : recentLabel;
-  elements.recentTab.dataset.short = "0";
+  elements.recentTab.dataset.short = "历史";
   data.groups
     .sort((a, b) => a.order - b.order)
     .forEach((group, idx) => {

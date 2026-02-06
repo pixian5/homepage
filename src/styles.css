@@ -602,7 +602,7 @@ html, body {
   .top-search { flex: 1 1 100%; width: 92%; max-width: 92%; justify-content: center; order: 1; }
   .top-search input { flex: 1 1 auto; width: auto; max-width: none; min-width: 0; }
   .top-search .search-btn { flex: 0 0 auto; }
-  .toolbar { flex: 1 1 100%; width: 100%; justify-content: space-between; order: 2; flex-wrap: nowrap; }
+  .toolbar { flex: 1 1 100%; width: 92%; max-width: 92%; margin: 0 auto; justify-content: space-between; order: 2; flex-wrap: nowrap; }
   .toolbar .icon-btn { flex: 1 1 0; min-width: 0; padding: 8px 6px; white-space: nowrap; }
   .toolbar #btnAdd { flex: 0.86 1 0; }
   .toolbar #btnOpenMode { display: none; }

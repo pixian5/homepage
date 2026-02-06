@@ -882,12 +882,14 @@ function handleDropOnTile(targetId, x, y) {
   const droppedOnIcon = isDropOnIcon(targetId, x, y);
 
   if (!droppedOnIcon) {
-    pushBackup();
     const insertIndex = getInsertIndexFromTarget(list, sourceId, targetId, x, y);
+    const next = moveNodeInList(list, sourceId, insertIndex);
+    if (next === list) return;
+    pushBackup();
     if (inFolder) {
-      container.children = moveNodeInList(list, sourceId, insertIndex);
+      container.children = next;
     } else {
-      container.nodes = moveNodeInList(list, sourceId, insertIndex);
+      container.nodes = next;
     }
     persistData();
     render();
@@ -965,9 +967,15 @@ function removeNodeFromLocation(id) {
 
 
 function moveNodeInList(list, id, index) {
-  const next = list.filter((nid) => nid !== id);
-  const safeIndex = Math.max(0, Math.min(index, next.length));
-  next.splice(safeIndex, 0, id);
+  const currentIndex = list.indexOf(id);
+  if (currentIndex < 0) return list;
+  const safeIndex = Math.max(0, Math.min(index, list.length));
+  let targetIndex = safeIndex;
+  if (targetIndex > currentIndex) targetIndex -= 1;
+  if (targetIndex === currentIndex) return list;
+  const next = list.slice();
+  next.splice(currentIndex, 1);
+  next.splice(targetIndex, 0, id);
   return next;
 }
 
@@ -2332,12 +2340,34 @@ function selectTilesInBox(grid, x1, y1, x2, y2) {
 }
 
 function getDropIndex(grid, x, y) {
-  const tiles = qsa(".tile", grid);
+  const tiles = qsa(".tile", grid).filter((tile) => tile.getClientRects().length > 0);
+  if (!tiles.length) return 0;
+
+  let nearest = { index: 0, rect: tiles[0].getBoundingClientRect(), distance: Infinity };
   for (let i = 0; i < tiles.length; i++) {
     const rect = tiles[i].getBoundingClientRect();
-    if (y < rect.top + rect.height / 2) return i;
+    const dx = x < rect.left ? rect.left - x : x > rect.right ? x - rect.right : 0;
+    const dy = y < rect.top ? rect.top - y : y > rect.bottom ? y - rect.bottom : 0;
+    const distance = dx + dy;
+    if (distance < nearest.distance) {
+      nearest = { index: i, rect, distance };
+    }
   }
-  return tiles.length;
+
+  const rect = nearest.rect;
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  let insertAfter = false;
+  if (x < rect.left) insertAfter = false;
+  else if (x > rect.right) insertAfter = true;
+  else if (y < rect.top) insertAfter = false;
+  else if (y > rect.bottom) insertAfter = true;
+  else {
+    const nearRowCenter = Math.abs(y - centerY) <= rect.height * 0.35;
+    insertAfter = nearRowCenter ? x >= centerX : y >= centerY;
+  }
+
+  return nearest.index + (insertAfter ? 1 : 0);
 }
 
 async function init() {
@@ -2665,7 +2695,12 @@ function bindEvents() {
     if (openFolderId) return;
     const group = getActiveGroup();
     const index = getDropIndex(elements.grid, e.clientX, e.clientY);
-    group.nodes = moveNodeInList(group.nodes, sourceId, index);
+    const next = moveNodeInList(group.nodes, sourceId, index);
+    if (next === group.nodes) {
+      dragState = null;
+      return;
+    }
+    group.nodes = next;
     persistData();
     render();
     dragState = null;
@@ -2678,7 +2713,13 @@ function bindEvents() {
     const sourceId = dragState.id;
     const folder = data.nodes[openFolderId];
     const index = getDropIndex(elements.folderGrid, e.clientX, e.clientY);
-    folder.children = moveNodeInList(folder.children || [], sourceId, index);
+    const list = folder.children || [];
+    const next = moveNodeInList(list, sourceId, index);
+    if (next === list) {
+      dragState = null;
+      return;
+    }
+    folder.children = next;
     persistData();
     render();
     dragState = null;

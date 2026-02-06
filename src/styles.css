@@ -310,8 +310,8 @@ html, body {
 }
 .empty-state.hidden { display: none; }
 .empty-title { font-size: 24px; color: var(--empty-text-color); text-shadow: 0 0 6px var(--empty-glow), 0 0 16px var(--empty-glow); }
-.empty-desc { margin-top: 6px; font-size: 16px; color: var(--empty-text-color); text-shadow: 0 0 6px var(--empty-glow), 0 0 16px var(--empty-glow); }
-.empty-check { margin-top: 12px; display: inline-flex; gap: 8px; align-items: center; font-size: 15px; color: var(--empty-text-color); text-shadow: 0 0 6px var(--empty-glow), 0 0 16px var(--empty-glow); }
+.empty-desc { margin-top: 6px; font-size: 24px; color: var(--empty-text-color); text-shadow: 0 0 6px var(--empty-glow), 0 0 16px var(--empty-glow); }
+.empty-check { margin-top: 12px; display: inline-flex; gap: 8px; align-items: center; font-size: 24px; color: var(--empty-text-color); text-shadow: 0 0 6px var(--empty-glow), 0 0 16px var(--empty-glow); }
 
 .overlay {
   position: absolute; inset: 0;
@@ -445,7 +445,7 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 6px 0;
+  padding: 6px 0 calc(var(--control-height) * 2 + 44px);
   overflow-y: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -454,6 +454,14 @@ html, body {
 
 .sidebar > .add-group { margin-top: 0; }
 .sidebar > .add-group:last-child { margin-top: auto; }
+#btnAddGroup,
+#btnToggleSidebar {
+  position: fixed;
+  left: var(--app-padding-x);
+  z-index: 45;
+}
+#btnToggleSidebar { bottom: 28px; }
+#btnAddGroup { bottom: calc(28px + var(--control-height) + 10px); }
 
 .sidebar .recent-tab {
   background: rgba(246, 226, 140, 0.75);
@@ -543,6 +551,8 @@ html, body {
   .group-tabs.vertical { flex: 0 0 auto; min-width: max-content; flex-direction: row; flex-wrap: nowrap; max-height: none; overflow: visible; padding: 0; align-items: center; }
   .sidebar > .add-group:last-child { margin-top: 0; }
   .sidebar > .add-group { flex: 0 0 auto; align-self: center; }
+  #btnAddGroup,
+  #btnToggleSidebar { position: static; left: auto; bottom: auto; z-index: auto; }
   .sidebar > .toggle-btn { display: none; }
   .add-group { margin-top: 0; }
   .main { margin-top: 0; min-height: 0; }

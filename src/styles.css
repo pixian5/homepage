@@ -394,6 +394,25 @@ html, body {
 .modal textarea { min-height: 120px; font-family: monospace; }
 .modal .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .modal .row-inline { display: flex; flex-wrap: nowrap; gap: 12px; align-items: center; }
+.modal .row-inline.density-row {
+  gap: 0;
+  align-items: flex-start;
+}
+.modal .density-options {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  row-gap: 8px;
+  column-gap: 0;
+}
+.modal .density-options label {
+  margin: 0;
+  min-width: 72px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 .modal .stack { display: flex; flex-direction: column; gap: 12px; }
 .modal .inline-field { display: flex; align-items: center; gap: 8px; }
 .modal .inline-field label { margin: 0; }

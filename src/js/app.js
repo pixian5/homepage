@@ -1916,11 +1916,13 @@ function openSettingsModal() {
           <input id="settingCols" type="number" min="1" />
         </div>
       </div>
-      <div class="row-inline">
+      <div class="row-inline density-row">
         <span class="inline-label">卡片间隙</span>
-        <label><input type="radio" name="density" value="compact" /> 紧凑</label>
-        <label><input type="radio" name="density" value="standard" /> 标准</label>
-        <label><input type="radio" name="density" value="spacious" /> 宽松</label>
+        <div class="density-options">
+          <label><input type="radio" name="density" value="compact" /> 紧凑</label>
+          <label><input type="radio" name="density" value="standard" /> 标准</label>
+          <label><input type="radio" name="density" value="spacious" /> 宽松</label>
+        </div>
       </div>
     </div>
 
@@ -1990,7 +1992,7 @@ function openSettingsModal() {
     </div>
 
     <div class="section">
-      <label><input id="settingSidebarCollapsed" type="checkbox"> 隐藏左侧分组</label>
+      <label><input id="settingSidebarCollapsed" type="checkbox"> 隐藏分组</label>
     </div>
 
     <div class="section">

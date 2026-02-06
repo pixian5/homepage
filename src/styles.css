@@ -599,6 +599,7 @@ html, body {
   .app { padding: 16px; }
   .topbar { grid-template-columns: 1fr; height: auto; gap: 10px; }
   .top-actions { display: flex; flex-wrap: wrap; justify-content: center; width: 100%; }
+  .empty-box { height: 50vh; max-height: 480px; min-height: 360px; }
   .top-search { flex: 1 1 100%; width: 92%; max-width: 92%; justify-content: center; order: 1; }
   .top-search input { flex: 1 1 auto; width: auto; max-width: none; min-width: 0; }
   .top-search .search-btn { flex: 0 0 auto; }

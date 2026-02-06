@@ -539,5 +539,6 @@ html, body {
   .group-tab { flex: 0 0 auto; }
   .group-tabs.vertical { flex-direction: row; flex-wrap: nowrap; max-height: none; overflow: visible; padding: 0; }
   .sidebar > .add-group { flex: 0 0 auto; }
+  .sidebar > .toggle-btn { display: none; }
   .add-group { margin-top: 0; }
 }

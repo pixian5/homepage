@@ -533,7 +533,7 @@ html, body {
   .top-search input { flex: 1 1 auto; width: auto; max-width: none; min-width: 0; }
   .top-search .search-btn { flex: 0 0 auto; }
   .toolbar { flex: 1 1 100%; justify-content: flex-end; order: 2; flex-wrap: wrap; }
-  .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: calc(100% - var(--topbar-height)); min-height: 0; }
+  .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; gap: 0; height: calc(100% - var(--topbar-height)); min-height: 0; }
   .sidebar { flex-direction: row; flex-wrap: nowrap; align-items: center; justify-content: flex-start; overflow-x: auto; overflow-y: hidden; gap: 8px; padding: 0; min-height: 56px; height: 56px; -webkit-overflow-scrolling: touch; }
   .recent-tab { margin-bottom: 0; flex: 0 0 auto; align-self: center; }
   .group-tab { flex: 0 0 auto; align-self: center; }

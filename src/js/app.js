@@ -95,6 +95,15 @@ const touchDragState = {
   x: 0,
   y: 0,
 };
+const touchMenuState = {
+  timer: null,
+  active: false,
+  node: null,
+  startX: 0,
+  startY: 0,
+  x: 0,
+  y: 0,
+};
 const DEBUG_LOG_KEY = "homepage_debug_log";
 
 // ==================== 常量定义 ====================
@@ -117,7 +126,8 @@ const MIN_TILE_SIZE = 32;
 const MAX_TILE_SIZE = 220;
 const MAX_DEBUG_LOG_ENTRIES = 200;
 const BOX_SELECT_THRESHOLD = 6;
-const TOUCH_TILE_LONG_PRESS_MS = 4000;
+const TOUCH_TILE_CONTEXT_MENU_MS = 1500;
+const TOUCH_TILE_LONG_PRESS_MS = 3000;
 const TOUCH_GROUP_LONG_PRESS_MS = 260;
 const TOUCH_DRAG_MOVE_THRESHOLD = 18;
 const TOUCH_CLICK_SUPPRESS_MS = 400;
@@ -847,7 +857,7 @@ async function renderGrid() {
       if (e.touches.length !== 1) return;
       if (selectionMode || activeGroupId === RECENT_GROUP_ID) return;
       const touch = e.touches[0];
-      beginTouchLongPress("tile", node.id, tile, touch.clientX, touch.clientY);
+      beginTouchTileHold(node, node.id, tile, touch.clientX, touch.clientY);
     }, { passive: true });
 
     grid.appendChild(tile);
@@ -950,6 +960,38 @@ function clearTouchDragTimer() {
   touchDragState.timer = null;
 }
 
+function clearTouchMenuTimer() {
+  if (!touchMenuState.timer) return;
+  clearTimeout(touchMenuState.timer);
+  touchMenuState.timer = null;
+}
+
+function resetTouchMenuState() {
+  clearTouchMenuTimer();
+  touchMenuState.active = false;
+  touchMenuState.node = null;
+  touchMenuState.startX = 0;
+  touchMenuState.startY = 0;
+  touchMenuState.x = 0;
+  touchMenuState.y = 0;
+}
+
+function beginTouchTileHold(node, sourceId, sourceEl, x, y) {
+  resetTouchMenuState();
+  beginTouchLongPress("tile", sourceId, sourceEl, x, y);
+  touchMenuState.node = node;
+  touchMenuState.startX = x;
+  touchMenuState.startY = y;
+  touchMenuState.x = x;
+  touchMenuState.y = y;
+  touchMenuState.timer = setTimeout(() => {
+    if (touchDragState.active || !touchMenuState.node) return;
+    touchMenuState.active = true;
+    clearTouchMenuTimer();
+    openContextMenu(touchMenuState.x, touchMenuState.y, touchMenuState.node);
+  }, TOUCH_TILE_CONTEXT_MENU_MS);
+}
+
 function syncTouchDraggedTilePosition(x, y) {
   const tile = touchDragState.sourceTile;
   if (!tile) return;
@@ -1004,6 +1046,8 @@ function activateTouchDrag() {
   touchDragState.active = true;
   clearTouchDragTimer();
   if (touchDragState.mode === "tile") {
+    if (touchMenuState.active) closeContextMenu();
+    resetTouchMenuState();
     dragState = { id: touchDragState.sourceId, fromFolder: openFolderId };
     if (touchDragState.sourceTile) {
       touchDragState.sourceTile.classList.add("touch-dragging");
@@ -1055,6 +1099,7 @@ function updateTouchDragTarget(x, y) {
 function resetTouchDragState() {
   clearTouchDragTimer();
   clearTouchDragVisual();
+  resetTouchMenuState();
   touchDragState.mode = "";
   touchDragState.active = false;
   touchDragState.sourceId = "";
@@ -3056,10 +3101,24 @@ function bindEvents() {
   document.addEventListener("touchmove", (e) => {
     if (e.touches.length !== 1) return;
     const touch = e.touches[0];
+    if (!touchDragState.active && touchMenuState.timer) {
+      touchMenuState.x = touch.clientX;
+      touchMenuState.y = touch.clientY;
+      const moved = Math.hypot(touch.clientX - touchMenuState.startX, touch.clientY - touchMenuState.startY);
+      if (moved > TOUCH_DRAG_MOVE_THRESHOLD) {
+        resetTouchMenuState();
+        clearTouchDragTimer();
+      }
+    }
+    if (touchMenuState.active && !touchDragState.active) {
+      e.preventDefault();
+      return;
+    }
     if (!touchDragState.active && touchDragState.timer) {
       const moved = Math.hypot(touch.clientX - touchDragState.startX, touch.clientY - touchDragState.startY);
       if (moved > TOUCH_DRAG_MOVE_THRESHOLD) {
         clearTouchDragTimer();
+        resetTouchMenuState();
       }
       return;
     }
@@ -3069,6 +3128,16 @@ function bindEvents() {
   }, { passive: false });
 
   document.addEventListener("touchend", (e) => {
+    if (touchMenuState.timer && !touchMenuState.active) {
+      resetTouchMenuState();
+    }
+    if (touchMenuState.active && !touchDragState.active) {
+      e.preventDefault();
+      suppressTouchClickUntil = Date.now() + TOUCH_CLICK_SUPPRESS_MS;
+      resetTouchMenuState();
+      clearTouchDragTimer();
+      return;
+    }
     if (touchDragState.timer && !touchDragState.active) {
       clearTouchDragTimer();
       return;

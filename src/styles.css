@@ -164,7 +164,7 @@ html, body {
 }
 
 .top-search input {
-  width: 30vw; max-width: 30vw;
+  width: 28vw; max-width: 28vw;
   padding: 10px 14px; border-radius: 999px;
   border: 1px solid var(--control-border, rgba(255,255,255,0.1));
   background: var(--control-bg, rgba(18, 22, 30, 0.7));

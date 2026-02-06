@@ -1924,11 +1924,9 @@ function openSettingsModal() {
       </div>
       <div class="row-inline density-row">
         <span class="inline-label">卡片间隙</span>
-        <div class="density-options">
-          <label><input type="radio" name="density" value="compact" /> 紧凑</label>
-          <label><input type="radio" name="density" value="standard" /> 标准</label>
-          <label><input type="radio" name="density" value="spacious" /> 宽松</label>
-        </div>
+        <label><input type="radio" name="density" value="compact" /> 紧凑</label>
+        <label><input type="radio" name="density" value="standard" /> 标准</label>
+        <label><input type="radio" name="density" value="spacious" /> 宽松</label>
       </div>
     </div>
 

@@ -170,6 +170,17 @@ function getRuntimeInfo() {
   };
 }
 
+function getAppVersion() {
+  const api = getChromeApi();
+  try {
+    const version = api?.runtime?.getManifest?.()?.version;
+    return version ? String(version) : "";
+  } catch (e) {
+    console.warn("getAppVersion failed", e);
+    return "";
+  }
+}
+
 function shouldDebugPersist() {
   try {
     return localStorage.getItem("homepage_debug_persist") === "1";
@@ -1895,7 +1906,10 @@ function openSettingsModal() {
       <button id="btnBackupManage" class="icon-btn">备份管理</button>
       <button id="btnClearData" class="icon-btn danger strong-label">清空数据</button>
       <button id="btnClearCards" class="icon-btn danger">删除所有分组、卡片</button>
-      <button id="btnRefreshIcons" class="icon-btn">刷新所有图标</button>
+      <div class="row-inline version-row">
+        <button id="btnRefreshIcons" class="icon-btn">刷新所有图标</button>
+        <span id="settingsVersion" class="build-version"></span>
+      </div>
     </div>
 
     <div class="section">
@@ -2002,6 +2016,14 @@ function openSettingsModal() {
     <div class="section">
       <label><input id="settingSync" type="checkbox"> 启用同步</label>
       <div class="row-inline">
+        <span class="inline-label">打开方式</span>
+        <select id="settingOpenMode" class="inline-select">
+          <option value="current">本页打开</option>
+          <option value="new">新页打开</option>
+          <option value="background">后台打开</option>
+        </select>
+      </div>
+      <div class="row-inline">
         <span class="inline-label">最大备份数量（0 表示不备份）</span>
         <input id="settingBackup" type="number" min="0" class="inline-number" />
       </div>
@@ -2073,6 +2095,7 @@ function openSettingsModal() {
   $("settingTheme").value = data.settings.theme || "system";
   $("settingFontSize").value = data.settings.fontSize || 13;
   $("settingSync").checked = data.settings.syncEnabled;
+  $("settingOpenMode").value = data.settings.openMode || "current";
   $("settingBackup").value = data.settings.maxBackups;
   const retryHour = data.settings.iconRetryHour ?? (data.settings.iconRetryAtSix ? 18 : "");
   $("settingIconRetryHour").value = retryHour === "" ? "" : String(retryHour);
@@ -2180,6 +2203,7 @@ function openSettingsModal() {
     data.settings.defaultGroupId = selectedDefaultGroupId;
     data.settings.sidebarHidden = $("settingSidebarCollapsed").checked;
     data.settings.syncEnabled = $("settingSync").checked;
+    data.settings.openMode = $("settingOpenMode").value || "current";
     const nextMaxBackups = Number($("settingBackup").value) || 0;
     if (nextMaxBackups > 0 && data.backups.length > nextMaxBackups) {
       data.backups = data.backups.slice(0, nextMaxBackups);
@@ -2250,6 +2274,8 @@ function openSettingsModal() {
   $("settingBgOverlay").addEventListener("input", () => {
     $("settingBgOverlayValue").textContent = `${Math.round(Number($("settingBgOverlay").value) * 100)}%`;
   });
+  const version = getAppVersion();
+  $("settingsVersion").textContent = version ? `v${version}` : "";
 }
 
 async function exportJsonToClipboard() {

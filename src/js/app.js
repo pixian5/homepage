@@ -124,6 +124,8 @@ const ICON_PROBE_TIMEOUT_MS = 6000;
 const HISTORY_DAYS = 7;
 const MIN_TILE_SIZE = 32;
 const MAX_TILE_SIZE = 220;
+const MOBILE_LAYOUT_BREAKPOINT = 720;
+const MOBILE_MIN_TILE_SIZE = 84;
 const MAX_DEBUG_LOG_ENTRIES = 200;
 const BOX_SELECT_THRESHOLD = 6;
 const TOUCH_TILE_CONTEXT_MENU_MS = 1000;
@@ -714,21 +716,29 @@ async function renderGrid() {
   const style = getComputedStyle(referenceGrid);
   const paddingX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
   const available = Math.max(0, width - paddingX);
+  const isMobileLayout = width <= MOBILE_LAYOUT_BREAKPOINT;
+  const minTileSize = isMobileLayout ? Math.max(MIN_TILE_SIZE, MOBILE_MIN_TILE_SIZE) : MIN_TILE_SIZE;
   const baseSize = data.settings.lastTileSize || density.size || 96;
-  let maxColumns = Math.max(1, Math.floor((available + gap) / (baseSize + gap)));
+  const calcBaseSize = isMobileLayout ? Math.max(baseSize, minTileSize) : baseSize;
+  let maxColumns = Math.max(1, Math.floor((available + gap) / (calcBaseSize + gap)));
   let columns = maxColumns;
   if (data.settings.fixedLayout) {
     const desired = Math.max(1, data.settings.fixedCols || 8);
-    columns = desired;
+    if (isMobileLayout) {
+      const mobileMaxCols = Math.max(1, Math.floor((available + gap) / (minTileSize + gap)));
+      columns = Math.min(desired, mobileMaxCols);
+    } else {
+      columns = desired;
+    }
   }
   let tileSize = baseSize;
   if (data.settings.fixedLayout && available > 0) {
     const fitSize = Math.floor((available - gap * (columns - 1)) / columns);
-    tileSize = Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, fitSize));
+    tileSize = Math.max(minTileSize, Math.min(MAX_TILE_SIZE, fitSize));
   } else if (columns <= 1 && available > 0) {
-    tileSize = Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, Math.floor(available)));
+    tileSize = Math.max(minTileSize, Math.min(MAX_TILE_SIZE, Math.floor(available)));
   } else {
-    tileSize = Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, baseSize));
+    tileSize = Math.max(minTileSize, Math.min(MAX_TILE_SIZE, calcBaseSize));
   }
   const iconRatio = density.icon && density.size ? density.icon / density.size : 0.58;
   let iconSize = Math.max(18, Math.round(tileSize * (iconRatio || 0.58)));

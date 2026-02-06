@@ -95,6 +95,15 @@ const touchDragState = {
   x: 0,
   y: 0,
 };
+const touchContextState = {
+  timer: null,
+  active: false,
+  node: null,
+  startX: 0,
+  startY: 0,
+  x: 0,
+  y: 0,
+};
 const DEBUG_LOG_KEY = "homepage_debug_log";
 
 // ==================== 常量定义 ====================
@@ -844,10 +853,9 @@ async function renderGrid() {
 
     tile.addEventListener("touchstart", (e) => {
       if (e.touches.length !== 1) return;
-      if (selectionMode || activeGroupId === RECENT_GROUP_ID) return;
       const touch = e.touches[0];
-      beginTouchLongPress("tile", node.id, tile, touch.clientX, touch.clientY);
-    });
+      beginTouchContextMenu(node, touch.clientX, touch.clientY);
+    }, { passive: true });
 
     grid.appendChild(tile);
   }
@@ -947,6 +955,37 @@ function clearTouchDragTimer() {
   if (!touchDragState.timer) return;
   clearTimeout(touchDragState.timer);
   touchDragState.timer = null;
+}
+
+function clearTouchContextTimer() {
+  if (!touchContextState.timer) return;
+  clearTimeout(touchContextState.timer);
+  touchContextState.timer = null;
+}
+
+function resetTouchContextState() {
+  clearTouchContextTimer();
+  touchContextState.active = false;
+  touchContextState.node = null;
+  touchContextState.startX = 0;
+  touchContextState.startY = 0;
+  touchContextState.x = 0;
+  touchContextState.y = 0;
+}
+
+function beginTouchContextMenu(node, x, y) {
+  resetTouchContextState();
+  touchContextState.node = node;
+  touchContextState.startX = x;
+  touchContextState.startY = y;
+  touchContextState.x = x;
+  touchContextState.y = y;
+  touchContextState.timer = setTimeout(() => {
+    if (!touchContextState.node) return;
+    touchContextState.active = true;
+    clearTouchContextTimer();
+    openContextMenu(touchContextState.x, touchContextState.y, touchContextState.node);
+  }, TOUCH_LONG_PRESS_MS);
 }
 
 function clearTouchDragVisual() {
@@ -1797,7 +1836,7 @@ async function openOpenModeMenu() {
   const modes = [
     { id: "current", label: "本页打开" },
     { id: "new", label: "新页打开" },
-    { id: "background", label: "在后台打开" },
+    { id: "background", label: "后台打开" },
   ];
   const idx = modes.findIndex((m) => m.id === data.settings.openMode);
   const next = modes[(idx + 1) % modes.length];
@@ -2799,7 +2838,7 @@ function updateOpenModeButton() {
   const map = {
     current: "本页打开",
     new: "新页打开",
-    background: "在后台打开",
+    background: "后台打开",
   };
   const label = map[data.settings.openMode] || "本页打开";
   elements.btnOpenMode.textContent = `${label}`;
@@ -3035,6 +3074,17 @@ function bindEvents() {
   document.addEventListener("touchmove", (e) => {
     if (e.touches.length !== 1) return;
     const touch = e.touches[0];
+    if (!touchContextState.active && touchContextState.timer) {
+      touchContextState.x = touch.clientX;
+      touchContextState.y = touch.clientY;
+      const moved = Math.hypot(touch.clientX - touchContextState.startX, touch.clientY - touchContextState.startY);
+      if (moved > TOUCH_DRAG_MOVE_THRESHOLD) {
+        resetTouchContextState();
+      }
+    } else if (touchContextState.active) {
+      e.preventDefault();
+      return;
+    }
     if (!touchDragState.active && touchDragState.timer) {
       const moved = Math.hypot(touch.clientX - touchDragState.startX, touch.clientY - touchDragState.startY);
       if (moved > TOUCH_DRAG_MOVE_THRESHOLD) {
@@ -3048,6 +3098,16 @@ function bindEvents() {
   }, { passive: false });
 
   document.addEventListener("touchend", (e) => {
+    if (touchContextState.timer && !touchContextState.active) {
+      resetTouchContextState();
+      return;
+    }
+    if (touchContextState.active) {
+      e.preventDefault();
+      suppressTouchClickUntil = Date.now() + TOUCH_CLICK_SUPPRESS_MS;
+      resetTouchContextState();
+      return;
+    }
     if (touchDragState.timer && !touchDragState.active) {
       clearTouchDragTimer();
       return;
@@ -3062,6 +3122,7 @@ function bindEvents() {
   }, { passive: false });
 
   document.addEventListener("touchcancel", () => {
+    resetTouchContextState();
     resetTouchDragState();
   }, { passive: true });
 

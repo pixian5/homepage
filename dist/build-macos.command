@@ -10,6 +10,13 @@ FIREFOX_DIR="${DIST_DIR}/firefox"
 
 echo "[build] ROOT_DIR=${ROOT_DIR}"
 
+if [[ -f "${ROOT_DIR}/logo.png" ]]; then
+  echo "[build] Found logo.png, generating extension icons..."
+  for size in 16 32 48 128; do
+    sips -z "${size}" "${size}" "${ROOT_DIR}/logo.png" --out "${SRC_DIR}/assets/icon-${size}.png" >/dev/null
+  done
+fi
+
 rm -rf "${CHROME_DIR}" "${FIREFOX_DIR}"
 rm -f "${DIST_DIR}/chrome.zip" "${DIST_DIR}/firefox.zip"
 

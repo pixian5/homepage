@@ -1987,6 +1987,9 @@ function openSettingsModal() {
           <option value="last">上次添加的分组</option>
           <option value="fixed">固定分组</option>
         </select>
+      </div>
+      <div id="settingDefaultGroupIdRow" class="row-inline hidden">
+        <span class="inline-label">固定分组</span>
         <select id="settingDefaultGroupId" class="inline-select"></select>
       </div>
     </div>
@@ -2079,6 +2082,7 @@ function openSettingsModal() {
   });
 
   const defaultGroupMode = $("settingDefaultGroupMode");
+  const defaultGroupIdRow = $("settingDefaultGroupIdRow");
   const defaultGroupId = $("settingDefaultGroupId");
   defaultGroupMode.value = data.settings.defaultGroupMode || "last";
   defaultGroupId.innerHTML = "";
@@ -2093,7 +2097,7 @@ function openSettingsModal() {
   if (data.settings.defaultGroupId) defaultGroupId.value = data.settings.defaultGroupId;
   const updateDefaultGroupControls = () => {
     const isFixed = defaultGroupMode.value === "fixed";
-    defaultGroupId.classList.toggle("hidden", !isFixed);
+    defaultGroupIdRow.classList.toggle("hidden", !isFixed);
     defaultGroupId.disabled = !isFixed;
   };
   defaultGroupMode.addEventListener("change", updateDefaultGroupControls);

@@ -1527,7 +1527,7 @@ function openOpenModeMenu() {
   const modes = [
     { id: "current", label: "当前标签打开" },
     { id: "new", label: "新标签打开" },
-    { id: "background", label: "后台新标签打开" },
+    { id: "background", label: "在后台打开" },
   ];
   const idx = modes.findIndex((m) => m.id === data.settings.openMode);
   const next = modes[(idx + 1) % modes.length];
@@ -1876,6 +1876,10 @@ function openSettingsModal() {
 
   const scheduleSettingsSave = (immediate = false) => {
     if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
+    if (immediate) {
+      saveSettings({ close: false, toastOnSave: false });
+      return;
+    }
     const delay = immediate ? 0 : SETTINGS_SAVE_DELAY_MS;
     settingsSaveTimer = setTimeout(() => {
       settingsSaveTimer = null;
@@ -1890,16 +1894,15 @@ function openSettingsModal() {
     const bgFile = $("settingBgFile");
     bgFile.classList.toggle("hidden", type !== "custom");
     bgFile.disabled = type !== "custom";
-    if (triggerSave) scheduleSettingsSave();
+    if (triggerSave) scheduleSettingsSave(true);
   };
   $("settingBgType").addEventListener("change", () => updateBgControls(true));
   updateBgControls(false);
 
   qsa("input, select, textarea", elements.modal).forEach((el) => {
     const type = el.getAttribute("type") || "";
-    const useInput = type === "text" || type === "url" || type === "number" || type === "color" || type === "range";
-    const eventName = useInput ? "input" : "change";
-    el.addEventListener(eventName, () => scheduleSettingsSave(useInput));
+    const eventName = type === "checkbox" || el.tagName === "SELECT" ? "change" : "input";
+    el.addEventListener(eventName, () => scheduleSettingsSave(true));
   });
   $("settingBgFile").addEventListener("change", () => scheduleSettingsSave(true));
   $("settingBgOverlay").addEventListener("input", () => {
@@ -2521,7 +2524,7 @@ function updateOpenModeButton() {
   const map = {
     current: "当前标签打开",
     new: "新标签打开",
-    background: "后台新标签打开",
+    background: "在后台打开",
   };
   const label = map[data.settings.openMode] || "当前标签打开";
   elements.btnOpenMode.textContent = `${label}`;
@@ -2622,15 +2625,7 @@ function bindEvents() {
   elements.btnOpenMode.addEventListener("click", openOpenModeMenu);
   elements.btnSettings.addEventListener("click", async () => {
     if (settingsOpen) {
-      if (settingsSaveTimer) {
-        clearTimeout(settingsSaveTimer);
-        settingsSaveTimer = null;
-      }
-      if (typeof settingsSaveNow === "function") {
-        await settingsSaveNow({ close: true, toastOnSave: false });
-      } else {
-        closeModal();
-      }
+      closeModal();
       return;
     }
     openSettingsModal();
@@ -2676,15 +2671,7 @@ function bindEvents() {
   elements.modalOverlay.addEventListener("click", async (e) => {
     if (e.target !== elements.modalOverlay) return;
     if (settingsOpen) {
-      if (settingsSaveTimer) {
-        clearTimeout(settingsSaveTimer);
-        settingsSaveTimer = null;
-      }
-      if (typeof settingsSaveNow === "function") {
-        await settingsSaveNow({ close: true, toastOnSave: false });
-      } else {
-        closeModal();
-      }
+      closeModal();
       return;
     }
     closeModal();

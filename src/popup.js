@@ -340,7 +340,8 @@ async function saveToGroup(tab, selectedGroupId) {
   data.settings.lastActiveGroupId = group.id;
   data.settings.lastSaveUrl = url;
   data.settings.lastSaveTs = Date.now();
-  data.settings.lastSaveToast = { ts: Date.now(), groupId: group.id, groupName: group.name || "" };
+  // 弹窗保存仅在当前网页显示 toast，避免新标签页读取存储后重复提示
+  data.settings.lastSaveToast = null;
   data.lastUpdated = Date.now();
   const payload = useSync ? sanitizeForSync(data) : data;
   if (useSync) {

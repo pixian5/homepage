@@ -78,6 +78,18 @@ let persistInFlight = 0;
 let backupFingerprint = "";
 let backupBaselineSnapshot = null;
 let skipAutoBackupOnce = false;
+let suppressTouchClickUntil = 0;
+const touchDragState = {
+  timer: null,
+  active: false,
+  sourceId: "",
+  sourceTile: null,
+  targetTile: null,
+  startX: 0,
+  startY: 0,
+  x: 0,
+  y: 0,
+};
 const DEBUG_LOG_KEY = "homepage_debug_log";
 
 // ==================== 常量定义 ====================
@@ -100,6 +112,9 @@ const MIN_TILE_SIZE = 32;
 const MAX_TILE_SIZE = 220;
 const MAX_DEBUG_LOG_ENTRIES = 200;
 const BOX_SELECT_THRESHOLD = 6;
+const TOUCH_LONG_PRESS_MS = 260;
+const TOUCH_DRAG_MOVE_THRESHOLD = 10;
+const TOUCH_CLICK_SUPPRESS_MS = 400;
 
 const densityMap = {
   compact: { gap: 10 },
@@ -740,6 +755,10 @@ async function renderGrid() {
     }
 
     tile.addEventListener("click", (e) => {
+      if (Date.now() < suppressTouchClickUntil) {
+        e.preventDefault();
+        return;
+      }
       if (selectionMode) {
         toggleSelect(node.id, idx, e.shiftKey);
         return;
@@ -788,6 +807,51 @@ async function renderGrid() {
       e.stopPropagation();
       handleDropOnTile(node.id, e.clientX, e.clientY);
       dragState = null;
+    });
+
+    tile.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) return;
+      if (selectionMode || activeGroupId === RECENT_GROUP_ID) return;
+      const touch = e.touches[0];
+      touchDragState.startX = touch.clientX;
+      touchDragState.startY = touch.clientY;
+      clearTouchDragTimer();
+      touchDragState.timer = setTimeout(() => {
+        startTouchDrag(node.id, tile, touchDragState.startX, touchDragState.startY);
+      }, TOUCH_LONG_PRESS_MS);
+    }, { passive: true });
+
+    tile.addEventListener("touchmove", (e) => {
+      if (e.touches.length !== 1) return;
+      const touch = e.touches[0];
+      if (!touchDragState.active && touchDragState.timer) {
+        const moved = Math.hypot(touch.clientX - touchDragState.startX, touch.clientY - touchDragState.startY);
+        if (moved > TOUCH_DRAG_MOVE_THRESHOLD) {
+          clearTouchDragTimer();
+        }
+        return;
+      }
+      if (!touchDragState.active) return;
+      e.preventDefault();
+      updateTouchDragTarget(touch.clientX, touch.clientY);
+    }, { passive: false });
+
+    tile.addEventListener("touchend", (e) => {
+      if (touchDragState.timer && !touchDragState.active) {
+        clearTouchDragTimer();
+        return;
+      }
+      if (!touchDragState.active) return;
+      const touch = e.changedTouches?.[0];
+      if (touch) {
+        updateTouchDragTarget(touch.clientX, touch.clientY);
+      }
+      e.preventDefault();
+      finishTouchDrag();
+    }, { passive: false });
+
+    tile.addEventListener("touchcancel", () => {
+      resetTouchDragState();
     });
 
     grid.appendChild(tile);
@@ -864,6 +928,87 @@ function updateSelectionStyles() {
   qsa(".tile", grid).forEach((tile) => {
     tile.classList.toggle("selected", selectedIds.has(tile.dataset.id));
   });
+}
+
+function clearTouchDragTimer() {
+  if (!touchDragState.timer) return;
+  clearTimeout(touchDragState.timer);
+  touchDragState.timer = null;
+}
+
+function clearTouchDragVisual() {
+  if (touchDragState.sourceTile) {
+    touchDragState.sourceTile.classList.remove("touch-dragging");
+  }
+  if (touchDragState.targetTile) {
+    touchDragState.targetTile.classList.remove("touch-drop-target");
+  }
+  document.body.classList.remove("touch-dragging");
+}
+
+function startTouchDrag(nodeId, tile, x, y) {
+  touchDragState.active = true;
+  touchDragState.sourceId = nodeId;
+  touchDragState.sourceTile = tile;
+  touchDragState.targetTile = null;
+  touchDragState.x = x;
+  touchDragState.y = y;
+  dragState = { id: nodeId, fromFolder: openFolderId };
+  tile.classList.add("touch-dragging");
+  document.body.classList.add("touch-dragging");
+}
+
+function updateTouchDragTarget(x, y) {
+  if (!touchDragState.active) return;
+  touchDragState.x = x;
+  touchDragState.y = y;
+  const pointEl = document.elementFromPoint(x, y);
+  const hoverTile = pointEl?.closest?.(".tile") || null;
+  const nextTarget = hoverTile && hoverTile.dataset.id !== touchDragState.sourceId ? hoverTile : null;
+  if (touchDragState.targetTile && touchDragState.targetTile !== nextTarget) {
+    touchDragState.targetTile.classList.remove("touch-drop-target");
+  }
+  if (nextTarget && nextTarget !== touchDragState.targetTile) {
+    nextTarget.classList.add("touch-drop-target");
+  }
+  touchDragState.targetTile = nextTarget;
+}
+
+function resetTouchDragState() {
+  clearTouchDragTimer();
+  clearTouchDragVisual();
+  touchDragState.active = false;
+  touchDragState.sourceId = "";
+  touchDragState.sourceTile = null;
+  touchDragState.targetTile = null;
+  dragState = null;
+}
+
+function finishTouchDrag() {
+  if (!touchDragState.active) return;
+  const sourceId = touchDragState.sourceId;
+  const targetId = touchDragState.targetTile?.dataset?.id || "";
+  const x = touchDragState.x;
+  const y = touchDragState.y;
+
+  if (targetId && targetId !== sourceId) {
+    handleDropOnTile(targetId, x, y);
+  } else if (activeGroupId !== RECENT_GROUP_ID) {
+    const inFolder = !!openFolderId;
+    const container = inFolder ? data.nodes[openFolderId] : getActiveGroup();
+    const list = inFolder ? (container.children || []) : container.nodes;
+    const grid = inFolder ? elements.folderGrid : elements.grid;
+    const next = moveNodeInList(list, sourceId, getDropIndex(grid, x, y));
+    if (next !== list) {
+      if (inFolder) container.children = next;
+      else container.nodes = next;
+      persistData();
+      render();
+    }
+  }
+
+  suppressTouchClickUntil = Date.now() + TOUCH_CLICK_SUPPRESS_MS;
+  resetTouchDragState();
 }
 
 function showContextMenuAt(x, y) {

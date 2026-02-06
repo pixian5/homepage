@@ -266,6 +266,17 @@ html, body {
   background: rgba(255, 120, 120, 0.18);
   border-color: rgba(255, 140, 140, 0.45);
 }
+.touch-dragging .tile {
+  user-select: none;
+}
+.tile.touch-dragging {
+  opacity: 0.65;
+  transform: scale(0.98);
+}
+.tile.touch-drop-target {
+  border-color: rgba(77, 214, 168, 0.7);
+  box-shadow: 0 0 0 2px rgba(77, 214, 168, 0.28) inset;
+}
 
 .tile-icon {
   width: var(--tile-icon); height: var(--tile-icon);

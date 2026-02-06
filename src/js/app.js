@@ -80,11 +80,15 @@ let backupBaselineSnapshot = null;
 let skipAutoBackupOnce = false;
 let suppressTouchClickUntil = 0;
 const touchDragState = {
+  mode: "",
   timer: null,
   active: false,
   sourceId: "",
   sourceTile: null,
   targetTile: null,
+  sourceGroupId: "",
+  sourceGroupBtn: null,
+  targetGroupBtn: null,
   startX: 0,
   startY: 0,
   x: 0,
@@ -113,7 +117,7 @@ const MAX_TILE_SIZE = 220;
 const MAX_DEBUG_LOG_ENTRIES = 200;
 const BOX_SELECT_THRESHOLD = 6;
 const TOUCH_LONG_PRESS_MS = 260;
-const TOUCH_DRAG_MOVE_THRESHOLD = 10;
+const TOUCH_DRAG_MOVE_THRESHOLD = 18;
 const TOUCH_CLICK_SUPPRESS_MS = 400;
 
 const densityMap = {
@@ -619,8 +623,13 @@ function renderGroups() {
       btn.setAttribute("aria-label", group.name);
       btn.textContent = data.settings.sidebarCollapsed ? "" : group.name;
       btn.dataset.short = String(idx + 1);
+      btn.dataset.groupId = group.id;
       btn.draggable = true;
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", (e) => {
+        if (Date.now() < suppressTouchClickUntil) {
+          e.preventDefault();
+          return;
+        }
         activeGroupId = group.id;
         openFolderId = null;
         data.settings.lastActiveGroupId = activeGroupId;
@@ -653,6 +662,11 @@ function renderGroups() {
         if (!draggingGroupId || draggingGroupId === group.id) return;
         moveGroupBefore(draggingGroupId, group.id);
       });
+      btn.addEventListener("touchstart", (e) => {
+        if (e.touches.length !== 1) return;
+        const touch = e.touches[0];
+        beginTouchLongPress("group", group.id, btn, touch.clientX, touch.clientY);
+      }, { passive: true });
       elements.groupTabs.appendChild(btn);
     });
 }
@@ -813,45 +827,7 @@ async function renderGrid() {
       if (e.touches.length !== 1) return;
       if (selectionMode || activeGroupId === RECENT_GROUP_ID) return;
       const touch = e.touches[0];
-      touchDragState.startX = touch.clientX;
-      touchDragState.startY = touch.clientY;
-      clearTouchDragTimer();
-      touchDragState.timer = setTimeout(() => {
-        startTouchDrag(node.id, tile, touchDragState.startX, touchDragState.startY);
-      }, TOUCH_LONG_PRESS_MS);
-    }, { passive: true });
-
-    tile.addEventListener("touchmove", (e) => {
-      if (e.touches.length !== 1) return;
-      const touch = e.touches[0];
-      if (!touchDragState.active && touchDragState.timer) {
-        const moved = Math.hypot(touch.clientX - touchDragState.startX, touch.clientY - touchDragState.startY);
-        if (moved > TOUCH_DRAG_MOVE_THRESHOLD) {
-          clearTouchDragTimer();
-        }
-        return;
-      }
-      if (!touchDragState.active) return;
-      e.preventDefault();
-      updateTouchDragTarget(touch.clientX, touch.clientY);
-    }, { passive: false });
-
-    tile.addEventListener("touchend", (e) => {
-      if (touchDragState.timer && !touchDragState.active) {
-        clearTouchDragTimer();
-        return;
-      }
-      if (!touchDragState.active) return;
-      const touch = e.changedTouches?.[0];
-      if (touch) {
-        updateTouchDragTarget(touch.clientX, touch.clientY);
-      }
-      e.preventDefault();
-      finishTouchDrag();
-    }, { passive: false });
-
-    tile.addEventListener("touchcancel", () => {
-      resetTouchDragState();
+      beginTouchLongPress("tile", node.id, tile, touch.clientX, touch.clientY);
     });
 
     grid.appendChild(tile);
@@ -943,18 +919,48 @@ function clearTouchDragVisual() {
   if (touchDragState.targetTile) {
     touchDragState.targetTile.classList.remove("touch-drop-target");
   }
+  if (touchDragState.sourceGroupBtn) {
+    touchDragState.sourceGroupBtn.classList.remove("dragging");
+  }
+  if (touchDragState.targetGroupBtn) {
+    touchDragState.targetGroupBtn.classList.remove("drop-target");
+  }
+  qsa(".group-tab", elements.groupTabs).forEach((el) => el.classList.remove("drop-target"));
   document.body.classList.remove("touch-dragging");
 }
 
-function startTouchDrag(nodeId, tile, x, y) {
-  touchDragState.active = true;
-  touchDragState.sourceId = nodeId;
-  touchDragState.sourceTile = tile;
-  touchDragState.targetTile = null;
+function beginTouchLongPress(mode, sourceId, sourceEl, x, y) {
+  resetTouchDragState();
+  touchDragState.mode = mode;
+  if (mode === "tile") {
+    touchDragState.sourceId = sourceId;
+    touchDragState.sourceTile = sourceEl;
+  } else {
+    touchDragState.sourceGroupId = sourceId;
+    touchDragState.sourceGroupBtn = sourceEl;
+  }
+  touchDragState.startX = x;
+  touchDragState.startY = y;
   touchDragState.x = x;
   touchDragState.y = y;
-  dragState = { id: nodeId, fromFolder: openFolderId };
-  tile.classList.add("touch-dragging");
+  touchDragState.timer = setTimeout(() => {
+    activateTouchDrag();
+  }, TOUCH_LONG_PRESS_MS);
+}
+
+function activateTouchDrag() {
+  if (!touchDragState.mode) return;
+  touchDragState.active = true;
+  clearTouchDragTimer();
+  if (touchDragState.mode === "tile") {
+    dragState = { id: touchDragState.sourceId, fromFolder: openFolderId };
+    touchDragState.sourceTile?.classList.add("touch-dragging");
+    touchDragState.targetTile = null;
+  } else if (touchDragState.mode === "group") {
+    draggingGroupId = touchDragState.sourceGroupId;
+    touchDragState.sourceGroupBtn?.classList.add("dragging");
+    touchDragState.targetGroupBtn = null;
+  }
   document.body.classList.add("touch-dragging");
 }
 
@@ -962,53 +968,86 @@ function updateTouchDragTarget(x, y) {
   if (!touchDragState.active) return;
   touchDragState.x = x;
   touchDragState.y = y;
-  const pointEl = document.elementFromPoint(x, y);
-  const hoverTile = pointEl?.closest?.(".tile") || null;
-  const nextTarget = hoverTile && hoverTile.dataset.id !== touchDragState.sourceId ? hoverTile : null;
-  if (touchDragState.targetTile && touchDragState.targetTile !== nextTarget) {
-    touchDragState.targetTile.classList.remove("touch-drop-target");
+  const pointEl = document.elementFromPoint(x, y) || null;
+  if (touchDragState.mode === "tile") {
+    const hoverTile = pointEl?.closest?.(".tile") || null;
+    const nextTarget = hoverTile && hoverTile.dataset.id !== touchDragState.sourceId ? hoverTile : null;
+    if (touchDragState.targetTile && touchDragState.targetTile !== nextTarget) {
+      touchDragState.targetTile.classList.remove("touch-drop-target");
+    }
+    if (nextTarget && nextTarget !== touchDragState.targetTile) {
+      nextTarget.classList.add("touch-drop-target");
+    }
+    touchDragState.targetTile = nextTarget;
+    return;
   }
-  if (nextTarget && nextTarget !== touchDragState.targetTile) {
-    nextTarget.classList.add("touch-drop-target");
+  if (touchDragState.mode === "group") {
+    const hoverGroup = pointEl?.closest?.(".group-tab.draggable") || null;
+    const nextTarget = hoverGroup && hoverGroup.dataset.groupId !== touchDragState.sourceGroupId ? hoverGroup : null;
+    if (touchDragState.targetGroupBtn && touchDragState.targetGroupBtn !== nextTarget) {
+      touchDragState.targetGroupBtn.classList.remove("drop-target");
+    }
+    if (nextTarget && nextTarget !== touchDragState.targetGroupBtn) {
+      nextTarget.classList.add("drop-target");
+    }
+    touchDragState.targetGroupBtn = nextTarget;
   }
-  touchDragState.targetTile = nextTarget;
 }
 
 function resetTouchDragState() {
   clearTouchDragTimer();
   clearTouchDragVisual();
+  touchDragState.mode = "";
   touchDragState.active = false;
   touchDragState.sourceId = "";
   touchDragState.sourceTile = null;
   touchDragState.targetTile = null;
+  touchDragState.sourceGroupId = "";
+  touchDragState.sourceGroupBtn = null;
+  touchDragState.targetGroupBtn = null;
   dragState = null;
+  draggingGroupId = null;
 }
 
 function finishTouchDrag() {
-  if (!touchDragState.active) return;
-  const sourceId = touchDragState.sourceId;
-  const targetId = touchDragState.targetTile?.dataset?.id || "";
-  const x = touchDragState.x;
-  const y = touchDragState.y;
+  if (!touchDragState.active) return false;
+  if (touchDragState.mode === "tile") {
+    const sourceId = touchDragState.sourceId;
+    const targetId = touchDragState.targetTile?.dataset?.id || "";
+    const x = touchDragState.x;
+    const y = touchDragState.y;
 
-  if (targetId && targetId !== sourceId) {
-    handleDropOnTile(targetId, x, y);
-  } else if (activeGroupId !== RECENT_GROUP_ID) {
-    const inFolder = !!openFolderId;
-    const container = inFolder ? data.nodes[openFolderId] : getActiveGroup();
-    const list = inFolder ? (container.children || []) : container.nodes;
-    const grid = inFolder ? elements.folderGrid : elements.grid;
-    const next = moveNodeInList(list, sourceId, getDropIndex(grid, x, y));
-    if (next !== list) {
-      if (inFolder) container.children = next;
-      else container.nodes = next;
-      persistData();
-      render();
+    if (targetId && targetId !== sourceId) {
+      handleDropOnTile(targetId, x, y);
+    } else if (activeGroupId !== RECENT_GROUP_ID) {
+      const inFolder = !!openFolderId;
+      const container = inFolder ? data.nodes[openFolderId] : getActiveGroup();
+      const list = inFolder ? (container.children || []) : container.nodes;
+      const grid = inFolder ? elements.folderGrid : elements.grid;
+      const next = moveNodeInList(list, sourceId, getDropIndex(grid, x, y));
+      if (next !== list) {
+        if (inFolder) container.children = next;
+        else container.nodes = next;
+        persistData();
+        render();
+      }
+    }
+  } else if (touchDragState.mode === "group") {
+    const sourceId = touchDragState.sourceGroupId;
+    const targetId = touchDragState.targetGroupBtn?.dataset?.groupId || "";
+    if (targetId && targetId !== sourceId) {
+      moveGroupBefore(sourceId, targetId);
+    } else {
+      const rect = elements.groupTabs.getBoundingClientRect();
+      const total = data.groups.length;
+      if (touchDragState.y < rect.top + 24) moveGroupToIndex(sourceId, 0);
+      else if (touchDragState.y > rect.bottom - 24) moveGroupToIndex(sourceId, total);
     }
   }
 
   suppressTouchClickUntil = Date.now() + TOUCH_CLICK_SUPPRESS_MS;
   resetTouchDragState();
+  return true;
 }
 
 function showContextMenuAt(x, y) {
@@ -2930,6 +2969,39 @@ function bindEvents() {
       e.preventDefault();
     }
   });
+
+  document.addEventListener("touchmove", (e) => {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    if (!touchDragState.active && touchDragState.timer) {
+      const moved = Math.hypot(touch.clientX - touchDragState.startX, touch.clientY - touchDragState.startY);
+      if (moved > TOUCH_DRAG_MOVE_THRESHOLD) {
+        clearTouchDragTimer();
+      }
+      return;
+    }
+    if (!touchDragState.active) return;
+    e.preventDefault();
+    updateTouchDragTarget(touch.clientX, touch.clientY);
+  }, { passive: false });
+
+  document.addEventListener("touchend", (e) => {
+    if (touchDragState.timer && !touchDragState.active) {
+      clearTouchDragTimer();
+      return;
+    }
+    if (!touchDragState.active) return;
+    const touch = e.changedTouches?.[0];
+    if (touch) {
+      updateTouchDragTarget(touch.clientX, touch.clientY);
+    }
+    e.preventDefault();
+    finishTouchDrag();
+  }, { passive: false });
+
+  document.addEventListener("touchcancel", () => {
+    resetTouchDragState();
+  }, { passive: true });
 
   elements.grid.addEventListener("dragover", (e) => e.preventDefault());
   elements.grid.addEventListener("drop", (e) => {

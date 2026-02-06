@@ -329,11 +329,11 @@ html, body {
 }
 .empty-box {
   width: 25vw;
-  height: 25vh;
+  height: 50vh;
   max-width: 360px;
-  max-height: 240px;
+  max-height: 480px;
   min-width: 240px;
-  min-height: 180px;
+  min-height: 360px;
   display: grid;
   place-items: center;
   gap: 6px;

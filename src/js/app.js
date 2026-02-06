@@ -2029,7 +2029,7 @@ function openSettingsModal() {
     <div class="section">
       <label><input id="settingSync" type="checkbox"> 启用同步</label>
       <div class="row-inline">
-        <span class="inline-label">打开方式</span>
+        <span class="inline-label">网页打开方式</span>
         <select id="settingOpenMode" class="inline-select">
           <option value="current">本页打开</option>
           <option value="new">新页打开</option>

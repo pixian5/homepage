@@ -860,9 +860,8 @@ function getInsertIndexFromTarget(list, sourceId, targetId, x, y) {
 
   const rect = tile.getBoundingClientRect();
   const centerX = rect.left + rect.width / 2;
-  const centerY = rect.top + rect.height / 2;
-  const nearRowCenter = Math.abs(y - centerY) <= rect.height * 0.35;
-  const insertAfter = nearRowCenter ? x >= centerX : y >= centerY;
+  // 非图标区域拖放仅按左右半区判断前后，避免误判到行首/左侧。
+  const insertAfter = x >= centerX;
   let insertIndex = targetIndex + (insertAfter ? 1 : 0);
   if (sourceIndex >= 0 && sourceIndex < insertIndex) insertIndex -= 1;
   return Math.max(0, Math.min(insertIndex, list.length));

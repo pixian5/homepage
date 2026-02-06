@@ -327,10 +327,13 @@ function sanitizeForSync(data) {
  * @returns {Object} - 备份快照对象
  */
 export function createBackupSnapshot(data) {
+  const snapshotData = JSON.parse(JSON.stringify(data || {}));
+  // 备份快照不携带历史备份，避免递归膨胀导致存储清空
+  snapshotData.backups = [];
   return {
     id: `bak_${nowTs()}`,
     ts: nowTs(),
-    data: JSON.parse(JSON.stringify(data)),
+    data: snapshotData,
   };
 }
 

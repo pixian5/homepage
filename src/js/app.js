@@ -120,6 +120,12 @@ const BOX_SELECT_THRESHOLD = 6;
 const TOUCH_LONG_PRESS_MS = 260;
 const TOUCH_DRAG_MOVE_THRESHOLD = 18;
 const TOUCH_CLICK_SUPPRESS_MS = 400;
+const BACKUP_IGNORED_SETTINGS_KEYS = new Set([
+  "lastActiveGroupId",
+  "lastSaveUrl",
+  "lastSaveTs",
+  "lastSaveToast",
+]);
 
 const densityMap = {
   compact: { gap: 10 },
@@ -462,8 +468,20 @@ function cloneDataSnapshot(source) {
   return JSON.parse(JSON.stringify(source || {}));
 }
 
+function buildBackupSettingsSnapshot(settings) {
+  const input = settings || {};
+  const out = {};
+  const keys = Object.keys(input).sort();
+  for (const key of keys) {
+    if (BACKUP_IGNORED_SETTINGS_KEYS.has(key)) continue;
+    out[key] = input[key];
+  }
+  return out;
+}
+
 function buildBackupFingerprint(source) {
   const input = source || {};
+  const settings = buildBackupSettingsSnapshot(input.settings);
   const groups = (input.groups || [])
     .map((group) => ({
       id: String(group.id || ""),
@@ -486,7 +504,7 @@ function buildBackupFingerprint(source) {
         children: Array.isArray(node.children) ? node.children.map((cid) => String(cid)) : [],
       };
     });
-  return JSON.stringify({ groups, nodes });
+  return JSON.stringify({ settings, groups, nodes });
 }
 
 function syncBackupBaseline(source = data) {

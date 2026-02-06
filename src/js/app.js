@@ -2275,7 +2275,7 @@ function openSettingsModal() {
     $("settingBgOverlayValue").textContent = `${Math.round(Number($("settingBgOverlay").value) * 100)}%`;
   });
   const version = getAppVersion();
-  $("settingsVersion").textContent = version ? `v${version}` : "";
+  $("settingsVersion").textContent = version || "";
 }
 
 async function exportJsonToClipboard() {

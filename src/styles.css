@@ -445,7 +445,7 @@ html, body {
 }
 .modal .build-version {
   color: var(--muted);
-  font-size: 12px;
+  font-size: inherit;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 .modal .actions { margin-top: 18px; display: flex; justify-content: flex-end; gap: 10px; }

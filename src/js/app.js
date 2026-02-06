@@ -74,6 +74,7 @@ let lastMainLayout = null;
 let storageReloadTimer = null;
 let pendingStorageReload = false;
 let suppressStorageUntil = 0;
+let persistInFlight = 0;
 let backupFingerprint = "";
 let backupBaselineSnapshot = null;
 let skipAutoBackupOnce = false;
@@ -194,9 +195,14 @@ function attachStorageListener() {
   if (!api?.storage?.onChanged) return;
   const key = getStorageKey();
   api.storage.onChanged.addListener((changes, areaName) => {
+    if (persistInFlight > 0) return;
     if (Date.now() < suppressStorageUntil) return;
     if (!changes || !changes[key]) return;
     if (areaName !== "local" && areaName !== "sync") return;
+    const incoming = changes[key].newValue;
+    const incomingTs = Number(incoming?.lastUpdated || 0);
+    const localTs = Number(data?.lastUpdated || 0);
+    if (incomingTs > 0 && localTs > 0 && incomingTs <= localTs) return;
     scheduleStorageReload();
   });
 }
@@ -502,55 +508,60 @@ function ensureAutoBackupBeforePersist() {
 }
 
 async function persistData() {
+  persistInFlight += 1;
   const autoBackedUp = ensureAutoBackupBeforePersist();
-  suppressStorageUntil = Date.now() + STORAGE_SUPPRESS_MS;
-  debugLog("persist_start", {
-    useSync: data.settings.syncEnabled,
-    groups: data.groups?.length || 0,
-    nodes: Object.keys(data.nodes || {}).length,
-    lastUpdated: data.lastUpdated || 0,
-    autoBackedUp,
-  });
-  const useSync = data.settings.syncEnabled;
-  const changed = dedupeData(data);
-  let warning = null;
-  let err = null;
-  const err1 = await saveData(data, useSync);
-  if (err1) {
-    if (err1 === "sync_quota_exceeded" || err1.startsWith("local_trimmed_")) {
-      warning = err1;
-    } else {
-      err = err1;
-    }
-  }
-  if (useSync) {
-    await saveData(data, false);
-  }
-  if (changed) {
-    const err2 = await saveData(data, useSync);
-    if (useSync) await saveData(data, false);
-    if (err2) {
-      if (err2 === "sync_quota_exceeded" || err2.startsWith("local_trimmed_")) {
-        warning = err2;
+  suppressStorageUntil = Math.max(suppressStorageUntil, Date.now() + STORAGE_SUPPRESS_MS * 4);
+  try {
+    debugLog("persist_start", {
+      useSync: data.settings.syncEnabled,
+      groups: data.groups?.length || 0,
+      nodes: Object.keys(data.nodes || {}).length,
+      lastUpdated: data.lastUpdated || 0,
+      autoBackedUp,
+    });
+    const useSync = data.settings.syncEnabled;
+    const changed = dedupeData(data);
+    let warning = null;
+    let err = null;
+    const err1 = await saveData(data, useSync);
+    if (err1) {
+      if (err1 === "sync_quota_exceeded" || err1.startsWith("local_trimmed_")) {
+        warning = err1;
       } else {
-        err = err2;
+        err = err1;
       }
     }
-    debugLog("persist_dedupe", { changed, err2 });
+    if (useSync) {
+      await saveData(data, false);
+    }
+    if (changed) {
+      const err2 = await saveData(data, useSync);
+      if (useSync) await saveData(data, false);
+      if (err2) {
+        if (err2 === "sync_quota_exceeded" || err2.startsWith("local_trimmed_")) {
+          warning = err2;
+        } else {
+          err = err2;
+        }
+      }
+      debugLog("persist_dedupe", { changed, err2 });
+    }
+    if (shouldDebugPersist()) {
+      const verify = await loadDataFromArea(false);
+      debugLog("persist_verify", {
+        groups: verify.groups?.length || 0,
+        nodes: Object.keys(verify.nodes || {}).length,
+        lastUpdated: verify.lastUpdated || 0,
+      });
+    }
+    if (!err) {
+      syncBackupBaseline(data);
+    }
+    debugLog("persist_done", { err1, changed, warning, err, autoBackedUp });
+    return { ok: !err, warning, err };
+  } finally {
+    persistInFlight = Math.max(0, persistInFlight - 1);
   }
-  if (shouldDebugPersist()) {
-    const verify = await loadDataFromArea(false);
-    debugLog("persist_verify", {
-      groups: verify.groups?.length || 0,
-      nodes: Object.keys(verify.nodes || {}).length,
-      lastUpdated: verify.lastUpdated || 0,
-    });
-  }
-  if (!err) {
-    syncBackupBaseline(data);
-  }
-  debugLog("persist_done", { err1, changed, warning, err, autoBackedUp });
-  return { ok: !err, warning, err };
 }
 
 function getActiveGroup() {

@@ -442,29 +442,25 @@ html, body {
 }
 
 .sidebar {
-  position: relative;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 6px 0 calc(var(--control-height) * 2 + 44px);
-  overflow-y: auto;
-  overflow-x: hidden;
+  padding: 6px 0;
+  overflow: hidden;
+  min-height: 0;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 .sidebar::-webkit-scrollbar { width: 0; height: 0; }
+.sidebar .group-tabs.vertical {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
 
 .sidebar > .add-group { margin-top: 0; }
 .sidebar > .add-group:last-child { margin-top: auto; }
-#btnAddGroup,
-#btnToggleSidebar {
-  position: absolute;
-  left: 0;
-  right: 0;
-  z-index: 2;
-}
-#btnToggleSidebar { bottom: 6px; }
-#btnAddGroup { bottom: calc(6px + var(--control-height) + 10px); }
 
 .sidebar .recent-tab {
   background: rgba(246, 226, 140, 0.75);
@@ -554,8 +550,6 @@ html, body {
   .group-tabs.vertical { flex: 0 0 auto; min-width: max-content; flex-direction: row; flex-wrap: nowrap; max-height: none; overflow: visible; padding: 0; align-items: center; }
   .sidebar > .add-group:last-child { margin-top: 0; }
   .sidebar > .add-group { flex: 0 0 auto; align-self: center; }
-  #btnAddGroup,
-  #btnToggleSidebar { position: static; left: auto; right: auto; bottom: auto; z-index: auto; }
   .sidebar > .toggle-btn { display: none; }
   .add-group { margin-top: 0; }
   .main { margin-top: 0; min-height: 0; }

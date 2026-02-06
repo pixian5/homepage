@@ -854,7 +854,6 @@ function isDropOnIcon(targetId, x, y) {
 function getInsertIndexFromTarget(list, sourceId, targetId, x, y) {
   const targetIndex = list.indexOf(targetId);
   if (targetIndex < 0) return list.length;
-  const sourceIndex = list.indexOf(sourceId);
   const tile = getTileElementById(targetId);
   if (!tile) return targetIndex;
 
@@ -863,7 +862,6 @@ function getInsertIndexFromTarget(list, sourceId, targetId, x, y) {
   // 非图标区域拖放仅按左右半区判断前后，避免误判到行首/左侧。
   const insertAfter = x >= centerX;
   let insertIndex = targetIndex + (insertAfter ? 1 : 0);
-  if (sourceIndex >= 0 && sourceIndex < insertIndex) insertIndex -= 1;
   return Math.max(0, Math.min(insertIndex, list.length));
 }
 

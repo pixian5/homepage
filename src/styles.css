@@ -616,6 +616,7 @@ html, body {
   }
   .grid {
     padding: 14px 4px 32px 4px;
+    row-gap: calc(var(--grid-gap) + 8px);
     scrollbar-gutter: auto;
     scrollbar-width: none;
     -ms-overflow-style: none;

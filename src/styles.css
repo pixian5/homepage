@@ -534,10 +534,11 @@ html, body {
   .top-search .search-btn { flex: 0 0 auto; }
   .toolbar { flex: 1 1 100%; justify-content: flex-end; order: 2; flex-wrap: wrap; }
   .layout { grid-template-columns: 1fr; height: auto; }
-  .sidebar { flex-direction: row; flex-wrap: nowrap; align-items: center; overflow-x: auto; overflow-y: hidden; gap: 8px; }
+  .sidebar { flex-direction: row; flex-wrap: nowrap; align-items: center; overflow-x: auto; overflow-y: hidden; gap: 8px; padding: 0; min-height: var(--group-tab-height); }
   .recent-tab { margin-bottom: 0; }
-  .group-tab { flex: 0 0 auto; }
-  .group-tabs.vertical { flex-direction: row; flex-wrap: nowrap; max-height: none; overflow: visible; padding: 0; }
+  .group-tab { flex: 0 0 auto; align-self: center; }
+  .group-tabs.vertical { flex-direction: row; flex-wrap: nowrap; max-height: none; overflow: visible; padding: 0; align-items: center; }
+  .sidebar > .add-group:last-child { margin-top: 0; }
   .sidebar > .add-group { flex: 0 0 auto; }
   .sidebar > .toggle-btn { display: none; }
   .add-group { margin-top: 0; }

@@ -44,16 +44,22 @@ if exist "%ROOT%\logo.png" (
   )
 )
 
-if exist "%CHROME%" rmdir /s /q "%CHROME%"
-if exist "%FIREFOX%" rmdir /s /q "%FIREFOX%"
 if exist "%DIST%chrome.zip" del /q "%DIST%chrome.zip"
 if exist "%DIST%firefox.zip" del /q "%DIST%firefox.zip"
 
-mkdir "%CHROME%"
-mkdir "%FIREFOX%"
+if not exist "%CHROME%" mkdir "%CHROME%"
+if not exist "%FIREFOX%" mkdir "%FIREFOX%"
 
-xcopy "%SRC%" "%CHROME%" /E /I /H /Y >nul
-xcopy "%SRC%" "%FIREFOX%" /E /I /H /Y >nul
+robocopy "%SRC%" "%CHROME%" /MIR /NFL /NDL /NJH /NJS /NP >nul
+if errorlevel 8 (
+  echo [build] Failed to sync chrome directory
+  exit /b 1
+)
+robocopy "%SRC%" "%FIREFOX%" /MIR /NFL /NDL /NJH /NJS /NP >nul
+if errorlevel 8 (
+  echo [build] Failed to sync firefox directory
+  exit /b 1
+)
 
 copy /Y "%ROOT%\manifest.chrome.json" "%CHROME%\manifest.json" >nul
 copy /Y "%ROOT%\manifest.firefox.json" "%FIREFOX%\manifest.json" >nul

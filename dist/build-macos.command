@@ -17,12 +17,11 @@ if [[ -f "${ROOT_DIR}/logo.png" ]]; then
   done
 fi
 
-rm -rf "${CHROME_DIR}" "${FIREFOX_DIR}"
 rm -f "${DIST_DIR}/chrome.zip" "${DIST_DIR}/firefox.zip"
 
 mkdir -p "${CHROME_DIR}" "${FIREFOX_DIR}"
-cp -R "${SRC_DIR}/." "${CHROME_DIR}/"
-cp -R "${SRC_DIR}/." "${FIREFOX_DIR}/"
+rsync -a --delete "${SRC_DIR}/" "${CHROME_DIR}/"
+rsync -a --delete "${SRC_DIR}/" "${FIREFOX_DIR}/"
 
 cp "${ROOT_DIR}/manifest.chrome.json" "${CHROME_DIR}/manifest.json"
 cp "${ROOT_DIR}/manifest.firefox.json" "${FIREFOX_DIR}/manifest.json"

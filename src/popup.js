@@ -516,4 +516,12 @@ async function init() {
   });
 }
 
-init();
+init().catch((error) => {
+  console.error("popup init failed", error);
+  const empty = document.getElementById("empty");
+  if (empty) {
+    empty.textContent = "加载失败，请关闭后重试";
+    empty.classList.remove("hidden");
+  }
+  document.body.classList.remove("hidden");
+});

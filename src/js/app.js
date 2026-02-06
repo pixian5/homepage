@@ -95,15 +95,6 @@ const touchDragState = {
   x: 0,
   y: 0,
 };
-const touchContextState = {
-  timer: null,
-  active: false,
-  node: null,
-  startX: 0,
-  startY: 0,
-  x: 0,
-  y: 0,
-};
 const DEBUG_LOG_KEY = "homepage_debug_log";
 
 // ==================== 常量定义 ====================
@@ -126,7 +117,8 @@ const MIN_TILE_SIZE = 32;
 const MAX_TILE_SIZE = 220;
 const MAX_DEBUG_LOG_ENTRIES = 200;
 const BOX_SELECT_THRESHOLD = 6;
-const TOUCH_LONG_PRESS_MS = 260;
+const TOUCH_TILE_LONG_PRESS_MS = 4000;
+const TOUCH_GROUP_LONG_PRESS_MS = 260;
 const TOUCH_DRAG_MOVE_THRESHOLD = 18;
 const TOUCH_CLICK_SUPPRESS_MS = 400;
 const BACKUP_IGNORED_SETTINGS_KEYS = new Set([
@@ -853,8 +845,9 @@ async function renderGrid() {
 
     tile.addEventListener("touchstart", (e) => {
       if (e.touches.length !== 1) return;
+      if (selectionMode || activeGroupId === RECENT_GROUP_ID) return;
       const touch = e.touches[0];
-      beginTouchContextMenu(node, touch.clientX, touch.clientY);
+      beginTouchLongPress("tile", node.id, tile, touch.clientX, touch.clientY);
     }, { passive: true });
 
     grid.appendChild(tile);
@@ -957,40 +950,21 @@ function clearTouchDragTimer() {
   touchDragState.timer = null;
 }
 
-function clearTouchContextTimer() {
-  if (!touchContextState.timer) return;
-  clearTimeout(touchContextState.timer);
-  touchContextState.timer = null;
-}
-
-function resetTouchContextState() {
-  clearTouchContextTimer();
-  touchContextState.active = false;
-  touchContextState.node = null;
-  touchContextState.startX = 0;
-  touchContextState.startY = 0;
-  touchContextState.x = 0;
-  touchContextState.y = 0;
-}
-
-function beginTouchContextMenu(node, x, y) {
-  resetTouchContextState();
-  touchContextState.node = node;
-  touchContextState.startX = x;
-  touchContextState.startY = y;
-  touchContextState.x = x;
-  touchContextState.y = y;
-  touchContextState.timer = setTimeout(() => {
-    if (!touchContextState.node) return;
-    touchContextState.active = true;
-    clearTouchContextTimer();
-    openContextMenu(touchContextState.x, touchContextState.y, touchContextState.node);
-  }, TOUCH_LONG_PRESS_MS);
+function syncTouchDraggedTilePosition(x, y) {
+  const tile = touchDragState.sourceTile;
+  if (!tile) return;
+  const dx = Math.round(x - touchDragState.startX);
+  const dy = Math.round(y - touchDragState.startY);
+  tile.style.transform = `translate3d(${dx}px, ${dy}px, 0) scale(0.98)`;
 }
 
 function clearTouchDragVisual() {
   if (touchDragState.sourceTile) {
     touchDragState.sourceTile.classList.remove("touch-dragging");
+    touchDragState.sourceTile.style.transform = "";
+    touchDragState.sourceTile.style.pointerEvents = "";
+    touchDragState.sourceTile.style.zIndex = "";
+    touchDragState.sourceTile.style.willChange = "";
   }
   if (touchDragState.targetTile) {
     touchDragState.targetTile.classList.remove("touch-drop-target");
@@ -1019,9 +993,10 @@ function beginTouchLongPress(mode, sourceId, sourceEl, x, y) {
   touchDragState.startY = y;
   touchDragState.x = x;
   touchDragState.y = y;
+  const pressMs = mode === "tile" ? TOUCH_TILE_LONG_PRESS_MS : TOUCH_GROUP_LONG_PRESS_MS;
   touchDragState.timer = setTimeout(() => {
     activateTouchDrag();
-  }, TOUCH_LONG_PRESS_MS);
+  }, pressMs);
 }
 
 function activateTouchDrag() {
@@ -1030,7 +1005,13 @@ function activateTouchDrag() {
   clearTouchDragTimer();
   if (touchDragState.mode === "tile") {
     dragState = { id: touchDragState.sourceId, fromFolder: openFolderId };
-    touchDragState.sourceTile?.classList.add("touch-dragging");
+    if (touchDragState.sourceTile) {
+      touchDragState.sourceTile.classList.add("touch-dragging");
+      touchDragState.sourceTile.style.pointerEvents = "none";
+      touchDragState.sourceTile.style.zIndex = "80";
+      touchDragState.sourceTile.style.willChange = "transform";
+      syncTouchDraggedTilePosition(touchDragState.x, touchDragState.y);
+    }
     touchDragState.targetTile = null;
   } else if (touchDragState.mode === "group") {
     draggingGroupId = touchDragState.sourceGroupId;
@@ -1046,6 +1027,7 @@ function updateTouchDragTarget(x, y) {
   touchDragState.y = y;
   const pointEl = document.elementFromPoint(x, y) || null;
   if (touchDragState.mode === "tile") {
+    syncTouchDraggedTilePosition(x, y);
     const hoverTile = pointEl?.closest?.(".tile") || null;
     const nextTarget = hoverTile && hoverTile.dataset.id !== touchDragState.sourceId ? hoverTile : null;
     if (touchDragState.targetTile && touchDragState.targetTile !== nextTarget) {
@@ -3074,17 +3056,6 @@ function bindEvents() {
   document.addEventListener("touchmove", (e) => {
     if (e.touches.length !== 1) return;
     const touch = e.touches[0];
-    if (!touchContextState.active && touchContextState.timer) {
-      touchContextState.x = touch.clientX;
-      touchContextState.y = touch.clientY;
-      const moved = Math.hypot(touch.clientX - touchContextState.startX, touch.clientY - touchContextState.startY);
-      if (moved > TOUCH_DRAG_MOVE_THRESHOLD) {
-        resetTouchContextState();
-      }
-    } else if (touchContextState.active) {
-      e.preventDefault();
-      return;
-    }
     if (!touchDragState.active && touchDragState.timer) {
       const moved = Math.hypot(touch.clientX - touchDragState.startX, touch.clientY - touchDragState.startY);
       if (moved > TOUCH_DRAG_MOVE_THRESHOLD) {
@@ -3098,16 +3069,6 @@ function bindEvents() {
   }, { passive: false });
 
   document.addEventListener("touchend", (e) => {
-    if (touchContextState.timer && !touchContextState.active) {
-      resetTouchContextState();
-      return;
-    }
-    if (touchContextState.active) {
-      e.preventDefault();
-      suppressTouchClickUntil = Date.now() + TOUCH_CLICK_SUPPRESS_MS;
-      resetTouchContextState();
-      return;
-    }
     if (touchDragState.timer && !touchDragState.active) {
       clearTouchDragTimer();
       return;
@@ -3122,7 +3083,6 @@ function bindEvents() {
   }, { passive: false });
 
   document.addEventListener("touchcancel", () => {
-    resetTouchContextState();
     resetTouchDragState();
   }, { passive: true });
 

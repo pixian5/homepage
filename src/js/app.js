@@ -866,6 +866,28 @@ function updateSelectionStyles() {
   });
 }
 
+function showContextMenuAt(x, y) {
+  const menu = elements.contextMenu;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const edgeGap = 8;
+
+  menu.classList.remove("hidden");
+  menu.style.visibility = "hidden";
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+
+  const rect = menu.getBoundingClientRect();
+  const maxLeft = Math.max(edgeGap, viewportWidth - rect.width - edgeGap);
+  const maxTop = Math.max(edgeGap, viewportHeight - rect.height - edgeGap);
+  const nextLeft = Math.min(Math.max(Number(x) || 0, edgeGap), maxLeft);
+  const nextTop = Math.min(Math.max(Number(y) || 0, edgeGap), maxTop);
+
+  menu.style.left = `${nextLeft}px`;
+  menu.style.top = `${nextTop}px`;
+  menu.style.visibility = "";
+}
+
 function openContextMenu(x, y, node) {
   elements.contextMenu.innerHTML = "";
   const actions = [];
@@ -895,9 +917,7 @@ function openContextMenu(x, y, node) {
     });
     elements.contextMenu.appendChild(btn);
   }
-  elements.contextMenu.style.left = `${x}px`;
-  elements.contextMenu.style.top = `${y}px`;
-  elements.contextMenu.classList.remove("hidden");
+  showContextMenuAt(x, y);
 }
 
 function closeContextMenu() {
@@ -919,9 +939,7 @@ function openGroupContextMenu(x, y, group) {
     });
     elements.contextMenu.appendChild(btn);
   }
-  elements.contextMenu.style.left = `${x}px`;
-  elements.contextMenu.style.top = `${y}px`;
-  elements.contextMenu.classList.remove("hidden");
+  showContextMenuAt(x, y);
 }
 
 function getCurrentGridElement() {

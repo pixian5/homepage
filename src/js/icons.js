@@ -82,7 +82,8 @@ function isHttpUrl(pageUrl) {
   try {
     const u = new URL(pageUrl);
     return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
+  } catch (e) {
+    // URL 解析失败是预期行为
     return false;
   }
 }
@@ -106,7 +107,8 @@ export function getSiteKey(pageUrl) {
     if (host === "localhost" || host.endsWith(".local")) return "";
     const root = getRootDomain(host);
     return root ? `site:${root}` : "";
-  } catch {
+  } catch (e) {
+    // URL 解析失败是预期行为
     return "";
   }
 }
@@ -129,7 +131,8 @@ export function getFaviconCandidates(pageUrl) {
       rootHost ? `https://icons.duckduckgo.com/ip3/${rootHost}.ico` : "",
       `https://icons.duckduckgo.com/ip3/${host}.ico`,
     ].filter(Boolean);
-  } catch {
+  } catch (e) {
+    // URL 解析失败是预期行为
     return [];
   }
 }
@@ -139,7 +142,8 @@ function isExtensionContext() {
     if (typeof window === "undefined" || !window.location?.protocol) return false;
     const protocol = window.location.protocol;
     return protocol === "chrome-extension:" || protocol === "moz-extension:" || protocol === "edge-extension:";
-  } catch {
+  } catch (e) {
+    // 环境检测失败是预期行为
     return false;
   }
 }
@@ -163,7 +167,8 @@ async function resolveFinalUrl(pageUrl, timeoutMs = 6000) {
     const finalUrl = res?.url || pageUrl;
     FINAL_URL_CACHE.set(pageUrl, { url: finalUrl, ts: Date.now() });
     return finalUrl;
-  } catch {
+  } catch (e) {
+    // fetch 失败是预期行为（网络错误、超时等）
     return pageUrl;
   }
 }

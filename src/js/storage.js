@@ -1,8 +1,18 @@
-﻿const ROOT_KEY = "homepage_data";
+﻿/**
+ * 存储模块 - 处理浏览器扩展存储操作
+ * @module storage
+ */
+
+const ROOT_KEY = "homepage_data";
 const ICON_CACHE_KEY = "homepage_icon_cache";
 const BG_CACHE_KEY = "homepage_bg_cache";
 const SYNC_ITEM_QUOTA_BYTES = 7500;
+const ICON_DATA_MAX_LENGTH = 2048;
 
+/**
+ * 默认设置配置
+ * @type {Object}
+ */
 const DEFAULT_SETTINGS = {
   showSearch: true,
   enableSearchEngine: true,
@@ -128,9 +138,13 @@ async function storageGet(area, key) {
         finish(res?.[key]);
       });
       if (result && typeof result.then === "function") {
-        result.then((res) => finish(res?.[key]), () => finish(undefined));
+        result.then((res) => finish(res?.[key]), (e) => {
+          console.warn("storageGet promise rejected", e);
+          finish(undefined);
+        });
       }
-    } catch {
+    } catch (e) {
+      console.warn("storageGet failed", e);
       finish(undefined);
     }
   });
@@ -285,6 +299,11 @@ export async function saveBgCache(cache) {
   await storageSet(local, { [BG_CACHE_KEY]: cache });
 }
 
+/**
+ * 清理数据以适应同步存储配额
+ * @param {Object} data - 原始数据
+ * @returns {Object} - 清理后的数据副本
+ */
 function sanitizeForSync(data) {
   const clone = JSON.parse(JSON.stringify(data));
   if (clone.settings) {
@@ -294,7 +313,7 @@ function sanitizeForSync(data) {
   }
   clone.backups = [];
   for (const node of Object.values(clone.nodes || {})) {
-    if (node.iconType === "upload" && node.iconData && node.iconData.length > 2048) {
+    if (node.iconType === "upload" && node.iconData && node.iconData.length > ICON_DATA_MAX_LENGTH) {
       node.iconData = "";
       node.iconType = "auto";
     }
@@ -302,6 +321,11 @@ function sanitizeForSync(data) {
   return clone;
 }
 
+/**
+ * 创建备份快照
+ * @param {Object} data - 要备份的数据
+ * @returns {Object} - 备份快照对象
+ */
 export function createBackupSnapshot(data) {
   return {
     id: `bak_${nowTs()}`,
@@ -310,18 +334,34 @@ export function createBackupSnapshot(data) {
   };
 }
 
+/**
+ * 获取默认设置
+ * @returns {Object}
+ */
 export function defaultSettings() {
   return { ...DEFAULT_SETTINGS };
 }
 
+/**
+ * 获取默认数据结构
+ * @returns {Object}
+ */
 export function defaultData() {
   return createDefaultData();
 }
 
+/**
+ * 获取存储键名
+ * @returns {string}
+ */
 export function getStorageKey() {
   return ROOT_KEY;
 }
 
+/**
+ * 获取浏览器扩展 API
+ * @returns {typeof chrome | typeof browser | null}
+ */
 export function getChromeApi() {
   return getChrome();
 }

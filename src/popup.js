@@ -1,23 +1,49 @@
-﻿const ROOT_KEY = "homepage_data";
-const SYNC_ITEM_QUOTA_BYTES = 7500;
+﻿import {
+  getChromeApi,
+  getStorageKey,
+} from "./js/storage.js";
 
+const ROOT_KEY = getStorageKey();
+const SYNC_ITEM_QUOTA_BYTES = 7500;
+const MAX_LOG_ENTRIES = 30;
+const ICON_DATA_MAX_LENGTH = 2048;
+const TOAST_DURATION_MS = 3000;
+const DEFAULT_FONT_SIZE = 13;
+
+/**
+ * 获取浏览器 API
+ * @returns {typeof chrome | null}
+ */
 function getChrome() {
-  if (typeof chrome !== "undefined") return chrome;
-  if (typeof browser !== "undefined") return browser;
-  return null;
+  return getChromeApi();
 }
 
+/**
+ * 获取最后一个错误
+ * @returns {chrome.runtime.LastError | null}
+ */
 function getLastError() {
   const api = getChrome();
   return api?.runtime?.lastError || null;
 }
 
+/**
+ * 获取存储区域
+ * @param {boolean} useSync
+ * @returns {chrome.storage.StorageArea | null}
+ */
 function storageArea(useSync) {
   const api = getChrome();
   if (!api || !api.storage) return null;
   return useSync ? api.storage.sync : api.storage.local;
 }
 
+/**
+ * 从存储中获取数据
+ * @param {string} key
+ * @param {boolean} useSync
+ * @returns {Promise<any>}
+ */
 function storageGet(key, useSync = false) {
   const area = storageArea(useSync);
   return new Promise((resolve) => {
@@ -29,6 +55,12 @@ function storageGet(key, useSync = false) {
   });
 }
 
+/**
+ * 保存数据到存储
+ * @param {object} obj
+ * @param {boolean} useSync
+ * @returns {Promise<string | null>}
+ */
 function storageSet(obj, useSync = false) {
   const area = storageArea(useSync);
   return new Promise((resolve) => {
@@ -41,30 +73,46 @@ function storageSet(obj, useSync = false) {
 
 const LOG_KEY = "homepage_save_log";
 
+/**
+ * 追加日志
+ * @param {object} entry
+ * @returns {Promise<void>}
+ */
 function appendLog(entry) {
   const area = storageArea();
   return new Promise((resolve) => {
     area.get(LOG_KEY, (res) => {
       const list = Array.isArray(res[LOG_KEY]) ? res[LOG_KEY] : [];
       list.unshift(entry);
-      area.set({ [LOG_KEY]: list.slice(0, 30) }, () => resolve());
+      area.set({ [LOG_KEY]: list.slice(0, MAX_LOG_ENTRIES) }, () => resolve());
     });
   });
 }
 
+/**
+ * 规范化 URL
+ * @param {string} input
+ * @returns {string}
+ */
 function normalizeUrl(input) {
   if (!input) return "";
   try {
     return new URL(input).href;
-  } catch {
+  } catch (e) {
     try {
       return new URL(`https://${input}`).href;
-    } catch {
+    } catch (e2) {
+      // URL 解析失败是预期行为
       return "";
     }
   }
 }
 
+/**
+ * 估算字节大小
+ * @param {any} value
+ * @returns {number}
+ */
 function estimateBytes(value) {
   const str = JSON.stringify(value);
   if (typeof TextEncoder !== "undefined") {
@@ -73,6 +121,11 @@ function estimateBytes(value) {
   return str.length;
 }
 
+/**
+ * 清理数据以适应同步存储
+ * @param {object} data
+ * @returns {object}
+ */
 function sanitizeForSync(data) {
   const clone = JSON.parse(JSON.stringify(data));
   if (clone.settings) {
@@ -82,7 +135,7 @@ function sanitizeForSync(data) {
   }
   clone.backups = [];
   for (const node of Object.values(clone.nodes || {})) {
-    if (node.iconType === "upload" && node.iconData && node.iconData.length > 2048) {
+    if (node.iconType === "upload" && node.iconData && node.iconData.length > ICON_DATA_MAX_LENGTH) {
       node.iconData = "";
       node.iconType = "auto";
     }
@@ -90,6 +143,12 @@ function sanitizeForSync(data) {
   return clone;
 }
 
+/**
+ * 选择最新的数据
+ * @param {object | null} localData
+ * @param {object | null} syncData
+ * @returns {object | null}
+ */
 function pickLatestData(localData, syncData) {
   if (!syncData) return localData || null;
   if (!localData) return syncData || null;
@@ -98,6 +157,10 @@ function pickLatestData(localData, syncData) {
   return syncTs >= localTs ? syncData : localData;
 }
 
+/**
+ * 加载最新数据
+ * @returns {Promise<{data: object | null, useSync: boolean}>}
+ */
 async function loadLatestData() {
   const localData = (await storageGet(ROOT_KEY, false)) || null;
   const useSync = !!localData?.settings?.syncEnabled;
@@ -107,6 +170,10 @@ async function loadLatestData() {
   return { data, useSync: true };
 }
 
+/**
+ * 获取当前标签页
+ * @returns {Promise<chrome.tabs.Tab | null>}
+ */
 async function getCurrentTab() {
   const api = getChrome();
   if (!api?.tabs) return null;
@@ -118,17 +185,31 @@ async function getCurrentTab() {
   return new Promise((resolve) => api.tabs.query({ active: true, currentWindow: true }, (tabs) => resolve(tabs?.[0] || null)));
 }
 
+/**
+ * 获取扩展基础 URL
+ * @returns {string}
+ */
 function getExtensionBaseUrl() {
   const api = getChrome();
   if (!api?.runtime?.getURL) return "";
   return api.runtime.getURL("");
 }
 
+/**
+ * 检查是否是扩展页面 URL
+ * @param {string} url
+ * @returns {boolean}
+ */
 function isExtensionPageUrl(url) {
   const base = getExtensionBaseUrl();
   return !!(url && base && url.startsWith(base));
 }
 
+/**
+ * 发送运行时消息
+ * @param {object} message
+ * @returns {Promise<any>}
+ */
 function sendRuntimeMessage(message) {
   const api = getChrome();
   if (!api?.runtime?.sendMessage) return Promise.resolve(null);
@@ -139,12 +220,19 @@ function sendRuntimeMessage(message) {
         if (err) return resolve(null);
         resolve(res || null);
       });
-    } catch {
+    } catch (e) {
+      // 消息发送失败是预期情况，静默处理
       resolve(null);
     }
   });
 }
 
+/**
+ * 发送标签页消息
+ * @param {number} tabId
+ * @param {object} message
+ * @returns {Promise<any>}
+ */
 function sendTabMessage(tabId, message) {
   const api = getChrome();
   if (!api?.tabs?.sendMessage) return Promise.resolve(null);
@@ -155,12 +243,17 @@ function sendTabMessage(tabId, message) {
         if (err) return resolve(null);
         resolve(res || null);
       });
-    } catch {
+    } catch (e) {
+      // 消息发送失败是预期情况，静默处理
       resolve(null);
     }
   });
 }
 
+/**
+ * 渲染标签页信息
+ * @param {chrome.tabs.Tab | null} tab
+ */
 function renderTab(tab) {
   const card = document.getElementById("tabCard");
   const empty = document.getElementById("empty");
@@ -171,12 +264,21 @@ function renderTab(tab) {
   }
   empty.classList.add("hidden");
   card.classList.remove("hidden");
-  card.innerHTML = `
-    <div class="tab-title">${tab.title || tab.url}</div>
-    <div class="tab-url">${tab.url || ""}</div>
-  `;
+  card.innerHTML = "";
+  const titleDiv = document.createElement("div");
+  titleDiv.className = "tab-title";
+  titleDiv.textContent = tab.title || tab.url;
+  const urlDiv = document.createElement("div");
+  urlDiv.className = "tab-url";
+  urlDiv.textContent = tab.url || "";
+  card.appendChild(titleDiv);
+  card.appendChild(urlDiv);
 }
 
+/**
+ * 渲染分组选择器
+ * @param {object} data
+ */
 function renderGroups(data) {
   const select = document.getElementById("groupSelect");
   select.innerHTML = "";
@@ -197,6 +299,12 @@ function renderGroups(data) {
   }
 }
 
+/**
+ * 保存到分组
+ * @param {chrome.tabs.Tab} tab
+ * @param {string} selectedGroupId
+ * @returns {Promise<{groupId: string, groupName: string, fontSize: number} | null>}
+ */
 async function saveToGroup(tab, selectedGroupId) {
   const url = normalizeUrl(tab?.url);
   if (!url) {
@@ -255,9 +363,16 @@ async function saveToGroup(tab, selectedGroupId) {
     await storageSet({ [ROOT_KEY]: data }, false);
   }
   await appendLog({ ts: Date.now(), stage: "saved", url, group: group.id });
-  return { groupId: group.id, groupName: group.name || "", fontSize: data.settings.fontSize || 13 };
+  return { groupId: group.id, groupName: group.name || "", fontSize: data.settings.fontSize || DEFAULT_FONT_SIZE };
 }
 
+/**
+ * 在标签页中显示 toast
+ * @param {chrome.tabs.Tab} tab
+ * @param {string} message
+ * @param {number} fontSize
+ * @returns {Promise<boolean>}
+ */
 async function showToastInTab(tab, message, fontSize) {
   const api = getChrome();
   if (!tab?.id) return false;
@@ -283,12 +398,14 @@ async function showToastInTab(tab, message, fontSize) {
         });
         const res = await sendTabMessage(tab.id, payload);
         if (res?.ok) return true;
-      } catch {}
+      } catch (e) {
+        console.warn("scripting.executeScript content-toast failed", e);
+      }
       await new Promise((resolve, reject) => {
         api.scripting.executeScript(
           {
             target: { tabId: tab.id },
-            func: (msg, size) => {
+            func: (msg, size, duration) => {
               const toastId = "homepage-save-toast";
               const existing = document.getElementById(toastId);
               if (existing) existing.remove();
@@ -312,9 +429,9 @@ async function showToastInTab(tab, message, fontSize) {
                 fontFamily: "\"Avenir Next\", \"Noto Sans SC\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
               });
               document.body.appendChild(el);
-              setTimeout(() => el.remove(), 3000);
+              setTimeout(() => el.remove(), duration);
             },
-            args: [message, fontSize],
+            args: [message, fontSize, TOAST_DURATION_MS],
           },
           () => {
             const err = api.runtime?.lastError;
@@ -336,10 +453,12 @@ async function showToastInTab(tab, message, fontSize) {
         });
         const res = await sendTabMessage(tab.id, payload);
         if (res?.ok) return true;
-      } catch {}
+      } catch (e) {
+        console.warn("tabs.executeScript content-toast failed", e);
+      }
       const msg = JSON.stringify(message || "");
       const size = Number(fontSize) || 14;
-      const code = `(function(){var toastId="homepage-save-toast";var existing=document.getElementById(toastId);if(existing){existing.remove();}var el=document.createElement("div");el.id=toastId;el.textContent=${msg};el.style.position="fixed";el.style.top="20px";el.style.right="20px";el.style.zIndex="2147483647";el.style.background="rgba(15, 20, 28, 0.88)";el.style.color="#ffffff";el.style.padding="10px 14px";el.style.borderRadius="10px";el.style.fontSize="${size}px";el.style.lineHeight="1.2";el.style.boxShadow="0 10px 30px rgba(0,0,0,0.35)";el.style.backdropFilter="blur(6px)";el.style.fontFamily="Avenir Next, Noto Sans SC, PingFang SC, Microsoft YaHei, sans-serif";document.body.appendChild(el);setTimeout(function(){el.remove();},3000);})();`;
+      const code = `(function(){var toastId="homepage-save-toast";var existing=document.getElementById(toastId);if(existing){existing.remove();}var el=document.createElement("div");el.id=toastId;el.textContent=${msg};el.style.position="fixed";el.style.top="20px";el.style.right="20px";el.style.zIndex="2147483647";el.style.background="rgba(15, 20, 28, 0.88)";el.style.color="#ffffff";el.style.padding="10px 14px";el.style.borderRadius="10px";el.style.fontSize="${size}px";el.style.lineHeight="1.2";el.style.boxShadow="0 10px 30px rgba(0,0,0,0.35)";el.style.backdropFilter="blur(6px)";el.style.fontFamily="Avenir Next, Noto Sans SC, PingFang SC, Microsoft YaHei, sans-serif";document.body.appendChild(el);setTimeout(function(){el.remove();},${TOAST_DURATION_MS});})();`;
       await new Promise((resolve, reject) => {
         api.tabs.executeScript(tab.id, { code }, () => {
           const err = api.runtime?.lastError;
@@ -350,11 +469,15 @@ async function showToastInTab(tab, message, fontSize) {
       return true;
     }
     return true;
-  } catch {
+  } catch (e) {
+    console.warn("showToastInTab failed", e);
     return false;
   }
 }
 
+/**
+ * 初始化
+ */
 async function init() {
   const { data } = await loadLatestData();
   const tab = await getCurrentTab();

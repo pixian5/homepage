@@ -1235,10 +1235,30 @@ function handleDropOnTile(targetId, x, y) {
 function dissolveFolder(folderId) {
   const folder = data.nodes[folderId];
   if (!folder || folder.type !== "folder") return;
+  const children = Array.isArray(folder.children) ? folder.children.slice() : [];
   pushBackup();
-  removeNodeFromLocation(folderId);
-  const group = getActiveGroup();
-  group.nodes.push(...(folder.children || []));
+  let replaced = false;
+  for (const group of data.groups) {
+    const idx = group.nodes.indexOf(folderId);
+    if (idx < 0) continue;
+    group.nodes.splice(idx, 1, ...children);
+    replaced = true;
+    break;
+  }
+  if (!replaced) {
+    for (const node of Object.values(data.nodes)) {
+      if (node.type !== "folder" || !Array.isArray(node.children)) continue;
+      const idx = node.children.indexOf(folderId);
+      if (idx < 0) continue;
+      node.children.splice(idx, 1, ...children);
+      replaced = true;
+      break;
+    }
+  }
+  if (!replaced) {
+    const group = getActiveGroup();
+    group.nodes.push(...children);
+  }
   delete data.nodes[folderId];
   persistData();
   render();

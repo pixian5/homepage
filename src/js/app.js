@@ -858,7 +858,25 @@ function openFolder(folderId) {
   render();
 }
 
+function findParentFolderId(folderId) {
+  if (!folderId) return "";
+  for (const node of Object.values(data.nodes || {})) {
+    if (node.type !== "folder" || !Array.isArray(node.children)) continue;
+    if (node.children.includes(folderId)) {
+      return node.id;
+    }
+  }
+  return "";
+}
+
 function closeFolder() {
+  const parentId = findParentFolderId(openFolderId);
+  if (parentId) {
+    openFolderId = parentId;
+    elements.folderTitle.textContent = data.nodes[parentId]?.title || "文件夹";
+    render();
+    return;
+  }
   openFolderId = null;
   elements.folderOverlay.classList.add("hidden");
   elements.folderOverlay.setAttribute("aria-hidden", "true");

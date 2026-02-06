@@ -898,10 +898,12 @@ function updateEmptyState() {
 
 function openFolder(folderId) {
   openFolderId = folderId;
+  elements.folderOverlay.removeAttribute("inert");
   elements.folderOverlay.classList.remove("hidden");
   elements.folderOverlay.setAttribute("aria-hidden", "false");
   elements.folderTitle.textContent = data.nodes[folderId]?.title || "文件夹";
   render();
+  elements.folderGrid.focus({ preventScroll: true });
 }
 
 function findParentFolderId(folderId) {
@@ -924,6 +926,11 @@ function closeFolder() {
     return;
   }
   openFolderId = null;
+  const activeEl = document.activeElement;
+  if (activeEl && elements.folderOverlay.contains(activeEl)) {
+    elements.btnSettings?.focus?.({ preventScroll: true });
+  }
+  elements.folderOverlay.setAttribute("inert", "");
   elements.folderOverlay.classList.add("hidden");
   elements.folderOverlay.setAttribute("aria-hidden", "true");
   render();
@@ -1562,11 +1569,17 @@ function createFormSection(labelText, inputEl) {
 
 function openModal(html) {
   elements.modal.innerHTML = html;
+  elements.modalOverlay.removeAttribute("inert");
   elements.modalOverlay.classList.remove("hidden");
   elements.modalOverlay.setAttribute("aria-hidden", "false");
 }
 
 function closeModal() {
+  const activeEl = document.activeElement;
+  if (activeEl && elements.modalOverlay.contains(activeEl)) {
+    elements.btnSettings?.focus?.({ preventScroll: true });
+  }
+  elements.modalOverlay.setAttribute("inert", "");
   elements.modalOverlay.classList.add("hidden");
   elements.modalOverlay.setAttribute("aria-hidden", "true");
   elements.modal.innerHTML = "";

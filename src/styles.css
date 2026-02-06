@@ -604,6 +604,7 @@ html, body {
   .top-search .search-btn { flex: 0 0 auto; }
   .toolbar { flex: 1 1 100%; width: 100%; justify-content: space-between; order: 2; flex-wrap: nowrap; }
   .toolbar .icon-btn { flex: 1 1 0; min-width: 0; padding: 8px 6px; white-space: nowrap; }
+  .toolbar #btnAdd { flex: 0.86 1 0; }
   .toolbar #btnOpenMode { flex: 1.12 1 0; }
   .toolbar #btnSettings { flex: 0.76 1 0; }
   .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; gap: 0; height: calc(100% - var(--topbar-height)); min-height: 0; }

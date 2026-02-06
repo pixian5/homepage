@@ -76,11 +76,27 @@ let pendingStorageReload = false;
 let suppressStorageUntil = 0;
 const DEBUG_LOG_KEY = "homepage_debug_log";
 
+// ==================== 常量定义 ====================
 const RECENT_GROUP_ID = "__recent__";
 const RECENT_LIMIT = 24;
 
 const DEFAULT_TILE_SIZE = 150;
 const DEFAULT_BASE_FONT = 13;
+const TOAST_DURATION_MS = 5000;
+const TOOLTIP_DELAY_MS = 200;
+const UNDO_TIMEOUT_MS = 10000;
+const STORAGE_RELOAD_DELAY_MS = 120;
+const STORAGE_SUPPRESS_MS = 350;
+const SETTINGS_SAVE_DELAY_MS = 120;
+const TOAST_CONSUME_TIMEOUT_MS = 15000;
+const TITLE_FETCH_TIMEOUT_MS = 6000;
+const ICON_PROBE_TIMEOUT_MS = 6000;
+const HISTORY_DAYS = 7;
+const MIN_TILE_SIZE = 32;
+const MAX_TILE_SIZE = 220;
+const MAX_DEBUG_LOG_ENTRIES = 200;
+const BOX_SELECT_THRESHOLD = 6;
+
 const densityMap = {
   compact: { gap: 10 },
   standard: { gap: 16 },
@@ -97,7 +113,7 @@ function debugLog(event, payload = {}) {
     const raw = localStorage.getItem(DEBUG_LOG_KEY);
     const list = raw ? JSON.parse(raw) : [];
     list.unshift(entry);
-    localStorage.setItem(DEBUG_LOG_KEY, JSON.stringify(list.slice(0, 200)));
+    localStorage.setItem(DEBUG_LOG_KEY, JSON.stringify(list.slice(0, MAX_DEBUG_LOG_ENTRIES)));
   } catch (err) {
     console.warn("debugLog failed", err);
   }
@@ -116,7 +132,8 @@ function getRuntimeInfo() {
 function shouldDebugPersist() {
   try {
     return localStorage.getItem("homepage_debug_persist") === "1";
-  } catch {
+  } catch (e) {
+    console.warn("shouldDebugPersist failed", e);
     return false;
   }
 }
@@ -165,7 +182,7 @@ function scheduleStorageReload() {
   storageReloadTimer = setTimeout(async () => {
     storageReloadTimer = null;
     await reloadFromStorage();
-  }, 120);
+  }, STORAGE_RELOAD_DELAY_MS);
 }
 
 function attachStorageListener() {
@@ -183,7 +200,8 @@ function attachStorageListener() {
 window.homepageDebugLog = () => {
   try {
     return JSON.parse(localStorage.getItem(DEBUG_LOG_KEY) || "[]");
-  } catch {
+  } catch (e) {
+    console.warn("homepageDebugLog parse failed", e);
     return [];
   }
 };
@@ -249,7 +267,9 @@ function syncSidebarTabLabels() {
 function toast(message, actionLabel, action) {
   const el = document.createElement("div");
   el.className = "toast";
-  el.innerHTML = `<span>${message}</span>`;
+  const span = document.createElement("span");
+  span.textContent = message;
+  el.appendChild(span);
   if (actionLabel && action) {
     const btn = document.createElement("button");
     btn.textContent = actionLabel;
@@ -260,7 +280,7 @@ function toast(message, actionLabel, action) {
     el.appendChild(btn);
   }
   elements.toastContainer.appendChild(el);
-  setTimeout(() => el.remove(), 5000);
+  setTimeout(() => el.remove(), TOAST_DURATION_MS);
 }
 
 function listenForExternalToast() {
@@ -280,7 +300,7 @@ async function consumeSaveToast() {
   const toastInfo = data?.settings?.lastSaveToast;
   if (!toastInfo) return;
   const ts = Number(toastInfo.ts || 0);
-  if (!ts || Date.now() - ts > 15000) {
+  if (!ts || Date.now() - ts > TOAST_CONSUME_TIMEOUT_MS) {
     data.settings.lastSaveToast = null;
     await persistData();
     return;
@@ -328,7 +348,8 @@ function normalizeUrlWithScheme(input, scheme) {
   try {
     const url = new URL(candidate);
     return url.href;
-  } catch {
+  } catch (e) {
+    // URL 解析失败是预期行为，不需要警告
     return "";
   }
 }
@@ -406,7 +427,7 @@ function pushBackup() {
 }
 
 async function persistData() {
-  suppressStorageUntil = Date.now() + 350;
+  suppressStorageUntil = Date.now() + STORAGE_SUPPRESS_MS;
   debugLog("persist_start", {
     useSync: data.settings.syncEnabled,
     groups: data.groups?.length || 0,
@@ -543,8 +564,6 @@ async function renderGrid() {
   const style = getComputedStyle(referenceGrid);
   const paddingX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
   const available = Math.max(0, width - paddingX);
-  const minTile = 32;
-  const maxTile = 220;
   const baseSize = data.settings.lastTileSize || density.size || 96;
   let maxColumns = Math.max(1, Math.floor((available + gap) / (baseSize + gap)));
   let columns = maxColumns;
@@ -555,11 +574,11 @@ async function renderGrid() {
   let tileSize = baseSize;
   if (data.settings.fixedLayout && available > 0) {
     const fitSize = Math.floor((available - gap * (columns - 1)) / columns);
-    tileSize = Math.max(minTile, Math.min(maxTile, fitSize));
+    tileSize = Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, fitSize));
   } else if (columns <= 1 && available > 0) {
-    tileSize = Math.max(minTile, Math.min(maxTile, Math.floor(available)));
+    tileSize = Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, Math.floor(available)));
   } else {
-    tileSize = Math.max(minTile, Math.min(maxTile, baseSize));
+    tileSize = Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, baseSize));
   }
   const iconRatio = density.icon && density.size ? density.icon / density.size : 0.58;
   let iconSize = Math.max(18, Math.round(tileSize * (iconRatio || 0.58)));
@@ -655,7 +674,7 @@ async function renderGrid() {
       if (!data.settings.tooltipEnabled) return;
       clearTimeout(tooltipTimer);
       const text = node.type === "folder" ? `${node.title}（文件夹）` : `${node.title}\n${node.url}`;
-      tooltipTimer = setTimeout(() => showTooltip(text, e.clientX, e.clientY), 200);
+      tooltipTimer = setTimeout(() => showTooltip(text, e.clientX, e.clientY), TOOLTIP_DELAY_MS);
     });
     tile.addEventListener("mouseleave", () => {
       clearTimeout(tooltipTimer);
@@ -666,6 +685,9 @@ async function renderGrid() {
       dragState = { id: node.id, fromFolder: openFolderId };
       e.dataTransfer.effectAllowed = "move";
     });
+    tile.addEventListener("dragend", () => {
+      dragState = null;
+    });
     tile.addEventListener("dragover", (e) => {
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
@@ -673,7 +695,8 @@ async function renderGrid() {
     tile.addEventListener("drop", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      handleDropOnTile(node.id);
+      handleDropOnTile(node.id, e.clientX, e.clientY);
+      dragState = null;
     });
 
     grid.appendChild(tile);
@@ -810,7 +833,42 @@ function openGroupContextMenu(x, y, group) {
   elements.contextMenu.classList.remove("hidden");
 }
 
-function handleDropOnTile(targetId) {
+function getCurrentGridElement() {
+  return openFolderId ? elements.folderGrid : elements.grid;
+}
+
+function getTileElementById(targetId) {
+  const grid = getCurrentGridElement();
+  return qsa(".tile", grid).find((tile) => tile.dataset.id === targetId) || null;
+}
+
+function isDropOnIcon(targetId, x, y) {
+  const tile = getTileElementById(targetId);
+  if (!tile) return false;
+  const icon = qs(".tile-icon", tile);
+  if (!icon) return false;
+  const rect = icon.getBoundingClientRect();
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+function getInsertIndexFromTarget(list, sourceId, targetId, x, y) {
+  const targetIndex = list.indexOf(targetId);
+  if (targetIndex < 0) return list.length;
+  const sourceIndex = list.indexOf(sourceId);
+  const tile = getTileElementById(targetId);
+  if (!tile) return targetIndex;
+
+  const rect = tile.getBoundingClientRect();
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  const nearRowCenter = Math.abs(y - centerY) <= rect.height * 0.35;
+  const insertAfter = nearRowCenter ? x >= centerX : y >= centerY;
+  let insertIndex = targetIndex + (insertAfter ? 1 : 0);
+  if (sourceIndex >= 0 && sourceIndex < insertIndex) insertIndex -= 1;
+  return Math.max(0, Math.min(insertIndex, list.length));
+}
+
+function handleDropOnTile(targetId, x, y) {
   if (!dragState || dragState.id === targetId) return;
   if (activeGroupId === RECENT_GROUP_ID) return;
   const sourceId = dragState.id;
@@ -818,11 +876,26 @@ function handleDropOnTile(targetId) {
   const sourceNode = data.nodes[sourceId];
   if (!targetNode || !sourceNode) return;
 
+  const inFolder = !!openFolderId;
+  const container = inFolder ? data.nodes[openFolderId] : getActiveGroup();
+  const list = inFolder ? container.children || [] : container.nodes;
+  const droppedOnIcon = isDropOnIcon(targetId, x, y);
+
+  if (!droppedOnIcon) {
+    pushBackup();
+    const insertIndex = getInsertIndexFromTarget(list, sourceId, targetId, x, y);
+    if (inFolder) {
+      container.children = moveNodeInList(list, sourceId, insertIndex);
+    } else {
+      container.nodes = moveNodeInList(list, sourceId, insertIndex);
+    }
+    persistData();
+    render();
+    return;
+  }
+
   if (targetNode.type !== "folder") {
     pushBackup();
-    const inFolder = !!openFolderId;
-    const container = inFolder ? data.nodes[openFolderId] : getActiveGroup();
-    const list = inFolder ? container.children || [] : container.nodes;
     const targetIndex = list.indexOf(targetId);
     const sourceIndex = list.indexOf(sourceId);
     let insertIndex = targetIndex >= 0 ? targetIndex : list.length;
@@ -1002,7 +1075,7 @@ function deleteNodes(ids) {
   toast(`已删除 ${ids.length} 个快捷按钮`, "撤销", () => undoDelete());
   setTimeout(() => {
     pendingDeletion = null;
-  }, 10000);
+  }, UNDO_TIMEOUT_MS);
 }
 
 function undoDelete() {
@@ -1012,6 +1085,41 @@ function undoDelete() {
   persistData();
   render();
   toast("已恢复");
+}
+
+/**
+ * 安全地设置元素的文本内容，防止 XSS
+ * @param {HTMLElement} el
+ * @param {string} text
+ */
+function safeSetText(el, text) {
+  el.textContent = text;
+}
+
+/**
+ * 安全地设置元素属性，防止 XSS
+ * @param {HTMLElement} el
+ * @param {string} attr
+ * @param {string} value
+ */
+function safeSetAttr(el, attr, value) {
+  el.setAttribute(attr, value);
+}
+
+/**
+ * 创建带标签和输入框的表单项
+ * @param {string} labelText
+ * @param {HTMLElement} inputEl
+ * @returns {HTMLElement}
+ */
+function createFormSection(labelText, inputEl) {
+  const section = document.createElement("div");
+  section.className = "section";
+  const label = document.createElement("label");
+  label.textContent = labelText;
+  section.appendChild(label);
+  section.appendChild(inputEl);
+  return section;
 }
 
 function openModal(html) {
@@ -1075,11 +1183,32 @@ function openAddModal() {
   function renderIconExtra(type) {
     iconExtra.innerHTML = "";
     if (type === "upload") {
-      iconExtra.innerHTML = `<label>上传图标</label><input id="fieldUpload" type="file" accept="image/*" />`;
+      const label = document.createElement("label");
+      label.textContent = "上传图标";
+      const input = document.createElement("input");
+      input.id = "fieldUpload";
+      input.type = "file";
+      input.accept = "image/*";
+      iconExtra.appendChild(label);
+      iconExtra.appendChild(input);
     } else if (type === "color") {
-      iconExtra.innerHTML = `<label>头像颜色</label><input id="fieldColor" type="color" value="#4dd6a8" />`;
+      const label = document.createElement("label");
+      label.textContent = "头像颜色";
+      const input = document.createElement("input");
+      input.id = "fieldColor";
+      input.type = "color";
+      input.value = "#4dd6a8";
+      iconExtra.appendChild(label);
+      iconExtra.appendChild(input);
     } else if (type === "remote") {
-      iconExtra.innerHTML = `<label>远程图标 URL</label><input id="fieldRemote" type="url" placeholder="https://" />`;
+      const label = document.createElement("label");
+      label.textContent = "远程图标 URL";
+      const input = document.createElement("input");
+      input.id = "fieldRemote";
+      input.type = "url";
+      input.placeholder = "https://";
+      iconExtra.appendChild(label);
+      iconExtra.appendChild(input);
     }
   }
 
@@ -1227,11 +1356,32 @@ function openEditModal(node) {
     function renderIconExtra(type) {
       iconExtra.innerHTML = "";
       if (type === "upload") {
-        iconExtra.innerHTML = `<label>上传图标</label><input id="fieldUpload" type="file" accept="image/*" />`;
+        const label = document.createElement("label");
+        label.textContent = "上传图标";
+        const input = document.createElement("input");
+        input.id = "fieldUpload";
+        input.type = "file";
+        input.accept = "image/*";
+        iconExtra.appendChild(label);
+        iconExtra.appendChild(input);
       } else if (type === "color") {
-        iconExtra.innerHTML = `<label>头像颜色</label><input id="fieldColor" type="color" value="${node.color || "#4dd6a8"}" />`;
+        const label = document.createElement("label");
+        label.textContent = "头像颜色";
+        const input = document.createElement("input");
+        input.id = "fieldColor";
+        input.type = "color";
+        input.value = node.color || "#4dd6a8";
+        iconExtra.appendChild(label);
+        iconExtra.appendChild(input);
       } else if (type === "remote") {
-        iconExtra.innerHTML = `<label>远程图标 URL</label><input id="fieldRemote" type="url" value="${node.iconData || ""}" />`;
+        const label = document.createElement("label");
+        label.textContent = "远程图标 URL";
+        const input = document.createElement("input");
+        input.id = "fieldRemote";
+        input.type = "url";
+        input.value = node.iconData || "";
+        iconExtra.appendChild(label);
+        iconExtra.appendChild(input);
       }
     }
     renderIconExtra(iconTypeEl.value);
@@ -1641,7 +1791,7 @@ function openSettingsModal() {
 
   const scheduleSettingsSave = (immediate = false) => {
     if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
-    const delay = immediate ? 0 : 120;
+    const delay = immediate ? 0 : SETTINGS_SAVE_DELAY_MS;
     settingsSaveTimer = setTimeout(() => {
       settingsSaveTimer = null;
       saveSettings({ close: false, toastOnSave: false });
@@ -1944,7 +2094,7 @@ function readFileAsDataUrl(file) {
   });
 }
 
-function probeImage(url, timeoutMs = 6000) {
+function probeImage(url, timeoutMs = ICON_PROBE_TIMEOUT_MS) {
   return new Promise((resolve) => {
     let done = false;
     const img = new Image();
@@ -2007,7 +2157,7 @@ async function fetchTitleViaTab(url) {
     api.tabs.create({ url, active: false }, (tab) => {
       if (!tab?.id) return resolve("");
       const tabId = tab.id;
-      const timeout = setTimeout(() => finish(""), 6000);
+      const timeout = setTimeout(() => finish(""), TITLE_FETCH_TIMEOUT_MS);
       const finish = (title) => {
         clearTimeout(timeout);
         api.tabs.onUpdated.removeListener(onUpdated);
@@ -2026,7 +2176,7 @@ async function fetchTitleViaTab(url) {
 async function loadRecentHistory() {
   const api = getChromeApi();
   if (!api?.history?.search) return [];
-  const startTime = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const startTime = Date.now() - HISTORY_DAYS * 24 * 60 * 60 * 1000;
   try {
     const result = api.history.search({ text: "", startTime, maxResults: RECENT_LIMIT });
     const items = typeof result?.then === "function" ? await result : await new Promise((resolve) => {
@@ -2037,7 +2187,9 @@ async function loadRecentHistory() {
       .filter((item) => item.url)
       .filter((item) => {
         let norm = item.url;
-        try { norm = new URL(item.url).href; } catch {}
+        try { norm = new URL(item.url).href; } catch (e) {
+          console.warn("loadRecentHistory: invalid URL", item.url, e);
+        }
         if (seen.has(norm)) return false;
         seen.add(norm);
         return true;
@@ -2445,7 +2597,7 @@ function bindEvents() {
     if (!boxSelecting || !selectionStart) return;
     const dx = Math.abs(e.clientX - selectionStart.x);
     const dy = Math.abs(e.clientY - selectionStart.y);
-    if (dx + dy > 6) isDraggingBox = true;
+    if (dx + dy > BOX_SELECT_THRESHOLD) isDraggingBox = true;
     updateSelectionBox(selectionStart.x, selectionStart.y, e.clientX, e.clientY);
   };
 
@@ -2516,6 +2668,7 @@ function bindEvents() {
     group.nodes = moveNodeInList(group.nodes, sourceId, index);
     persistData();
     render();
+    dragState = null;
   });
 
   elements.folderGrid.addEventListener("dragover", (e) => e.preventDefault());
@@ -2528,6 +2681,7 @@ function bindEvents() {
     folder.children = moveNodeInList(folder.children || [], sourceId, index);
     persistData();
     render();
+    dragState = null;
   });
 
   elements.groupTabs.addEventListener("dragover", (e) => {

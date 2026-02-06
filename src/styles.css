@@ -26,6 +26,9 @@
   --sidebar-tab-glow-active: rgba(0, 0, 0, 0.6);
   --empty-text-color: #0b0f14;
   --empty-glow: rgba(255, 255, 255, 0.72);
+  --scrollbar-thumb: rgba(156, 170, 194, 0.66);
+  --scrollbar-thumb-hover: rgba(182, 196, 219, 0.82);
+  --scrollbar-track: transparent;
 }
 
 :root[data-theme="light"] {
@@ -46,6 +49,9 @@
   --sidebar-tab-glow-active: rgba(0, 0, 0, 0.6);
   --empty-text-color: #ffffff;
   --empty-glow: rgba(0, 0, 0, 0.65);
+  --scrollbar-thumb: rgba(66, 125, 218, 0.68);
+  --scrollbar-thumb-hover: rgba(52, 113, 211, 0.82);
+  --scrollbar-track: transparent;
 }
 
 :root[data-theme="dark"] {
@@ -62,6 +68,9 @@
   --sidebar-tab-glow-active: rgba(255, 255, 255, 0.75);
   --empty-text-color: #0b0f14;
   --empty-glow: rgba(255, 255, 255, 0.72);
+  --scrollbar-thumb: rgba(156, 170, 194, 0.66);
+  --scrollbar-thumb-hover: rgba(182, 196, 219, 0.82);
+  --scrollbar-track: transparent;
 }
 
 * { box-sizing: border-box; }
@@ -233,15 +242,29 @@ html, body {
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+.grid,
+.modal {
   scrollbar-gutter: stable;
   scrollbar-width: auto;
 }
-.grid::-webkit-scrollbar { width: 20px; height: 20px; }
-.grid::-webkit-scrollbar-thumb { background: rgba(90, 100, 120, 0.6); border-radius: 999px; }
-.grid::-webkit-scrollbar-track { background: transparent; }
+
+.grid::-webkit-scrollbar,
+.modal::-webkit-scrollbar { width: 20px; height: 20px; }
+.grid::-webkit-scrollbar-thumb,
+.modal::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+}
+.grid::-webkit-scrollbar-thumb:hover,
+.modal::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+.grid::-webkit-scrollbar-track,
+.modal::-webkit-scrollbar-track { background: var(--scrollbar-track); }
 
 @supports (-moz-appearance: none) {
-  .grid {
+  .grid,
+  .modal {
     scrollbar-width: none;
     scrollbar-color: transparent transparent;
     scrollbar-gutter: auto;

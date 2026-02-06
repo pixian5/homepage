@@ -564,4 +564,19 @@ html, body {
   .sidebar > .toggle-btn { display: none; }
   .add-group { margin-top: 0; }
   .main { margin-top: 0; min-height: 0; }
+  .overlay { padding: 16px; }
+  .overlay-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .overlay-title {
+    min-width: 0;
+  }
+  .overlay-actions {
+    width: 100%;
+    order: 3;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
 }

@@ -46,6 +46,7 @@ const elements = {
   btnCloseFolder: $("btnCloseFolder"),
   btnFolderAdd: $("btnFolderAdd"),
   btnFolderBatchDelete: $("btnFolderBatchDelete"),
+  btnFolderDissolve: $("btnFolderDissolve"),
 };
 
 let data = null;
@@ -896,7 +897,7 @@ function clearSelection() {
 function updateSelectionControls() {
   elements.btnSelectAll.classList.toggle("hidden", !selectionMode);
   elements.btnBatchDelete.textContent = selectionMode ? "删除" : "批量删";
-  elements.btnFolderBatchDelete.textContent = selectionMode ? "删除" : "批量删";
+  elements.btnFolderBatchDelete.textContent = selectionMode ? "删除" : "批量删除";
 }
 
 function updateSelectionStyles() {
@@ -2881,6 +2882,12 @@ function bindEvents() {
   });
 
   elements.btnCloseFolder.addEventListener("click", closeFolder);
+  elements.btnFolderDissolve.addEventListener("click", () => {
+    if (!openFolderId) return;
+    const folderId = openFolderId;
+    closeFolder();
+    dissolveFolder(folderId);
+  });
   elements.folderOverlay.addEventListener("click", (e) => {
     if (e.target.closest(".tile")) return;
     if (e.target.closest(".overlay-header")) return;

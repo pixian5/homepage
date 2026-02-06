@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "我的首页",
-  "version": "3.8",
+  "version": "3.9",
   "description": "自定义新标签页",
   "action": {
     "default_title": "新标签页",

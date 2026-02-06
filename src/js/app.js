@@ -1912,17 +1912,15 @@ async function openOpenModeMenu() {
 function openSettingsModal() {
   settingsOpen = true;
   const html = `
-    <div class="section">
+    <div class="section settings-actions">
       <button id="btnExport" class="icon-btn">导出设置</button>
       <button id="btnImport" class="icon-btn">导入设置</button>
       <button id="btnImportUrl" class="icon-btn">导入网址</button>
       <button id="btnBackupManage" class="icon-btn">备份管理</button>
       <button id="btnClearData" class="icon-btn danger strong-label">清空数据</button>
       <button id="btnClearCards" class="icon-btn danger">删除所有分组、卡片</button>
-      <div class="row-inline version-row">
-        <button id="btnRefreshIcons" class="icon-btn">刷新所有图标</button>
-        <span id="settingsVersion" class="build-version"></span>
-      </div>
+      <button id="btnRefreshIcons" class="icon-btn">刷新所有图标</button>
+      <span id="settingsVersion" class="build-version"></span>
     </div>
 
     <div class="section">

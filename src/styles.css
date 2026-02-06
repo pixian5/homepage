@@ -439,13 +439,17 @@ html, body {
   min-width: 44px;
   text-align: right;
 }
-.modal .version-row {
-  justify-content: space-between;
-  width: 100%;
+.modal .settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 .modal .build-version {
   color: var(--muted);
   font-size: inherit;
+  margin-left: auto;
+  white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 .modal .actions { margin-top: 18px; display: flex; justify-content: flex-end; gap: 10px; }

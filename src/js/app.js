@@ -1816,7 +1816,16 @@ async function openOpenModeMenu() {
 function openSettingsModal() {
   settingsOpen = true;
   const html = `
-    <h2>设置</h2>
+    <div class="section">
+      <button id="btnExport" class="icon-btn">导出设置</button>
+      <button id="btnImport" class="icon-btn">导入设置</button>
+      <button id="btnImportUrl" class="icon-btn">导入网址</button>
+      <button id="btnBackupManage" class="icon-btn">备份管理</button>
+      <button id="btnClearData" class="icon-btn danger strong-label">清空数据</button>
+      <button id="btnClearCards" class="icon-btn danger">删除所有分组、卡片</button>
+      <button id="btnRefreshIcons" class="icon-btn">刷新所有图标</button>
+    </div>
+
     <div class="section">
       <label><input id="settingShowSearch" type="checkbox"> 显示顶部搜索框</label>
       <div class="row-inline">
@@ -1956,16 +1965,6 @@ function openSettingsModal() {
           <option value="23">23:00</option>
         </select>
       </div>
-    </div>
-
-    <div class="section">
-      <button id="btnExport" class="icon-btn">导出设置</button>
-      <button id="btnImport" class="icon-btn">导入设置</button>
-      <button id="btnImportUrl" class="icon-btn">导入网址</button>
-      <button id="btnBackupManage" class="icon-btn">备份管理</button>
-      <button id="btnClearData" class="icon-btn danger strong-label">清空数据</button>
-      <button id="btnClearCards" class="icon-btn danger">删除所有分组、卡片</button>
-      <button id="btnRefreshIcons" class="icon-btn">刷新所有图标</button>
     </div>
 
   `;

@@ -265,13 +265,17 @@ function renderTab(tab) {
   empty.classList.add("hidden");
   card.classList.remove("hidden");
   card.innerHTML = "";
-  const titleDiv = document.createElement("div");
-  titleDiv.className = "tab-title";
-  titleDiv.textContent = tab.title || tab.url;
+  const titleInput = document.createElement("input");
+  titleInput.id = "tabTitleInput";
+  titleInput.className = "tab-title-input";
+  titleInput.type = "text";
+  titleInput.value = tab.title || tab.url || "";
+  titleInput.placeholder = "请输入标题";
+  titleInput.spellcheck = false;
   const urlDiv = document.createElement("div");
   urlDiv.className = "tab-url";
   urlDiv.textContent = tab.url || "";
-  card.appendChild(titleDiv);
+  card.appendChild(titleInput);
   card.appendChild(urlDiv);
 }
 
@@ -303,9 +307,10 @@ function renderGroups(data) {
  * 保存到分组
  * @param {chrome.tabs.Tab} tab
  * @param {string} selectedGroupId
+ * @param {string} customTitle
  * @returns {Promise<{groupId: string, groupName: string, fontSize: number} | null>}
  */
-async function saveToGroup(tab, selectedGroupId) {
+async function saveToGroup(tab, selectedGroupId, customTitle = "") {
   const url = normalizeUrl(tab?.url);
   if (!url) {
     await appendLog({ ts: Date.now(), stage: "invalid_url", raw: tab?.url || "" });
@@ -325,10 +330,12 @@ async function saveToGroup(tab, selectedGroupId) {
   if (!Array.isArray(group.nodes)) group.nodes = [];
 
   const id = `itm_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  const trimmedTitle = String(customTitle || "").trim();
+  const fallbackTitle = tab.title || new URL(url).hostname;
   data.nodes[id] = {
     id,
     type: "item",
-    title: tab.title || new URL(url).hostname,
+    title: trimmedTitle || fallbackTitle,
     url,
     iconType: "auto",
     iconData: "",
@@ -509,7 +516,9 @@ async function init() {
     saving = true;
     btnSave.disabled = true;
     const selectedGroupId = document.getElementById("groupSelect").value;
-    const result = await saveToGroup(tab, selectedGroupId);
+    const tabTitleInput = document.getElementById("tabTitleInput");
+    const customTitle = tabTitleInput ? tabTitleInput.value : "";
+    const result = await saveToGroup(tab, selectedGroupId, customTitle);
     if (result) {
       await showToastInTab(tab, `已保存到分组：${result.groupName || "未命名"}`, result.fontSize);
     }

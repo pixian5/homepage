@@ -24,9 +24,20 @@ body {
   padding: 10px;
   display: flex; flex-direction: column; gap: 6px;
 }
-.tab-title {
-  font-size: 1rem; color: var(--text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+.tab-title-input {
+  width: 100%;
+  font-size: 1rem;
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(18, 22, 30, 0.7);
+  border-radius: 8px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.tab-title-input:focus {
+  border-color: rgba(77, 214, 168, 0.7);
+  box-shadow: 0 0 0 2px rgba(77, 214, 168, 0.18);
 }
 .tab-url {
   font-size: 0.9rem; color: var(--muted);

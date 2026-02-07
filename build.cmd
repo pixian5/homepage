@@ -21,10 +21,27 @@ xcopy "%SRC%" "%FIREFOX%" /E /I /H /Y >nul
 copy /Y "%ROOT%manifest.chrome.json" "%CHROME%\manifest.json" >nul
 copy /Y "%ROOT%manifest.firefox.json" "%FIREFOX%\manifest.json" >nul
 
-node "%ROOT%scripts\\bundle-firefox.mjs"
+where node >nul 2>nul
+if %errorlevel%==0 (
+  node "%ROOT%scripts\\bundle-firefox.mjs"
+) else (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\\bundle-firefox.ps1" -RootDir "%ROOT%"
+)
+if errorlevel 1 (
+  echo [build] Failed to generate Firefox bundle
+  exit /b 1
+)
 
-powershell -NoProfile -Command "Compress-Archive -Path '%DIST%\firefox\*' -DestinationPath '%DIST%\firefox.zip' -Force"
-powershell -NoProfile -Command "Compress-Archive -Path '%DIST%\chrome\*' -DestinationPath '%DIST%\chrome.zip' -Force"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\zip-normalized.ps1" -SourceDir "%DIST%\firefox" -DestinationZip "%DIST%\firefox.zip"
+if errorlevel 1 (
+  echo [build] Failed to package firefox.zip
+  exit /b 1
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\zip-normalized.ps1" -SourceDir "%DIST%\chrome" -DestinationZip "%DIST%\chrome.zip"
+if errorlevel 1 (
+  echo [build] Failed to package chrome.zip
+  exit /b 1
+)
 
 echo Build done
 endlocal

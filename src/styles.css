@@ -454,6 +454,10 @@ html, body {
 .modal .settings-language-wrap {
   margin-left: 0;
 }
+.modal .settings-language-hint {
+  color: var(--muted);
+  white-space: nowrap;
+}
 .modal .settings-language-select {
   min-width: 130px;
 }

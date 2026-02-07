@@ -2539,6 +2539,8 @@ function openSettingsModal() {
       <button id="btnClearData" class="icon-btn danger strong-label">${t("settings.action.clearData")}</button>
       <button id="btnClearCards" class="icon-btn danger">${t("settings.action.clearCards")}</button>
       <button id="btnRefreshIcons" class="icon-btn">${t("settings.action.refreshIcons")}</button>
+    </div>
+    <div class="section settings-language-row">
       <div class="row-inline settings-language-wrap">
         <select id="settingLanguage" class="inline-select settings-language-select">${buildLanguageOptions(data.settings.language)}</select>
       </div>

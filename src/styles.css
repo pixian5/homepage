@@ -445,8 +445,14 @@ html, body {
   gap: 8px;
   align-items: center;
 }
+.modal .settings-language-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
 .modal .settings-language-wrap {
-  margin-left: auto;
+  margin-left: 0;
 }
 .modal .settings-language-select {
   min-width: 130px;
@@ -454,7 +460,7 @@ html, body {
 .modal .build-version {
   color: var(--muted);
   font-size: inherit;
-  margin-left: 8px;
+  margin-left: 0;
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }

@@ -2766,10 +2766,12 @@ function openSettingsModal() {
       $("settingSearchEngine").disabled = true;
     }
   });
-  $("settingLanguage").addEventListener("change", () => {
+  $("settingLanguage").addEventListener("change", async () => {
     data.settings.language = normalizeLanguageCode($("settingLanguage").value) || detectPreferredLanguage();
     applyStaticI18n();
     render();
+    await persistData();
+    if (settingsOpen) openSettingsModal();
   });
 
   $("btnExport").addEventListener("click", () => exportJsonToClipboard());

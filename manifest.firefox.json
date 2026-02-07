@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "我的首页",
-  "version": "8.4",
+  "version": "8.5",
   "description": "自定义新标签页",
   "browser_action": {
     "default_title": "保存当前网页",

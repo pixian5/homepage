@@ -1,7 +1,7 @@
 ﻿{
   "manifest_version": 2,
   "name": "我的首页",
-  "version": "9.0",
+  "version": "9.1",
   "description": "自定义新标签页",
   "browser_action": {
     "default_title": "保存当前网页",
@@ -36,7 +36,7 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "newtab@example.com",
-      "strict_min_version": "91.0",
+      "strict_min_version": "142.0",
       "data_collection_permissions": {
         "required": [
           "none"
@@ -52,3 +52,4 @@
     "128": "assets/icon-128.png"
   }
 }
+

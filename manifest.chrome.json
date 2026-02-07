@@ -1,7 +1,7 @@
 ﻿{
   "manifest_version": 3,
   "name": "我的首页",
-  "version": "9.0",
+  "version": "9.1",
   "description": "自定义新标签页",
   "action": {
     "default_title": "保存当前网页",
@@ -42,4 +42,5 @@
     "128": "assets/icon-128.png"
   }
 }
+
 

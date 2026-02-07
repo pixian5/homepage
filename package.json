@@ -1,6 +1,6 @@
 ﻿{
   "name": "newtab-extension",
-  "version": "9.0",
+  "version": "9.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,4 +10,5 @@
     "build:firefox": "bash scripts/build.sh"
   }
 }
+
 

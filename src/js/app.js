@@ -2542,7 +2542,7 @@ function openSettingsModal() {
     </div>
     <div class="section settings-language-row">
       <div class="row-inline settings-language-wrap">
-        <span class="settings-language-hint">中/臺/EN/等</span>
+        <span class="settings-language-hint">中/臺/EN/JP/KR/DE/FR/ES</span>
         <select id="settingLanguage" class="inline-select settings-language-select">${buildLanguageOptions(data.settings.language)}</select>
       </div>
       <span id="settingsVersion" class="build-version"></span>

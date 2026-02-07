@@ -8,12 +8,82 @@ const ICON_CACHE_KEY = "homepage_icon_cache";
 const BG_CACHE_KEY = "homepage_bg_cache";
 const SYNC_ITEM_QUOTA_BYTES = 7500;
 const ICON_DATA_MAX_LENGTH = 2048;
+const STORAGE_SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en", "ja", "ko", "de", "fr", "es"];
+
+function normalizeLanguage(input) {
+  if (!input) return "";
+  const raw = String(input).trim().replace(/_/g, "-").toLowerCase();
+  if (!raw) return "";
+  if (raw === "zh" || raw.startsWith("zh-hans") || raw.startsWith("zh-cn") || raw.startsWith("zh-sg")) return "zh-CN";
+  if (raw.startsWith("zh-hant") || raw.startsWith("zh-tw") || raw.startsWith("zh-hk") || raw.startsWith("zh-mo")) return "zh-TW";
+  if (raw.startsWith("ja")) return "ja";
+  if (raw.startsWith("ko")) return "ko";
+  if (raw.startsWith("de")) return "de";
+  if (raw.startsWith("fr")) return "fr";
+  if (raw.startsWith("es")) return "es";
+  if (raw.startsWith("en")) return "en";
+  return "";
+}
+
+function detectSystemLanguage() {
+  try {
+    const locale = Intl?.DateTimeFormat?.().resolvedOptions?.().locale || "";
+    return normalizeLanguage(locale);
+  } catch (e) {
+    return "";
+  }
+}
+
+function detectBrowserLanguage() {
+  const api = getChrome();
+  const candidates = [
+    api?.i18n?.getUILanguage?.(),
+    navigator?.language,
+    ...(Array.isArray(navigator?.languages) ? navigator.languages : []),
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeLanguage(candidate);
+    if (STORAGE_SUPPORTED_LANGUAGES.includes(normalized)) return normalized;
+  }
+  return "";
+}
+
+function detectPreferredLanguage() {
+  const systemLanguage = detectSystemLanguage();
+  if (STORAGE_SUPPORTED_LANGUAGES.includes(systemLanguage)) return systemLanguage;
+  const browserLanguage = detectBrowserLanguage();
+  if (STORAGE_SUPPORTED_LANGUAGES.includes(browserLanguage)) return browserLanguage;
+  return "zh-CN";
+}
+
+function getDefaultGroupNameByLanguage(language) {
+  switch (language) {
+    case "zh-TW":
+      return "預設";
+    case "en":
+      return "Default";
+    case "ja":
+      return "デフォルト";
+    case "ko":
+      return "기본";
+    case "de":
+      return "Standard";
+    case "fr":
+      return "Par defaut";
+    case "es":
+      return "Predeterminado";
+    case "zh-CN":
+    default:
+      return "默认";
+  }
+}
 
 /**
  * 默认设置配置
  * @type {Object}
  */
 const DEFAULT_SETTINGS = {
+  language: "",
   showSearch: true,
   enableSearchEngine: true,
   searchEngineUrl: "https://www.bing.com/search?q=",
@@ -53,12 +123,13 @@ function nowTs() {
 }
 
 function createDefaultData() {
+  const language = detectPreferredLanguage();
   const groupId = `grp_${nowTs()}`;
   return {
     schemaVersion: 1,
-    settings: { ...DEFAULT_SETTINGS },
+    settings: { ...DEFAULT_SETTINGS, language },
     groups: [
-      { id: groupId, name: "默认", order: 0, nodes: [] }
+      { id: groupId, name: getDefaultGroupNameByLanguage(language), order: 0, nodes: [] }
     ],
     nodes: {},
     backups: [],

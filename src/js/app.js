@@ -148,6 +148,622 @@ const bgOverlayMap = {
   dark: "rgba(12, 15, 20, 0.72)",
 };
 
+const APP_SUPPORTED_LANGUAGES = [
+  { code: "zh-CN", label: "简体中文" },
+  { code: "zh-TW", label: "繁體中文" },
+  { code: "en", label: "English" },
+  { code: "ja", label: "日本語" },
+  { code: "ko", label: "한국어" },
+  { code: "de", label: "Deutsch" },
+  { code: "fr", label: "Français" },
+  { code: "es", label: "Español" },
+];
+
+const I18N = {
+  "zh-CN": {
+    "app.title": "我的首页",
+    "search.placeholder": "搜索标题或网址...",
+    "search.button": "搜索",
+    "toolbar.add": "新增",
+    "toolbar.batchDelete": "批量删",
+    "toolbar.selectAll": "全选",
+    "toolbar.settings": "设置",
+    "toolbar.openMode": "打开方式",
+    "sidebar.history": "历史",
+    "sidebar.addGroup": "新增分组",
+    "sidebar.collapse": "收起",
+    "sidebar.expand": "展开",
+    "empty.title": "还没有快捷按钮",
+    "empty.desc": "点击右上角【新增】来添加卡片。如果有备份，可以去【设置】恢复备份",
+    "empty.hideHint": "不再提示",
+    "folder.defaultTitle": "文件夹",
+    "folder.back": "返回",
+    "folder.add": "新增",
+    "folder.batchDelete": "批量删除",
+    "folder.dissolve": "解散文件夹",
+    "context.openCurrent": "本页打开",
+    "context.openNew": "新页打开",
+    "context.openBackground": "后台打开",
+    "context.addToShortcuts": "添加到快捷",
+    "context.openFolder": "打开文件夹",
+    "context.dissolveFolder": "解散文件夹",
+    "context.edit": "编辑",
+    "context.delete": "删除",
+    "context.renameGroup": "重命名",
+    "context.deleteGroup": "删除分组",
+    "openMode.current": "本页打开",
+    "openMode.new": "新页打开",
+    "openMode.background": "后台打开",
+    "openMode.saveFailed": "打开方式保存失败，已恢复",
+    "settings.saved": "设置已保存",
+    "settings.language": "语言",
+    "settings.action.export": "导出设置",
+    "settings.action.import": "导入设置",
+    "settings.action.importUrl": "导入网址",
+    "settings.action.backup": "备份管理",
+    "settings.action.clearData": "清空数据",
+    "settings.action.clearCards": "删除所有分组、卡片",
+    "settings.action.refreshIcons": "刷新所有图标",
+    "settings.showSearch": "显示顶部搜索框",
+    "settings.searchEngine": "搜索引擎",
+    "settings.searchEngine.custom": "自定义",
+    "settings.fixedLayout": "固定列数",
+    "settings.tileGap": "卡片间隙",
+    "settings.density.compact": "紧凑",
+    "settings.density.standard": "标准",
+    "settings.density.spacious": "宽松",
+    "settings.background": "背景",
+    "settings.background.bing": "每日 Bing",
+    "settings.background.color": "纯色",
+    "settings.background.gradient": "渐变",
+    "settings.background.custom": "自定义图片",
+    "settings.gradientColor": "渐变颜色",
+    "settings.bgOverlay": "背景遮罩",
+    "settings.tooltip": "显示提示",
+    "settings.keyboard": "启用键盘导航",
+    "settings.theme": "主题颜色",
+    "settings.theme.system": "跟随系统",
+    "settings.theme.light": "浅色",
+    "settings.theme.dark": "深色",
+    "settings.fontSize": "字体大小",
+    "settings.defaultGroup": "浏览网页时插件保存网页到分组",
+    "settings.lastAddedGroup": "上次添加的分组",
+    "settings.hideSidebar": "隐藏分组",
+    "settings.sync": "启用同步",
+    "settings.openMode": "网页打开方式",
+    "settings.maxBackups": "最大备份数量（0 表示不备份）",
+    "settings.iconRetry": "重新获取失败图标（每天）",
+    "settings.retryDisabled": "不启用",
+    "confirm.clearData": "确认清空全部数据？",
+    "confirm.clearCards": "确认删除所有分组、卡片与卡片？（设置将保留）",
+    "toast.cleared": "已清空",
+    "toast.cardsCleared": "已删除所有分组、卡片与卡片，可在【备份管理】中恢复",
+    "toast.iconsRefreshed": "图标刷新完成",
+    "toast.savedToGroup": "已保存到分组：{name}",
+    "common.unnamed": "未命名",
+    "background.fetchFailedCache": "壁纸获取失败，已回退到缓存",
+    "background.updatedToday": "已更新今日 Bing 壁纸",
+    "background.failedDefault": "壁纸获取失败，已使用默认背景",
+    "group.default": "默认",
+    "group.new": "新分组",
+    "group.promptName": "分组名称",
+    "group.keepOne": "至少保留一个分组",
+    "group.deleteConfirm": "删除分组「{name}」？",
+    "delete.deletedCount": "已删除 {count} 个快捷按钮",
+    "delete.undo": "撤销",
+    "delete.restored": "已恢复",
+    "history.batchDeleteDisabled": "历史不可批量删除",
+    "selection.modeEnabled": "进入批量选择模式",
+    "modal.add.title": "新增快捷按钮",
+    "modal.edit.title": "编辑",
+    "field.url": "网址",
+    "field.title": "标题",
+    "field.titleOptional": "可选",
+    "field.iconSource": "图标来源",
+    "field.icon.auto": "自动抓取 favicon",
+    "field.icon.upload": "上传图标",
+    "field.icon.color": "颜色头像",
+    "field.icon.remote": "远程图标 URL",
+    "field.fromTab": "从当前标签页添加",
+    "common.cancel": "取消",
+    "common.save": "保存",
+    "field.uploadIcon": "上传图标",
+    "field.colorAvatar": "头像颜色",
+    "field.remoteIconUrl": "远程图标 URL",
+    "error.invalidUrl": "URL 不合法",
+    "error.invalidUrlSimple": "URL 无效",
+    "error.saveQuota": "保存失败：本地存储空间不足",
+    "toast.add.success": "新增成功",
+    "toast.add.trimBackup": "新增成功（已清理备份以释放空间）",
+    "toast.add.trimIcons": "新增成功（已重置上传图标以释放空间）",
+    "toast.add.trimBackground": "新增成功（已清理自定义背景以释放空间）",
+    "toast.add.syncFallback": "新增成功（同步空间不足，已保存到本地）",
+    "toast.save.success": "保存成功",
+    "toast.save.trimBackup": "保存成功（已清理备份以释放空间）",
+    "toast.save.trimIcons": "保存成功（已重置上传图标以释放空间）",
+    "toast.save.trimBackground": "保存成功（已清理自定义背景以释放空间）",
+    "toast.save.syncFallback": "保存成功（同步空间不足，已保存到本地）",
+    "tile.folderSuffix": "（文件夹）",
+    "folder.newTitle": "新建文件夹",
+    "folder.created": "已创建文件夹",
+    "folder.added": "已加入文件夹",
+    "folder.dissolved": "已解散文件夹",
+    "group.noneAvailable": "没有可用分组",
+    "group.notFound": "分组不存在",
+    "common.selectGroup": "选择分组",
+    "toast.addedToShortcuts": "已添加到快捷",
+  },
+  "zh-TW": {
+    "app.title": "我的首頁",
+    "search.placeholder": "搜尋標題或網址...",
+    "search.button": "搜尋",
+    "toolbar.add": "新增",
+    "toolbar.batchDelete": "批次刪除",
+    "toolbar.selectAll": "全選",
+    "toolbar.settings": "設定",
+    "toolbar.openMode": "開啟方式",
+    "sidebar.history": "歷史",
+    "sidebar.addGroup": "新增分組",
+    "sidebar.collapse": "收起",
+    "sidebar.expand": "展開",
+    "empty.title": "還沒有快捷按鈕",
+    "empty.desc": "點擊右上角【新增】新增卡片。如有備份可在【設定】還原",
+    "empty.hideHint": "不再提示",
+    "folder.defaultTitle": "資料夾",
+    "folder.back": "返回",
+    "folder.add": "新增",
+    "folder.batchDelete": "批次刪除",
+    "folder.dissolve": "解散資料夾",
+    "openMode.current": "本頁開啟",
+    "openMode.new": "新頁開啟",
+    "openMode.background": "背景開啟",
+    "settings.saved": "設定已儲存",
+    "settings.language": "語言",
+    "settings.action.export": "匯出設定",
+    "settings.action.import": "匯入設定",
+    "settings.action.importUrl": "匯入網址",
+    "settings.action.backup": "備份管理",
+    "settings.action.clearData": "清空資料",
+    "settings.action.clearCards": "刪除所有分組、卡片",
+    "settings.action.refreshIcons": "重新整理所有圖示",
+    "settings.showSearch": "顯示頂部搜尋框",
+    "settings.searchEngine": "搜尋引擎",
+    "settings.searchEngine.custom": "自訂",
+    "settings.fixedLayout": "固定欄數",
+    "settings.tileGap": "卡片間距",
+    "settings.density.compact": "緊湊",
+    "settings.density.standard": "標準",
+    "settings.density.spacious": "寬鬆",
+    "settings.background": "背景",
+    "settings.background.bing": "每日 Bing",
+    "settings.background.color": "純色",
+    "settings.background.gradient": "漸層",
+    "settings.background.custom": "自訂圖片",
+    "settings.gradientColor": "漸層顏色",
+    "settings.bgOverlay": "背景遮罩",
+    "settings.tooltip": "顯示提示",
+    "settings.keyboard": "啟用鍵盤導覽",
+    "settings.theme": "主題顏色",
+    "settings.theme.system": "跟隨系統",
+    "settings.theme.light": "淺色",
+    "settings.theme.dark": "深色",
+    "settings.fontSize": "字體大小",
+    "settings.defaultGroup": "瀏覽網頁時插件保存網頁到分組",
+    "settings.lastAddedGroup": "上次新增的分組",
+    "settings.hideSidebar": "隱藏分組",
+    "settings.sync": "啟用同步",
+    "settings.openMode": "網頁開啟方式",
+    "settings.maxBackups": "最大備份數量（0 代表不備份）",
+    "settings.iconRetry": "重新取得失敗圖示（每日）",
+    "settings.retryDisabled": "不啟用",
+    "confirm.clearData": "確認清空全部資料？",
+    "confirm.clearCards": "確認刪除所有分組、卡片與卡片？（設定將保留）",
+    "toast.cleared": "已清空",
+    "toast.cardsCleared": "已刪除所有分組、卡片與卡片，可在【備份管理】中還原",
+    "toast.iconsRefreshed": "圖示已重新整理",
+    "group.default": "預設",
+    "group.new": "新分組",
+  },
+  en: {
+    "app.title": "My Homepage",
+    "search.placeholder": "Search title or URL...",
+    "search.button": "Search",
+    "toolbar.add": "Add",
+    "toolbar.batchDelete": "Batch Delete",
+    "toolbar.selectAll": "Select All",
+    "toolbar.settings": "Settings",
+    "toolbar.openMode": "Open Mode",
+    "sidebar.history": "History",
+    "sidebar.addGroup": "Add Group",
+    "sidebar.collapse": "Collapse",
+    "sidebar.expand": "Expand",
+    "empty.title": "No shortcuts yet",
+    "empty.desc": "Click Add on the top right to create cards. Restore backups in Settings if needed.",
+    "empty.hideHint": "Do not show again",
+    "folder.defaultTitle": "Folder",
+    "folder.back": "Back",
+    "folder.add": "Add",
+    "folder.batchDelete": "Batch Delete",
+    "folder.dissolve": "Dissolve Folder",
+    "context.openCurrent": "Open Here",
+    "context.openNew": "Open in New Tab",
+    "context.openBackground": "Open in Background",
+    "context.addToShortcuts": "Add to Shortcuts",
+    "context.openFolder": "Open Folder",
+    "context.dissolveFolder": "Dissolve Folder",
+    "context.edit": "Edit",
+    "context.delete": "Delete",
+    "context.renameGroup": "Rename",
+    "context.deleteGroup": "Delete Group",
+    "openMode.current": "Open Here",
+    "openMode.new": "Open in New Tab",
+    "openMode.background": "Open in Background",
+    "openMode.saveFailed": "Failed to save open mode, restored",
+    "settings.saved": "Settings saved",
+    "settings.language": "Language",
+    "settings.action.export": "Export Settings",
+    "settings.action.import": "Import Settings",
+    "settings.action.importUrl": "Import URLs",
+    "settings.action.backup": "Backup Manager",
+    "settings.action.clearData": "Clear Data",
+    "settings.action.clearCards": "Delete All Groups/Cards",
+    "settings.action.refreshIcons": "Refresh All Icons",
+    "settings.showSearch": "Show Top Search",
+    "settings.searchEngine": "Search Engine",
+    "settings.searchEngine.custom": "Custom",
+    "settings.fixedLayout": "Fixed Columns",
+    "settings.tileGap": "Card Gap",
+    "settings.density.compact": "Compact",
+    "settings.density.standard": "Standard",
+    "settings.density.spacious": "Spacious",
+    "settings.background": "Background",
+    "settings.background.bing": "Daily Bing",
+    "settings.background.color": "Color",
+    "settings.background.gradient": "Gradient",
+    "settings.background.custom": "Custom Image",
+    "settings.gradientColor": "Gradient Colors",
+    "settings.bgOverlay": "Overlay",
+    "settings.tooltip": "Show Tooltip",
+    "settings.keyboard": "Enable Keyboard Navigation",
+    "settings.theme": "Theme",
+    "settings.theme.system": "System",
+    "settings.theme.light": "Light",
+    "settings.theme.dark": "Dark",
+    "settings.fontSize": "Font Size",
+    "settings.defaultGroup": "Save web pages to group from extension",
+    "settings.lastAddedGroup": "Last added group",
+    "settings.hideSidebar": "Hide Sidebar",
+    "settings.sync": "Enable Sync",
+    "settings.openMode": "Link Open Mode",
+    "settings.maxBackups": "Max backups (0 = disabled)",
+    "settings.iconRetry": "Retry failed icons (daily)",
+    "settings.retryDisabled": "Disabled",
+    "confirm.clearData": "Clear all data?",
+    "confirm.clearCards": "Delete all groups and cards? (settings will be kept)",
+    "toast.cleared": "Cleared",
+    "toast.cardsCleared": "All groups and cards deleted. Restore from Backup Manager.",
+    "toast.iconsRefreshed": "Icons refreshed",
+    "toast.savedToGroup": "Saved to group: {name}",
+    "common.unnamed": "Unnamed",
+    "background.fetchFailedCache": "Wallpaper fetch failed, fallback to cache",
+    "background.updatedToday": "Bing wallpaper updated",
+    "background.failedDefault": "Wallpaper fetch failed, using default background",
+    "group.default": "Default",
+    "group.new": "New Group",
+    "group.promptName": "Group name",
+    "group.keepOne": "At least one group must remain",
+    "group.deleteConfirm": "Delete group \"{name}\"?",
+    "delete.deletedCount": "Deleted {count} shortcuts",
+    "delete.undo": "Undo",
+    "delete.restored": "Restored",
+    "history.batchDeleteDisabled": "Batch delete is unavailable in history",
+    "selection.modeEnabled": "Batch selection mode enabled",
+    "modal.add.title": "Add Shortcut",
+    "modal.edit.title": "Edit",
+    "field.url": "URL",
+    "field.title": "Title",
+    "field.titleOptional": "Optional",
+    "field.iconSource": "Icon Source",
+    "field.icon.auto": "Auto favicon",
+    "field.icon.upload": "Upload icon",
+    "field.icon.color": "Color avatar",
+    "field.icon.remote": "Remote icon URL",
+    "field.fromTab": "Use Current Tab",
+    "common.cancel": "Cancel",
+    "common.save": "Save",
+    "field.uploadIcon": "Upload icon",
+    "field.colorAvatar": "Avatar color",
+    "field.remoteIconUrl": "Remote icon URL",
+    "error.invalidUrl": "Invalid URL",
+    "error.invalidUrlSimple": "Invalid URL",
+    "error.saveQuota": "Save failed: local storage quota exceeded",
+    "toast.add.success": "Added",
+    "toast.add.trimBackup": "Added (backups trimmed)",
+    "toast.add.trimIcons": "Added (uploaded icons reset)",
+    "toast.add.trimBackground": "Added (custom background cleared)",
+    "toast.add.syncFallback": "Added (sync quota exceeded, saved locally)",
+    "toast.save.success": "Saved",
+    "toast.save.trimBackup": "Saved (backups trimmed)",
+    "toast.save.trimIcons": "Saved (uploaded icons reset)",
+    "toast.save.trimBackground": "Saved (custom background cleared)",
+    "toast.save.syncFallback": "Saved (sync quota exceeded, saved locally)",
+    "tile.folderSuffix": " (Folder)",
+    "folder.newTitle": "New Folder",
+    "folder.created": "Folder created",
+    "folder.added": "Added to folder",
+    "folder.dissolved": "Folder dissolved",
+    "group.noneAvailable": "No available groups",
+    "group.notFound": "Group not found",
+    "common.selectGroup": "Select Group",
+    "toast.addedToShortcuts": "Added to shortcuts",
+  },
+  ja: {
+    "app.title": "マイホーム",
+    "search.placeholder": "タイトルまたはURLを検索...",
+    "search.button": "検索",
+    "toolbar.add": "追加",
+    "toolbar.batchDelete": "一括削除",
+    "toolbar.selectAll": "全選択",
+    "toolbar.settings": "設定",
+    "toolbar.openMode": "開き方",
+    "sidebar.history": "履歴",
+    "sidebar.addGroup": "グループ追加",
+    "sidebar.collapse": "折りたたむ",
+    "sidebar.expand": "展開",
+    "empty.title": "ショートカットはまだありません",
+    "empty.desc": "右上の追加をクリックしてカードを作成します。必要なら設定から復元できます。",
+    "empty.hideHint": "今後表示しない",
+    "folder.defaultTitle": "フォルダ",
+    "folder.back": "戻る",
+    "folder.add": "追加",
+    "folder.batchDelete": "一括削除",
+    "folder.dissolve": "フォルダ解除",
+    "openMode.current": "このタブで開く",
+    "openMode.new": "新しいタブで開く",
+    "openMode.background": "バックグラウンドで開く",
+    "settings.saved": "設定を保存しました",
+    "settings.language": "言語",
+    "group.default": "デフォルト",
+    "group.new": "新規グループ",
+  },
+  ko: {
+    "app.title": "내 홈페이지",
+    "search.placeholder": "제목 또는 URL 검색...",
+    "search.button": "검색",
+    "toolbar.add": "추가",
+    "toolbar.batchDelete": "일괄 삭제",
+    "toolbar.selectAll": "전체 선택",
+    "toolbar.settings": "설정",
+    "toolbar.openMode": "열기 방식",
+    "sidebar.history": "기록",
+    "sidebar.addGroup": "그룹 추가",
+    "sidebar.collapse": "접기",
+    "sidebar.expand": "펼치기",
+    "empty.title": "바로가기가 없습니다",
+    "empty.desc": "오른쪽 위 추가 버튼으로 카드를 만드세요. 필요하면 설정에서 복원할 수 있습니다.",
+    "empty.hideHint": "다시 표시 안 함",
+    "folder.defaultTitle": "폴더",
+    "folder.back": "뒤로",
+    "folder.add": "추가",
+    "folder.batchDelete": "일괄 삭제",
+    "folder.dissolve": "폴더 해제",
+    "openMode.current": "현재 탭 열기",
+    "openMode.new": "새 탭 열기",
+    "openMode.background": "백그라운드 열기",
+    "settings.saved": "설정이 저장됨",
+    "settings.language": "언어",
+    "group.default": "기본",
+    "group.new": "새 그룹",
+  },
+  de: {
+    "app.title": "Meine Startseite",
+    "search.placeholder": "Titel oder URL suchen...",
+    "search.button": "Suchen",
+    "toolbar.add": "Hinzufugen",
+    "toolbar.batchDelete": "Mehrfach loschen",
+    "toolbar.selectAll": "Alle auswahlen",
+    "toolbar.settings": "Einstellungen",
+    "toolbar.openMode": "Offnen",
+    "sidebar.history": "Verlauf",
+    "sidebar.addGroup": "Gruppe hinzufugen",
+    "sidebar.collapse": "Einklappen",
+    "sidebar.expand": "Ausklappen",
+    "empty.title": "Noch keine Verknupfungen",
+    "empty.desc": "Oben rechts auf Hinzufugen klicken. Backups lassen sich in Einstellungen wiederherstellen.",
+    "empty.hideHint": "Nicht mehr anzeigen",
+    "folder.defaultTitle": "Ordner",
+    "folder.back": "Zuruck",
+    "folder.add": "Hinzufugen",
+    "folder.batchDelete": "Mehrfach loschen",
+    "folder.dissolve": "Ordner auflosen",
+    "openMode.current": "Hier offnen",
+    "openMode.new": "In neuem Tab",
+    "openMode.background": "Im Hintergrund",
+    "settings.saved": "Einstellungen gespeichert",
+    "settings.language": "Sprache",
+    "group.default": "Standard",
+    "group.new": "Neue Gruppe",
+  },
+  fr: {
+    "app.title": "Ma page d'accueil",
+    "search.placeholder": "Rechercher un titre ou une URL...",
+    "search.button": "Rechercher",
+    "toolbar.add": "Ajouter",
+    "toolbar.batchDelete": "Suppression lot",
+    "toolbar.selectAll": "Tout selectionner",
+    "toolbar.settings": "Parametres",
+    "toolbar.openMode": "Mode d'ouverture",
+    "sidebar.history": "Historique",
+    "sidebar.addGroup": "Ajouter groupe",
+    "sidebar.collapse": "Replier",
+    "sidebar.expand": "Deplier",
+    "empty.title": "Aucun raccourci",
+    "empty.desc": "Cliquez sur Ajouter en haut a droite. Les sauvegardes sont dans Parametres.",
+    "empty.hideHint": "Ne plus afficher",
+    "folder.defaultTitle": "Dossier",
+    "folder.back": "Retour",
+    "folder.add": "Ajouter",
+    "folder.batchDelete": "Suppression lot",
+    "folder.dissolve": "Dissoudre dossier",
+    "openMode.current": "Ouvrir ici",
+    "openMode.new": "Nouvel onglet",
+    "openMode.background": "Arriere-plan",
+    "settings.saved": "Parametres enregistres",
+    "settings.language": "Langue",
+    "group.default": "Par defaut",
+    "group.new": "Nouveau groupe",
+  },
+  es: {
+    "app.title": "Mi inicio",
+    "search.placeholder": "Buscar titulo o URL...",
+    "search.button": "Buscar",
+    "toolbar.add": "Agregar",
+    "toolbar.batchDelete": "Borrar lote",
+    "toolbar.selectAll": "Seleccionar todo",
+    "toolbar.settings": "Configuracion",
+    "toolbar.openMode": "Modo de apertura",
+    "sidebar.history": "Historial",
+    "sidebar.addGroup": "Agregar grupo",
+    "sidebar.collapse": "Contraer",
+    "sidebar.expand": "Expandir",
+    "empty.title": "Aun no hay accesos directos",
+    "empty.desc": "Haz clic en Agregar arriba a la derecha. Puedes restaurar copias en Configuracion.",
+    "empty.hideHint": "No volver a mostrar",
+    "folder.defaultTitle": "Carpeta",
+    "folder.back": "Volver",
+    "folder.add": "Agregar",
+    "folder.batchDelete": "Borrar lote",
+    "folder.dissolve": "Disolver carpeta",
+    "openMode.current": "Abrir aqui",
+    "openMode.new": "Abrir en nueva pestana",
+    "openMode.background": "Abrir en segundo plano",
+    "settings.saved": "Configuracion guardada",
+    "settings.language": "Idioma",
+    "group.default": "Predeterminado",
+    "group.new": "Nuevo grupo",
+  },
+};
+
+function normalizeLanguageCode(input) {
+  if (!input) return "";
+  const raw = String(input).trim().replace(/_/g, "-").toLowerCase();
+  if (!raw) return "";
+  if (raw === "zh" || raw.startsWith("zh-hans") || raw.startsWith("zh-cn") || raw.startsWith("zh-sg")) return "zh-CN";
+  if (raw.startsWith("zh-hant") || raw.startsWith("zh-tw") || raw.startsWith("zh-hk") || raw.startsWith("zh-mo")) return "zh-TW";
+  if (raw.startsWith("en")) return "en";
+  if (raw.startsWith("ja")) return "ja";
+  if (raw.startsWith("ko")) return "ko";
+  if (raw.startsWith("de")) return "de";
+  if (raw.startsWith("fr")) return "fr";
+  if (raw.startsWith("es")) return "es";
+  return "";
+}
+
+function detectSystemLanguage() {
+  try {
+    return normalizeLanguageCode(Intl?.DateTimeFormat?.().resolvedOptions?.().locale || "");
+  } catch (e) {
+    return "";
+  }
+}
+
+function detectBrowserLanguage() {
+  const api = getChromeApi();
+  const candidates = [
+    api?.i18n?.getUILanguage?.(),
+    navigator?.language,
+    ...(Array.isArray(navigator?.languages) ? navigator.languages : []),
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeLanguageCode(candidate);
+    if (APP_SUPPORTED_LANGUAGES.some((item) => item.code === normalized)) return normalized;
+  }
+  return "";
+}
+
+function detectPreferredLanguage() {
+  const systemLang = detectSystemLanguage();
+  if (systemLang) return systemLang;
+  const browserLang = detectBrowserLanguage();
+  if (browserLang) return browserLang;
+  return "zh-CN";
+}
+
+function currentLang() {
+  const stored = normalizeLanguageCode(data?.settings?.language || "");
+  if (stored) return stored;
+  return detectPreferredLanguage();
+}
+
+function t(key, vars = null) {
+  const lang = currentLang();
+  const dict = I18N[lang] || I18N.en || I18N["zh-CN"];
+  let text = dict[key] || I18N.en?.[key] || I18N["zh-CN"]?.[key] || key;
+  if (!vars) return text;
+  return text.replace(/\{(\w+)\}/g, (_, name) => (vars[name] ?? ""));
+}
+
+function ensureLanguageSetting() {
+  if (!data?.settings) return false;
+  const normalized = normalizeLanguageCode(data.settings.language || "");
+  if (normalized) {
+    data.settings.language = normalized;
+    return false;
+  }
+  data.settings.language = detectPreferredLanguage();
+  return true;
+}
+
+function buildLanguageOptions(selectedLanguage) {
+  const normalized = normalizeLanguageCode(selectedLanguage || "") || currentLang();
+  return APP_SUPPORTED_LANGUAGES
+    .map((item) => `<option value="${item.code}" ${item.code === normalized ? "selected" : ""}>${item.label}</option>`)
+    .join("");
+}
+
+function applyStaticI18n() {
+  const lang = currentLang();
+  document.documentElement.lang = lang;
+  document.title = t("app.title");
+  if (elements.topSearch) elements.topSearch.placeholder = t("search.placeholder");
+  if (elements.btnSearch) {
+    elements.btnSearch.textContent = t("search.button");
+    elements.btnSearch.setAttribute("data-tooltip", t("search.button"));
+  }
+  if (elements.btnAdd) {
+    elements.btnAdd.textContent = t("toolbar.add");
+    elements.btnAdd.setAttribute("data-tooltip", t("toolbar.add"));
+  }
+  if (elements.btnBatchDelete) elements.btnBatchDelete.setAttribute("data-tooltip", t("toolbar.batchDelete"));
+  if (elements.btnSelectAll) {
+    elements.btnSelectAll.textContent = t("toolbar.selectAll");
+    elements.btnSelectAll.setAttribute("data-tooltip", t("toolbar.selectAll"));
+  }
+  if (elements.btnOpenMode) elements.btnOpenMode.setAttribute("data-tooltip", t("toolbar.openMode"));
+  if (elements.btnSettings) {
+    elements.btnSettings.textContent = t("toolbar.settings");
+    elements.btnSettings.setAttribute("data-tooltip", t("toolbar.settings"));
+  }
+  if (elements.recentTab) elements.recentTab.dataset.label = t("sidebar.history");
+  if (elements.btnAddGroup) {
+    elements.btnAddGroup.textContent = t("sidebar.addGroup");
+    elements.btnAddGroup.setAttribute("data-tooltip", t("sidebar.addGroup"));
+  }
+  if (elements.btnCloseFolder) elements.btnCloseFolder.textContent = t("folder.back");
+  if (elements.btnFolderAdd) elements.btnFolderAdd.textContent = t("folder.add");
+  if (elements.btnFolderBatchDelete) elements.btnFolderBatchDelete.textContent = t("folder.batchDelete");
+  if (elements.btnFolderDissolve) elements.btnFolderDissolve.textContent = t("folder.dissolve");
+  const emptyTitle = qs(".empty-title", elements.emptyState);
+  if (emptyTitle) emptyTitle.textContent = t("empty.title");
+  const emptyDesc = qs(".empty-desc", elements.emptyState);
+  if (emptyDesc) emptyDesc.textContent = t("empty.desc");
+  const emptyCheckLabel = qs(".empty-check", elements.emptyState);
+  if (emptyCheckLabel) {
+    const textNode = Array.from(emptyCheckLabel.childNodes).find((node) => node.nodeType === Node.TEXT_NODE);
+    if (textNode) textNode.nodeValue = ` ${t("empty.hideHint")}`;
+  }
+}
+
 function debugLog(event, payload = {}) {
   const entry = { ts: Date.now(), event, payload };
   try {
@@ -221,6 +837,7 @@ async function reloadFromStorage() {
     openFolderId = null;
   }
   selectedIds = new Set([...prevSelected].filter((id) => data.nodes?.[id]));
+  ensureLanguageSetting();
   syncBackupBaseline(data);
   render();
   await consumeSaveToast();
@@ -302,7 +919,7 @@ function applySidebarState() {
   document.body.classList.toggle("sidebar-collapsed", !!data.settings.sidebarCollapsed);
   document.body.classList.toggle("sidebar-hidden", !!data.settings.sidebarHidden);
   if (elements.btnToggleSidebar) {
-    elements.btnToggleSidebar.textContent = data.settings.sidebarCollapsed ? "展开" : "收起";
+    elements.btnToggleSidebar.textContent = data.settings.sidebarCollapsed ? t("sidebar.expand") : t("sidebar.collapse");
   }
   syncSidebarTabLabels();
 }
@@ -310,14 +927,14 @@ function applySidebarState() {
 function syncSidebarTabLabels() {
   if (!elements.recentTab) return;
   const collapsed = !!data.settings.sidebarCollapsed;
-  const recentLabel = elements.recentTab.dataset.label || elements.recentTab.textContent || "历史";
+  const recentLabel = elements.recentTab.dataset.label || elements.recentTab.textContent || t("sidebar.history");
   elements.recentTab.dataset.label = recentLabel;
   elements.recentTab.setAttribute("aria-label", recentLabel);
   elements.recentTab.textContent = collapsed ? "" : recentLabel;
   qsa(".group-tab", elements.groupTabs).forEach((btn) => {
     const label = btn.dataset.label || btn.textContent || "";
     btn.dataset.label = label;
-    btn.setAttribute("aria-label", label || "分组");
+    btn.setAttribute("aria-label", label || t("sidebar.addGroup"));
     btn.textContent = collapsed ? "" : label;
   });
 }
@@ -363,8 +980,8 @@ async function consumeSaveToast() {
     await persistData();
     return;
   }
-  const groupName = toastInfo.groupName || "未命名";
-  toast(`已保存到分组：${groupName}`);
+  const groupName = toastInfo.groupName || t("common.unnamed");
+  toast(t("toast.savedToGroup", { name: groupName }));
   data.settings.lastSaveToast = null;
   await persistData();
 }
@@ -456,11 +1073,11 @@ async function loadBackground() {
     const info = await getBingWallpaper();
     if (info.dataUrl) {
       setBackground(info.dataUrl);
-      if (info.failed) toast("壁纸获取失败，已回退到缓存");
-      else if (!info.fromCache) toast("已更新今日 Bing 壁纸");
+      if (info.failed) toast(t("background.fetchFailedCache"));
+      else if (!info.fromCache) toast(t("background.updatedToday"));
     } else {
       elements.background.style.background = settings.backgroundColor;
-      toast("壁纸获取失败，已使用默认背景");
+      toast(t("background.failedDefault"));
     }
   } else if (settings.backgroundType === "color") {
     elements.background.style.backgroundImage = "none";
@@ -650,11 +1267,11 @@ function uniqueNodes(nodes) {
 function renderGroups() {
   elements.groupTabs.innerHTML = "";
   elements.recentTab.classList.toggle("active", activeGroupId === RECENT_GROUP_ID);
-  const recentLabel = elements.recentTab.dataset.label || elements.recentTab.textContent || "历史";
+  const recentLabel = elements.recentTab.dataset.label || elements.recentTab.textContent || t("sidebar.history");
   elements.recentTab.dataset.label = recentLabel;
   elements.recentTab.setAttribute("aria-label", recentLabel);
   elements.recentTab.textContent = data.settings.sidebarCollapsed ? "" : recentLabel;
-  elements.recentTab.dataset.short = "历史";
+  elements.recentTab.dataset.short = t("sidebar.history");
   data.groups
     .sort((a, b) => a.order - b.order)
     .forEach((group, idx) => {
@@ -799,7 +1416,7 @@ async function renderGrid() {
 
     const title = document.createElement("div");
     title.className = "tile-title";
-    title.textContent = node.title || node.url || "未命名";
+    title.textContent = node.title || node.url || t("common.unnamed");
 
     tile.appendChild(icon);
     tile.appendChild(title);
@@ -829,7 +1446,7 @@ async function renderGrid() {
       } else {
         const url = normalizeUrl(node.url);
         if (!url) {
-          toast("URL 无效");
+          toast(t("error.invalidUrlSimple"));
           return;
         }
         openUrl(url);
@@ -844,7 +1461,7 @@ async function renderGrid() {
     tile.addEventListener("mouseenter", (e) => {
       if (!data.settings.tooltipEnabled) return;
       clearTimeout(tooltipTimer);
-      const text = node.type === "folder" ? `${node.title}（文件夹）` : `${node.title}\n${node.url}`;
+      const text = node.type === "folder" ? `${node.title}${t("tile.folderSuffix")}` : `${node.title}\n${node.url}`;
       tooltipTimer = setTimeout(() => showTooltip(text, e.clientX, e.clientY), TOOLTIP_DELAY_MS);
     });
     tile.addEventListener("mouseleave", () => {
@@ -901,7 +1518,7 @@ function openFolder(folderId) {
   elements.folderOverlay.removeAttribute("inert");
   elements.folderOverlay.classList.remove("hidden");
   elements.folderOverlay.setAttribute("aria-hidden", "false");
-  elements.folderTitle.textContent = data.nodes[folderId]?.title || "文件夹";
+  elements.folderTitle.textContent = data.nodes[folderId]?.title || t("folder.defaultTitle");
   render();
   elements.folderGrid.focus({ preventScroll: true });
 }
@@ -921,7 +1538,7 @@ function closeFolder() {
   const parentId = findParentFolderId(openFolderId);
   if (parentId) {
     openFolderId = parentId;
-    elements.folderTitle.textContent = data.nodes[parentId]?.title || "文件夹";
+    elements.folderTitle.textContent = data.nodes[parentId]?.title || t("folder.defaultTitle");
     render();
     return;
   }
@@ -967,8 +1584,8 @@ function clearSelection() {
 
 function updateSelectionControls() {
   elements.btnSelectAll.classList.toggle("hidden", !selectionMode);
-  elements.btnBatchDelete.textContent = selectionMode ? "删除" : "批量删";
-  elements.btnFolderBatchDelete.textContent = selectionMode ? "删除" : "批量删除";
+  elements.btnBatchDelete.textContent = selectionMode ? t("context.delete") : t("toolbar.batchDelete");
+  elements.btnFolderBatchDelete.textContent = selectionMode ? t("context.delete") : t("folder.batchDelete");
 }
 
 function updateSelectionStyles() {
@@ -1203,20 +1820,20 @@ function openContextMenu(x, y, node) {
   elements.contextMenu.innerHTML = "";
   const actions = [];
   if (activeGroupId === RECENT_GROUP_ID && node.type === "history") {
-    actions.push({ label: "本页打开", fn: () => openUrl(normalizeUrl(node.url)) });
-    actions.push({ label: "新页打开", fn: () => openUrl(normalizeUrl(node.url), "new") });
-    actions.push({ label: "添加到快捷", fn: () => openAddHistoryToGroup(node) });
+    actions.push({ label: t("context.openCurrent"), fn: () => openUrl(normalizeUrl(node.url)) });
+    actions.push({ label: t("context.openNew"), fn: () => openUrl(normalizeUrl(node.url), "new") });
+    actions.push({ label: t("context.addToShortcuts"), fn: () => openAddHistoryToGroup(node) });
   } else if (node.type !== "folder") {
-    actions.push({ label: "本页打开", fn: () => openUrl(normalizeUrl(node.url)) });
-    actions.push({ label: "新页打开", fn: () => openUrl(normalizeUrl(node.url), "new") });
-    actions.push({ label: "后台打开", fn: () => openUrl(normalizeUrl(node.url), "background") });
+    actions.push({ label: t("context.openCurrent"), fn: () => openUrl(normalizeUrl(node.url)) });
+    actions.push({ label: t("context.openNew"), fn: () => openUrl(normalizeUrl(node.url), "new") });
+    actions.push({ label: t("context.openBackground"), fn: () => openUrl(normalizeUrl(node.url), "background") });
   } else {
-    actions.push({ label: "打开文件夹", fn: () => openFolder(node.id) });
-    actions.push({ label: "解散文件夹", fn: () => dissolveFolder(node.id) });
+    actions.push({ label: t("context.openFolder"), fn: () => openFolder(node.id) });
+    actions.push({ label: t("context.dissolveFolder"), fn: () => dissolveFolder(node.id) });
   }
   if (node.type !== "history") {
-    actions.push({ label: "编辑", fn: () => openEditModal(node) });
-    actions.push({ label: "删除", fn: () => deleteNodes([node.id]) });
+    actions.push({ label: t("context.edit"), fn: () => openEditModal(node) });
+    actions.push({ label: t("context.delete"), fn: () => deleteNodes([node.id]) });
   }
 
   for (const action of actions) {
@@ -1238,8 +1855,8 @@ function closeContextMenu() {
 function openGroupContextMenu(x, y, group) {
   elements.contextMenu.innerHTML = "";
   const actions = [
-    { label: "重命名", fn: () => renameGroup(group) },
-    { label: "删除分组", fn: () => deleteGroup(group) },
+    { label: t("context.renameGroup"), fn: () => renameGroup(group) },
+    { label: t("context.deleteGroup"), fn: () => deleteGroup(group) },
   ];
   for (const action of actions) {
     const btn = document.createElement("button");
@@ -1327,7 +1944,7 @@ function handleDropOnTile(targetId, x, y) {
     const folder = {
       id: folderId,
       type: "folder",
-      title: "新建文件夹",
+      title: t("folder.newTitle"),
       children: [targetId, sourceId],
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -1345,7 +1962,7 @@ function handleDropOnTile(targetId, x, y) {
     }
     persistData();
     render();
-    toast("已创建文件夹");
+    toast(t("folder.created"));
     return;
   }
 
@@ -1355,7 +1972,7 @@ function handleDropOnTile(targetId, x, y) {
   targetNode.children.push(sourceId);
   persistData();
   render();
-  toast("已加入文件夹");
+  toast(t("folder.added"));
 }
 
 function dissolveFolder(folderId) {
@@ -1388,7 +2005,7 @@ function dissolveFolder(folderId) {
   delete data.nodes[folderId];
   persistData();
   render();
-  toast("已解散文件夹");
+  toast(t("folder.dissolved"));
 }
 
 function removeNodeFromLocation(id) {
@@ -1483,7 +2100,7 @@ function moveGroupToIndex(sourceId, index) {
 }
 
 function renameGroup(group) {
-  const name = prompt("分组名称", group.name);
+  const name = prompt(t("group.promptName"), group.name);
   if (!name) return;
   group.name = name.trim();
   persistData();
@@ -1492,10 +2109,10 @@ function renameGroup(group) {
 
 function deleteGroup(group) {
   if (data.groups.length <= 1) {
-    toast("至少保留一个分组");
+    toast(t("group.keepOne"));
     return;
   }
-  if (!confirm(`删除分组「${group.name}」？`)) return;
+  if (!confirm(t("group.deleteConfirm", { name: group.name }))) return;
   data.groups = data.groups.filter((g) => g.id !== group.id);
   if (activeGroupId === group.id) activeGroupId = data.groups[0].id;
   persistData();
@@ -1517,7 +2134,7 @@ function deleteNodes(ids) {
   persistData();
   render();
 
-  toast(`已删除 ${ids.length} 个快捷按钮`, "撤销", () => undoDelete());
+  toast(t("delete.deletedCount", { count: ids.length }), t("delete.undo"), () => undoDelete());
   setTimeout(() => {
     pendingDeletion = null;
   }, UNDO_TIMEOUT_MS);
@@ -1529,7 +2146,7 @@ function undoDelete() {
   pendingDeletion = null;
   persistData();
   render();
-  toast("已恢复");
+  toast(t("delete.restored"));
 }
 
 /**
@@ -1599,31 +2216,31 @@ function closeModal() {
 
 function openAddModal() {
   const html = `
-    <h2>新增快捷按钮</h2>
+    <h2>${t("modal.add.title")}</h2>
     <div class="section">
-      <label>网址</label>
+      <label>${t("field.url")}</label>
       <input id="fieldUrl" type="url" placeholder="https://" />
     </div>
     <div class="section">
-      <label>标题</label>
-      <input id="fieldTitle" type="text" placeholder="可选" />
+      <label>${t("field.title")}</label>
+      <input id="fieldTitle" type="text" placeholder="${t("field.titleOptional")}" />
     </div>
     <div class="section">
-      <label>图标来源</label>
+      <label>${t("field.iconSource")}</label>
       <select id="fieldIconType">
-        <option value="auto">自动抓取 favicon</option>
-        <option value="upload">上传图标</option>
-        <option value="color">颜色头像</option>
-        <option value="remote">远程图标 URL</option>
+        <option value="auto">${t("field.icon.auto")}</option>
+        <option value="upload">${t("field.icon.upload")}</option>
+        <option value="color">${t("field.icon.color")}</option>
+        <option value="remote">${t("field.icon.remote")}</option>
       </select>
     </div>
     <div id="iconExtra" class="section"></div>
     <div class="section">
-      <button id="btnFromTab" class="icon-btn">从当前标签页添加</button>
+      <button id="btnFromTab" class="icon-btn">${t("field.fromTab")}</button>
     </div>
     <div class="actions">
-      <button id="btnCancel" class="icon-btn">取消</button>
-      <button id="btnSave" class="icon-btn">保存</button>
+      <button id="btnCancel" class="icon-btn">${t("common.cancel")}</button>
+      <button id="btnSave" class="icon-btn">${t("common.save")}</button>
     </div>
   `;
   openModal(html);
@@ -1635,7 +2252,7 @@ function openAddModal() {
     iconExtra.innerHTML = "";
     if (type === "upload") {
       const label = document.createElement("label");
-      label.textContent = "上传图标";
+      label.textContent = t("field.uploadIcon");
       const input = document.createElement("input");
       input.id = "fieldUpload";
       input.type = "file";
@@ -1644,7 +2261,7 @@ function openAddModal() {
       iconExtra.appendChild(input);
     } else if (type === "color") {
       const label = document.createElement("label");
-      label.textContent = "头像颜色";
+      label.textContent = t("field.colorAvatar");
       const input = document.createElement("input");
       input.id = "fieldColor";
       input.type = "color";
@@ -1653,7 +2270,7 @@ function openAddModal() {
       iconExtra.appendChild(input);
     } else if (type === "remote") {
       const label = document.createElement("label");
-      label.textContent = "远程图标 URL";
+      label.textContent = t("field.remoteIconUrl");
       const input = document.createElement("input");
       input.id = "fieldRemote";
       input.type = "url";
@@ -1687,7 +2304,7 @@ function openAddModal() {
     const snapshot = JSON.parse(JSON.stringify(data));
     const url = normalizeUrl($("fieldUrl").value.trim());
     if (!url) {
-      toast("URL 不合法");
+      toast(t("error.invalidUrl"));
       return;
     }
     let title = $("fieldTitle").value.trim();
@@ -1749,7 +2366,7 @@ function openAddModal() {
     if (!result.ok) {
       data = snapshot;
       render();
-      toast("保存失败：本地存储空间不足");
+      toast(t("error.saveQuota"));
       return;
     }
     render();
@@ -1757,45 +2374,45 @@ function openAddModal() {
     if (titlePending) fetchTitleInBackground(id, url);
     if (iconPending) fetchFaviconInBackground(id, url);
     if (result.warning === "local_trimmed_backups") {
-      toast("新增成功（已清理备份以释放空间）");
+      toast(t("toast.add.trimBackup"));
     } else if (result.warning === "local_trimmed_icons") {
-      toast("新增成功（已重置上传图标以释放空间）");
+      toast(t("toast.add.trimIcons"));
     } else if (result.warning === "local_trimmed_background") {
-      toast("新增成功（已清理自定义背景以释放空间）");
+      toast(t("toast.add.trimBackground"));
     } else if (result.warning === "sync_quota_exceeded") {
-      toast("新增成功（同步空间不足，已保存到本地）");
+      toast(t("toast.add.syncFallback"));
     } else {
-      toast("新增成功");
+      toast(t("toast.add.success"));
     }
   });
 }
 
 function openEditModal(node) {
   const html = `
-    <h2>编辑</h2>
+    <h2>${t("modal.edit.title")}</h2>
     <div class="section">
-      <label>标题</label>
+      <label>${t("field.title")}</label>
       <input id="fieldTitle" type="text" value="${node.title || ""}" />
     </div>
     ${node.type === "item" ? `
     <div class="section">
-      <label>网址</label>
+      <label>${t("field.url")}</label>
       <input id="fieldUrl" type="url" value="${node.url || ""}" />
     </div>
     <div class="section">
-      <label>图标来源</label>
+      <label>${t("field.iconSource")}</label>
       <select id="fieldIconType">
-        <option value="auto">自动抓取 favicon</option>
-        <option value="upload">上传图标</option>
-        <option value="color">颜色头像</option>
-        <option value="remote">远程图标 URL</option>
+        <option value="auto">${t("field.icon.auto")}</option>
+        <option value="upload">${t("field.icon.upload")}</option>
+        <option value="color">${t("field.icon.color")}</option>
+        <option value="remote">${t("field.icon.remote")}</option>
       </select>
     </div>
     <div id="iconExtra" class="section"></div>
     ` : ""}
     <div class="actions">
-      <button id="btnCancel" class="icon-btn">取消</button>
-      <button id="btnSave" class="icon-btn">保存</button>
+      <button id="btnCancel" class="icon-btn">${t("common.cancel")}</button>
+      <button id="btnSave" class="icon-btn">${t("common.save")}</button>
     </div>
   `;
   openModal(html);
@@ -1808,7 +2425,7 @@ function openEditModal(node) {
       iconExtra.innerHTML = "";
       if (type === "upload") {
         const label = document.createElement("label");
-        label.textContent = "上传图标";
+        label.textContent = t("field.uploadIcon");
         const input = document.createElement("input");
         input.id = "fieldUpload";
         input.type = "file";
@@ -1817,7 +2434,7 @@ function openEditModal(node) {
         iconExtra.appendChild(input);
       } else if (type === "color") {
         const label = document.createElement("label");
-        label.textContent = "头像颜色";
+        label.textContent = t("field.colorAvatar");
         const input = document.createElement("input");
         input.id = "fieldColor";
         input.type = "color";
@@ -1826,7 +2443,7 @@ function openEditModal(node) {
         iconExtra.appendChild(input);
       } else if (type === "remote") {
         const label = document.createElement("label");
-        label.textContent = "远程图标 URL";
+        label.textContent = t("field.remoteIconUrl");
         const input = document.createElement("input");
         input.id = "fieldRemote";
         input.type = "url";
@@ -1847,7 +2464,7 @@ function openEditModal(node) {
     if (node.type === "item") {
       const url = normalizeUrl($("fieldUrl").value.trim());
       if (!url) {
-        toast("URL 不合法");
+        toast(t("error.invalidUrl"));
         return;
       }
       node.url = url;
@@ -1870,30 +2487,30 @@ function openEditModal(node) {
     if (!result.ok) {
       data = snapshot;
       render();
-      toast("保存失败：本地存储空间不足");
+      toast(t("error.saveQuota"));
       return;
     }
     render();
     closeModal();
     if (result.warning === "local_trimmed_backups") {
-      toast("保存成功（已清理备份以释放空间）");
+      toast(t("toast.save.trimBackup"));
     } else if (result.warning === "local_trimmed_icons") {
-      toast("保存成功（已重置上传图标以释放空间）");
+      toast(t("toast.save.trimIcons"));
     } else if (result.warning === "local_trimmed_background") {
-      toast("保存成功（已清理自定义背景以释放空间）");
+      toast(t("toast.save.trimBackground"));
     } else if (result.warning === "sync_quota_exceeded") {
-      toast("保存成功（同步空间不足，已保存到本地）");
+      toast(t("toast.save.syncFallback"));
     } else {
-      toast("保存成功");
+      toast(t("toast.save.success"));
     }
   });
 }
 
 async function openOpenModeMenu() {
   const modes = [
-    { id: "current", label: "本页打开" },
-    { id: "new", label: "新页打开" },
-    { id: "background", label: "后台打开" },
+    { id: "current", label: t("openMode.current") },
+    { id: "new", label: t("openMode.new") },
+    { id: "background", label: t("openMode.background") },
   ];
   const idx = modes.findIndex((m) => m.id === data.settings.openMode);
   const next = modes[(idx + 1) % modes.length];
@@ -1905,7 +2522,7 @@ async function openOpenModeMenu() {
   if (!result?.ok) {
     data.settings.openMode = prevMode;
     updateOpenModeButton();
-    toast("打开方式保存失败，已恢复");
+    toast(t("openMode.saveFailed"));
   }
 }
 
@@ -1913,27 +2530,31 @@ function openSettingsModal() {
   settingsOpen = true;
   const html = `
     <div class="section settings-actions">
-      <button id="btnExport" class="icon-btn">导出设置</button>
-      <button id="btnImport" class="icon-btn">导入设置</button>
-      <button id="btnImportUrl" class="icon-btn">导入网址</button>
-      <button id="btnBackupManage" class="icon-btn">备份管理</button>
-      <button id="btnClearData" class="icon-btn danger strong-label">清空数据</button>
-      <button id="btnClearCards" class="icon-btn danger">删除所有分组、卡片</button>
-      <button id="btnRefreshIcons" class="icon-btn">刷新所有图标</button>
+      <button id="btnExport" class="icon-btn">${t("settings.action.export")}</button>
+      <button id="btnImport" class="icon-btn">${t("settings.action.import")}</button>
+      <button id="btnImportUrl" class="icon-btn">${t("settings.action.importUrl")}</button>
+      <button id="btnBackupManage" class="icon-btn">${t("settings.action.backup")}</button>
+      <button id="btnClearData" class="icon-btn danger strong-label">${t("settings.action.clearData")}</button>
+      <button id="btnClearCards" class="icon-btn danger">${t("settings.action.clearCards")}</button>
+      <button id="btnRefreshIcons" class="icon-btn">${t("settings.action.refreshIcons")}</button>
+      <div class="row-inline settings-language-wrap">
+        <span class="inline-label">${t("settings.language")}</span>
+        <select id="settingLanguage" class="inline-select settings-language-select">${buildLanguageOptions(data.settings.language)}</select>
+      </div>
       <span id="settingsVersion" class="build-version"></span>
     </div>
 
     <div class="section">
-      <label><input id="settingShowSearch" type="checkbox"> 显示顶部搜索框</label>
+      <label><input id="settingShowSearch" type="checkbox"> ${t("settings.showSearch")}</label>
       <div class="row-inline">
-        <span class="inline-label">福尔摩斯</span>
+        <span class="inline-label">${t("settings.searchEngine")}</span>
         <select id="settingSearchEnginePreset" class="inline-select">
           <option value="https://www.google.com/search?q=">Google</option>
           <option value="https://www.baidu.com/s?wd=">百度</option>
           <option value="https://www.bing.com/search?q=">Bing</option>
           <option value="https://www.so.com/s?q=">360</option>
           <option value="https://www.yandex.com/search/?text=">Yandex</option>
-          <option value="custom">自定义</option>
+          <option value="custom">${t("settings.searchEngine.custom")}</option>
         </select>
       </div>
       <input id="settingSearchEngine" type="text" placeholder="https://www.bing.com/search?q=" class="inline-text" />
@@ -1942,27 +2563,27 @@ function openSettingsModal() {
 
     <div class="section">
       <div class="row-inline">
-        <label><input id="settingFixedLayout" type="checkbox"> 固定列数</label>
+        <label><input id="settingFixedLayout" type="checkbox"> ${t("settings.fixedLayout")}</label>
         <div class="inline-field">
           <input id="settingCols" type="number" min="1" />
         </div>
       </div>
       <div class="row-inline density-row">
-        <span class="inline-label">卡片间隙</span>
-        <label><input type="radio" name="density" value="compact" /> 紧凑</label>
-        <label><input type="radio" name="density" value="standard" /> 标准</label>
-        <label><input type="radio" name="density" value="spacious" /> 宽松</label>
+        <span class="inline-label">${t("settings.tileGap")}</span>
+        <label><input type="radio" name="density" value="compact" /> ${t("settings.density.compact")}</label>
+        <label><input type="radio" name="density" value="standard" /> ${t("settings.density.standard")}</label>
+        <label><input type="radio" name="density" value="spacious" /> ${t("settings.density.spacious")}</label>
       </div>
     </div>
 
     <div class="section">
       <div class="row-inline">
-        <span class="inline-label">背景</span>
+        <span class="inline-label">${t("settings.background")}</span>
         <select id="settingBgType" class="inline-select">
-          <option value="bing">每日 Bing</option>
-          <option value="color">纯色</option>
-          <option value="gradient">渐变</option>
-          <option value="custom">自定义图片</option>
+          <option value="bing">${t("settings.background.bing")}</option>
+          <option value="color">${t("settings.background.color")}</option>
+          <option value="gradient">${t("settings.background.gradient")}</option>
+          <option value="custom">${t("settings.background.custom")}</option>
         </select>
       </div>
       <div id="bgColorWrap">
@@ -1970,7 +2591,7 @@ function openSettingsModal() {
         <input id="settingBgColor" type="color" />
       </div>
       <div id="bgGradientWrap">
-        <label>渐变颜色</label>
+        <label>${t("settings.gradientColor")}</label>
         <div class="row">
           <input id="settingBgGradientA" type="color" />
           <input id="settingBgGradientB" type="color" />
@@ -1982,38 +2603,38 @@ function openSettingsModal() {
 
     <div class="section">
       <div class="row-inline">
-        <span class="inline-label">背景遮罩</span>
+        <span class="inline-label">${t("settings.bgOverlay")}</span>
         <input id="settingBgOverlay" type="range" min="0" max="0.6" step="0.01" class="inline-range" />
         <span id="settingBgOverlayValue" class="inline-value"></span>
       </div>
     </div>
 
     <div class="section">
-      <label data-tooltip="开启后，鼠标悬停在快捷按钮上会显示标题和网址"><input id="settingTooltip" type="checkbox"> 显示提示</label>
-      <label data-tooltip="开启后，可使用键盘进行导航与操作（如方向键移动、回车打开）"><input id="settingKeyboard" type="checkbox"> 启用键盘导航</label>
+      <label><input id="settingTooltip" type="checkbox"> ${t("settings.tooltip")}</label>
+      <label><input id="settingKeyboard" type="checkbox"> ${t("settings.keyboard")}</label>
     </div>
 
     <div class="section">
       <div class="row-inline">
-        <span class="inline-label">主题颜色</span>
+        <span class="inline-label">${t("settings.theme")}</span>
         <select id="settingTheme" class="inline-select">
-          <option value="system">跟随系统</option>
-          <option value="light">浅色</option>
-          <option value="dark">深色</option>
+          <option value="system">${t("settings.theme.system")}</option>
+          <option value="light">${t("settings.theme.light")}</option>
+          <option value="dark">${t("settings.theme.dark")}</option>
         </select>
       </div>
     </div>
 
     <div class="section">
       <div class="row-inline">
-        <span class="inline-label">字体大小</span>
+        <span class="inline-label">${t("settings.fontSize")}</span>
         <input id="settingFontSize" type="number" min="10" max="24" class="inline-number" />
       </div>
     </div>
 
     <div class="section">
       <div class="row-inline">
-        <span class="inline-label">浏览网页时插件保存网页到分组</span>
+        <span class="inline-label">${t("settings.defaultGroup")}</span>
       </div>
       <div class="row-inline">
         <select id="settingDefaultGroupId" class="inline-select"></select>
@@ -2021,27 +2642,27 @@ function openSettingsModal() {
     </div>
 
     <div class="section">
-      <label><input id="settingSidebarCollapsed" type="checkbox"> 隐藏分组</label>
+      <label><input id="settingSidebarCollapsed" type="checkbox"> ${t("settings.hideSidebar")}</label>
     </div>
 
     <div class="section">
-      <label><input id="settingSync" type="checkbox"> 启用同步</label>
+      <label><input id="settingSync" type="checkbox"> ${t("settings.sync")}</label>
       <div class="row-inline">
-        <span class="inline-label">网页打开方式</span>
+        <span class="inline-label">${t("settings.openMode")}</span>
         <select id="settingOpenMode" class="inline-select">
-          <option value="current">本页打开</option>
-          <option value="new">新页打开</option>
-          <option value="background">后台打开</option>
+          <option value="current">${t("openMode.current")}</option>
+          <option value="new">${t("openMode.new")}</option>
+          <option value="background">${t("openMode.background")}</option>
         </select>
       </div>
       <div class="row-inline">
-        <span class="inline-label">最大备份数量（0 表示不备份）</span>
+        <span class="inline-label">${t("settings.maxBackups")}</span>
         <input id="settingBackup" type="number" min="0" class="inline-number" />
       </div>
       <div class="row-inline">
-        <span class="inline-label">重新获取失败图标（每天）</span>
+        <span class="inline-label">${t("settings.iconRetry")}</span>
         <select id="settingIconRetryHour" class="inline-select">
-          <option value="">不启用</option>
+          <option value="">${t("settings.retryDisabled")}</option>
           <option value="0">00:00</option>
           <option value="1">01:00</option>
           <option value="2">02:00</option>
@@ -2105,6 +2726,7 @@ function openSettingsModal() {
   $("settingKeyboard").checked = data.settings.keyboardNav;
   $("settingTheme").value = data.settings.theme || "system";
   $("settingFontSize").value = data.settings.fontSize || 13;
+  $("settingLanguage").value = currentLang();
   $("settingSync").checked = data.settings.syncEnabled;
   $("settingOpenMode").value = data.settings.openMode || "current";
   $("settingBackup").value = data.settings.maxBackups;
@@ -2120,7 +2742,7 @@ function openSettingsModal() {
   defaultGroupId.innerHTML = "";
   const lastOpt = document.createElement("option");
   lastOpt.value = "";
-  lastOpt.textContent = "上次添加的分组";
+  lastOpt.textContent = t("settings.lastAddedGroup");
   defaultGroupId.appendChild(lastOpt);
   data.groups
     .sort((a, b) => a.order - b.order)
@@ -2143,38 +2765,46 @@ function openSettingsModal() {
       $("settingSearchEngine").disabled = true;
     }
   });
+  $("settingLanguage").addEventListener("change", () => {
+    data.settings.language = normalizeLanguageCode($("settingLanguage").value) || detectPreferredLanguage();
+    applyStaticI18n();
+    render();
+  });
 
   $("btnExport").addEventListener("click", () => exportJsonToClipboard());
   $("btnImport").addEventListener("click", () => openImportModal());
   $("btnImportUrl").addEventListener("click", () => openImportUrlModal());
   $("btnBackupManage").addEventListener("click", () => openBackupModal());
   $("btnClearData").addEventListener("click", async () => {
-    if (!confirm("确认清空全部数据？")) return;
+    if (!confirm(t("confirm.clearData"))) return;
+    const keepLanguage = currentLang();
     data = defaultData();
+    data.settings.language = keepLanguage;
+    if (data.groups?.[0]) data.groups[0].name = t("group.default");
     activeGroupId = data.groups[0].id;
     await clearData(data.settings.syncEnabled);
     await persistData();
     closeModal();
     render();
-    toast("已清空");
+    toast(t("toast.cleared"));
   });
   $("btnClearCards").addEventListener("click", async () => {
-    if (!confirm("确认删除所有分组、卡片与卡片？（设置将保留）")) return;
+    if (!confirm(t("confirm.clearCards"))) return;
     pushBackup();
     const preservedSettings = JSON.parse(JSON.stringify(data.settings || {}));
     const groupId = `grp_${Date.now()}`;
     data.nodes = {};
-    data.groups = [{ id: groupId, name: "默认", order: 0, nodes: [] }];
+    data.groups = [{ id: groupId, name: t("group.default"), order: 0, nodes: [] }];
     data.settings = preservedSettings;
     activeGroupId = groupId;
     await persistData();
     closeModal();
     render();
-    toast("已删除所有分组、卡片与卡片，可在【备份管理】中恢复");
+    toast(t("toast.cardsCleared"));
   });
   $("btnRefreshIcons").addEventListener("click", async () => {
     await refreshAllIcons(Object.values(data.nodes));
-    toast("图标刷新完成");
+    toast(t("toast.iconsRefreshed"));
   });
 
   const saveSettings = async ({ close = false, toastOnSave = false } = {}) => {
@@ -2209,6 +2839,7 @@ function openSettingsModal() {
     data.settings.keyboardNav = $("settingKeyboard").checked;
     data.settings.fontSize = Number($("settingFontSize").value) || data.settings.fontSize;
     data.settings.theme = $("settingTheme").value;
+    data.settings.language = normalizeLanguageCode($("settingLanguage").value) || detectPreferredLanguage();
     const selectedDefaultGroupId = $("settingDefaultGroupId").value;
     data.settings.defaultGroupMode = selectedDefaultGroupId ? "fixed" : "last";
     data.settings.defaultGroupId = selectedDefaultGroupId;
@@ -2236,10 +2867,11 @@ function openSettingsModal() {
 
     applyDensity();
     applyTheme();
+    applyStaticI18n();
     await persistData();
     await loadBackground();
     render();
-    if (toastOnSave) toast("设置已保存");
+    if (toastOnSave) toast(t("settings.saved"));
     if (close) closeModal();
     settingsSaving = false;
     if (settingsSaveQueued) {
@@ -2680,7 +3312,7 @@ async function addHistoryToShortcuts(node) {
   if (!node?.url) return;
   const targetGroupId = getPreferredGroupIdForNewItem();
   if (!targetGroupId) {
-    toast("没有可用分组");
+    toast(t("group.noneAvailable"));
     return;
   }
   return addHistoryToShortcutsInGroup(node, targetGroupId);
@@ -2701,7 +3333,7 @@ function getPreferredGroupIdForNewItem() {
 function openAddHistoryToGroup(node) {
   if (!node?.url) return;
   if (!data.groups?.length) {
-    toast("没有可用分组");
+    toast(t("group.noneAvailable"));
     return;
   }
   const options = data.groups
@@ -2709,14 +3341,14 @@ function openAddHistoryToGroup(node) {
     .map((g) => `<option value="${g.id}">${g.name}</option>`)
     .join("");
   const html = `
-    <h2>添加到快捷</h2>
+    <h2>${t("context.addToShortcuts")}</h2>
     <div class="section">
-      <label>选择分组</label>
+      <label>${t("common.selectGroup")}</label>
       <select id="addHistoryGroup">${options}</select>
     </div>
     <div class="actions">
-      <button id="btnAddHistoryCancel" class="icon-btn">取消</button>
-      <button id="btnAddHistorySave" class="icon-btn">保存</button>
+      <button id="btnAddHistoryCancel" class="icon-btn">${t("common.cancel")}</button>
+      <button id="btnAddHistorySave" class="icon-btn">${t("common.save")}</button>
     </div>
   `;
   openModal(html);
@@ -2734,7 +3366,7 @@ async function addHistoryToShortcutsInGroup(node, groupId) {
   if (!node?.url) return;
   const targetGroup = data.groups.find((g) => g.id === groupId);
   if (!targetGroup) {
-    toast("分组不存在");
+    toast(t("group.notFound"));
     return;
   }
   pushBackup();
@@ -2753,7 +3385,7 @@ async function addHistoryToShortcutsInGroup(node, groupId) {
   targetGroup.nodes.push(id);
   await persistData();
   render();
-  toast("已添加到快捷");
+  toast(t("toast.addedToShortcuts"));
 }
 
 function handleSearchInput() {
@@ -2860,7 +3492,8 @@ async function init() {
     data = localData;
   }
   const deduped = dedupeData(data);
-  if (deduped) {
+  const languageInitialized = ensureLanguageSetting();
+  if (deduped || languageInitialized) {
     await saveData(data, data.settings.syncEnabled);
     if (data.settings.syncEnabled) await saveData(data, false);
   }
@@ -2894,22 +3527,24 @@ async function init() {
 }
 
 function render() {
+  applyStaticI18n();
+  applySidebarState();
   renderGroups();
   renderGrid();
   elements.topSearchWrap.classList.toggle("hidden", !data.settings.showSearch);
   elements.emptyHintToggle.checked = data.settings.emptyHintDisabled;
   elements.btnSelectAll.classList.toggle("hidden", !selectionMode);
-  elements.btnBatchDelete.textContent = selectionMode ? "删除" : "批量删";
+  elements.btnBatchDelete.textContent = selectionMode ? t("context.delete") : t("toolbar.batchDelete");
   updateOpenModeButton();
 }
 
 function updateOpenModeButton() {
   const map = {
-    current: "本页打开",
-    new: "新页打开",
-    background: "后台打开",
+    current: t("openMode.current"),
+    new: t("openMode.new"),
+    background: t("openMode.background"),
   };
-  const label = map[data.settings.openMode] || "本页打开";
+  const label = map[data.settings.openMode] || t("openMode.current");
   elements.btnOpenMode.textContent = `${label}`;
 }
 
@@ -2933,7 +3568,7 @@ function bindEvents() {
   });
   elements.btnAddGroup.addEventListener("click", () => {
     const groupId = `grp_${Date.now()}`;
-    data.groups.push({ id: groupId, name: "新分组", order: data.groups.length, nodes: [] });
+    data.groups.push({ id: groupId, name: t("group.new"), order: data.groups.length, nodes: [] });
     activeGroupId = groupId;
     data.settings.lastActiveGroupId = activeGroupId;
     persistData();
@@ -2942,12 +3577,12 @@ function bindEvents() {
 
   elements.btnBatchDelete.addEventListener("click", () => {
     if (activeGroupId === RECENT_GROUP_ID) {
-      toast("历史不可批量删除");
+      toast(t("history.batchDeleteDisabled"));
       return;
     }
     if (!selectionMode) {
       selectionMode = true;
-      toast("进入批量选择模式");
+      toast(t("selection.modeEnabled"));
       updateSelectionControls();
       return;
     }
@@ -2965,12 +3600,12 @@ function bindEvents() {
 
   elements.btnFolderBatchDelete.addEventListener("click", () => {
     if (activeGroupId === RECENT_GROUP_ID) {
-      toast("历史不可批量删除");
+      toast(t("history.batchDeleteDisabled"));
       return;
     }
     if (!selectionMode) {
       selectionMode = true;
-      toast("进入批量选择模式");
+      toast(t("selection.modeEnabled"));
       updateSelectionControls();
       return;
     }

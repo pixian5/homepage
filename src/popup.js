@@ -9,6 +9,103 @@ const MAX_LOG_ENTRIES = 30;
 const ICON_DATA_MAX_LENGTH = 2048;
 const TOAST_DURATION_MS = 3000;
 const DEFAULT_FONT_SIZE = 13;
+let popupLanguage = "zh-CN";
+const SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en", "ja", "ko", "de", "fr", "es"];
+
+const POPUP_I18N = {
+  "zh-CN": {
+    title: "添加当前标签页",
+    save: "保存",
+    saveToGroup: "保存到分组",
+    noTab: "未获取到当前标签页",
+    titlePlaceholder: "请输入标题",
+    savedToGroup: "已保存到分组：{name}",
+    unnamed: "未命名",
+    loadFailed: "加载失败，请关闭后重试",
+  },
+  "zh-TW": {
+    title: "新增目前分頁",
+    save: "儲存",
+    saveToGroup: "儲存到分組",
+    noTab: "未取得目前分頁",
+    titlePlaceholder: "請輸入標題",
+    savedToGroup: "已儲存到分組：{name}",
+    unnamed: "未命名",
+    loadFailed: "載入失敗，請關閉後重試",
+  },
+  en: {
+    title: "Add Current Tab",
+    save: "Save",
+    saveToGroup: "Save to Group",
+    noTab: "Current tab not found",
+    titlePlaceholder: "Enter title",
+    savedToGroup: "Saved to group: {name}",
+    unnamed: "Unnamed",
+    loadFailed: "Load failed, close and retry",
+  },
+};
+
+function normalizeLanguage(input) {
+  if (!input) return "";
+  const raw = String(input).trim().replace(/_/g, "-").toLowerCase();
+  if (!raw) return "";
+  if (raw === "zh" || raw.startsWith("zh-hans") || raw.startsWith("zh-cn") || raw.startsWith("zh-sg")) return "zh-CN";
+  if (raw.startsWith("zh-hant") || raw.startsWith("zh-tw") || raw.startsWith("zh-hk") || raw.startsWith("zh-mo")) return "zh-TW";
+  if (raw.startsWith("ja")) return "ja";
+  if (raw.startsWith("ko")) return "ko";
+  if (raw.startsWith("de")) return "de";
+  if (raw.startsWith("fr")) return "fr";
+  if (raw.startsWith("es")) return "es";
+  if (raw.startsWith("en")) return "en";
+  return "";
+}
+
+function detectSystemLanguage() {
+  try {
+    return normalizeLanguage(Intl?.DateTimeFormat?.().resolvedOptions?.().locale || "");
+  } catch (e) {
+    return "";
+  }
+}
+
+function detectBrowserLanguage() {
+  const api = getChrome();
+  const candidates = [
+    api?.i18n?.getUILanguage?.(),
+    navigator?.language,
+    ...(Array.isArray(navigator?.languages) ? navigator.languages : []),
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeLanguage(candidate);
+    if (SUPPORTED_LANGUAGES.includes(normalized)) return normalized;
+  }
+  return "";
+}
+
+function detectPreferredLanguage() {
+  return detectSystemLanguage() || detectBrowserLanguage() || "zh-CN";
+}
+
+function tr(key, language, vars = null) {
+  const lang = normalizeLanguage(language) || "zh-CN";
+  const dict = POPUP_I18N[lang] || POPUP_I18N.en || POPUP_I18N["zh-CN"];
+  let text = dict[key] || POPUP_I18N.en?.[key] || POPUP_I18N["zh-CN"]?.[key] || key;
+  if (!vars) return text;
+  return text.replace(/\{(\w+)\}/g, (_, name) => (vars[name] ?? ""));
+}
+
+function applyPopupI18n(language) {
+  document.documentElement.lang = normalizeLanguage(language) || "zh-CN";
+  document.title = tr("title", language);
+  const title = document.querySelector(".header .title");
+  if (title) title.textContent = tr("title", language);
+  const saveBtn = document.getElementById("btnSave");
+  if (saveBtn) saveBtn.textContent = tr("save", language);
+  const label = document.querySelector(".section .label");
+  if (label) label.textContent = tr("saveToGroup", language);
+  const empty = document.getElementById("empty");
+  if (empty) empty.textContent = tr("noTab", language);
+}
 
 /**
  * 获取浏览器 API
@@ -270,7 +367,7 @@ function renderTab(tab) {
   titleInput.className = "tab-title-input";
   titleInput.type = "text";
   titleInput.value = tab.title || tab.url || "";
-  titleInput.placeholder = "请输入标题";
+  titleInput.placeholder = tr("titlePlaceholder", popupLanguage);
   titleInput.spellcheck = false;
   const urlDiv = document.createElement("div");
   urlDiv.className = "tab-url";
@@ -488,6 +585,8 @@ async function showToastInTab(tab, message, fontSize) {
  */
 async function init() {
   const { data } = await loadLatestData();
+  popupLanguage = normalizeLanguage(data?.settings?.language || detectPreferredLanguage()) || "zh-CN";
+  applyPopupI18n(popupLanguage);
   const tab = await getCurrentTab();
   const fixedId = data?.settings?.defaultGroupId;
   const isFixed = data?.settings?.defaultGroupMode === "fixed";
@@ -496,7 +595,7 @@ async function init() {
     if (tab) {
       const result = await saveToGroup(tab, fixedId);
       if (result) {
-        await showToastInTab(tab, `已保存到分组：${result.groupName || "未命名"}`, result.fontSize);
+        await showToastInTab(tab, tr("savedToGroup", popupLanguage, { name: result.groupName || tr("unnamed", popupLanguage) }), result.fontSize);
       }
     }
     window.close();
@@ -520,7 +619,7 @@ async function init() {
     const customTitle = tabTitleInput ? tabTitleInput.value : "";
     const result = await saveToGroup(tab, selectedGroupId, customTitle);
     if (result) {
-      await showToastInTab(tab, `已保存到分组：${result.groupName || "未命名"}`, result.fontSize);
+      await showToastInTab(tab, tr("savedToGroup", popupLanguage, { name: result.groupName || tr("unnamed", popupLanguage) }), result.fontSize);
     }
     window.close();
   });
@@ -530,7 +629,7 @@ init().catch((error) => {
   console.error("popup init failed", error);
   const empty = document.getElementById("empty");
   if (empty) {
-    empty.textContent = "加载失败，请关闭后重试";
+    empty.textContent = tr("loadFailed", popupLanguage || detectPreferredLanguage());
     empty.classList.remove("hidden");
   }
   document.body.classList.remove("hidden");

@@ -14,7 +14,13 @@ body {
   width: 320px;
   font-size: 13px;
 }
-.header { margin-bottom: 10px; }
+.header {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
 .title { font-size: 1.1em; font-weight: 600; color: #ffffff; }
 
 .tab-card {
@@ -55,7 +61,6 @@ body {
   padding: 6px 8px;
   font-size: inherit;
 }
-.actions { margin-top: 12px; display: flex; justify-content: flex-end; }
 .btn {
   border: 1px solid rgba(255,255,255,0.12);
   background: rgba(18, 22, 30, 0.7);
@@ -64,6 +69,7 @@ body {
   padding: 6px 12px;
   cursor: pointer;
   font-size: inherit;
+  white-space: nowrap;
 }
 .btn.primary { background: rgba(77, 214, 168, 0.2); border-color: rgba(77, 214, 168, 0.4); }
 .empty { color: var(--muted); font-size: 12px; text-align: center; padding: 12px; }

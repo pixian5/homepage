@@ -2186,8 +2186,18 @@ function createFormSection(labelText, inputEl) {
   return section;
 }
 
+function parseModalHtml(html) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<div id="modal-root">${html}</div>`, "text/html");
+  const root = doc.getElementById("modal-root");
+  const fragment = document.createDocumentFragment();
+  if (!root) return fragment;
+  fragment.append(...Array.from(root.childNodes).map((node) => document.importNode(node, true)));
+  return fragment;
+}
+
 function openModal(html) {
-  elements.modal.innerHTML = html;
+  elements.modal.replaceChildren(parseModalHtml(html));
   elements.modalOverlay.removeAttribute("inert");
   elements.modalOverlay.classList.remove("hidden");
   elements.modalOverlay.setAttribute("aria-hidden", "false");
@@ -2201,7 +2211,7 @@ function closeModal() {
   elements.modalOverlay.setAttribute("inert", "");
   elements.modalOverlay.classList.add("hidden");
   elements.modalOverlay.setAttribute("aria-hidden", "true");
-  elements.modal.innerHTML = "";
+  elements.modal.replaceChildren();
   settingsOpen = false;
   settingsSaving = false;
   settingsSaveQueued = false;

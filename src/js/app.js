@@ -292,6 +292,7 @@ const I18N = {
     "group.notFound": "分组不存在",
     "common.selectGroup": "选择分组",
     "toast.addedToShortcuts": "已添加到快捷",
+    "import.noUrls": "没有可导入的网址",
   },
   "zh-TW": {
     "app.title": "我的首頁",
@@ -496,6 +497,7 @@ const I18N = {
     "group.notFound": "Group not found",
     "common.selectGroup": "Select Group",
     "toast.addedToShortcuts": "Added to shortcuts",
+    "import.noUrls": "No URLs to import",
   },
   ja: {
     "app.title": "マイホーム",
@@ -3052,7 +3054,7 @@ async function openImportModal() {
 
 function openImportUrlModal() {
   if (!data.groups?.length) {
-    toast("没有可用分组");
+    toast(t("group.noneAvailable"));
     return;
   }
   const options = data.groups
@@ -3094,7 +3096,7 @@ function openImportUrlModal() {
     const groupId = groupSelect.value;
     const group = data.groups.find((g) => g.id === groupId);
     if (!group) {
-      toast("分组不存在");
+      toast(t("group.notFound"));
       return;
     }
     const rawText = $("importUrlText").value || "";
@@ -3113,7 +3115,7 @@ function openImportUrlModal() {
       urls.push(normalized);
     }
     if (!urls.length) {
-      toast("没有可导入的网址");
+      toast(t("import.noUrls"));
       return;
     }
     if (!Array.isArray(group.nodes)) group.nodes = [];

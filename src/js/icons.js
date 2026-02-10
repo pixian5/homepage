@@ -170,6 +170,20 @@ function shouldSkipCandidate(candidate) {
   }
 }
 
+function sanitizeCachedIconUrl(cache, key) {
+  const entry = cache[key];
+  if (!entry?.url) return "";
+  const normalized = normalizeCandidateUrl(entry.url);
+  if (!normalized || shouldSkipCandidate(normalized)) {
+    delete cache[key];
+    return "";
+  }
+  if (entry.url !== normalized) {
+    cache[key] = { ...entry, url: normalized };
+  }
+  return normalized;
+}
+
 function isExtensionContext() {
   try {
     if (typeof window === "undefined" || !window.location?.protocol) return false;
@@ -235,11 +249,15 @@ export async function resolveIcon(node, settings) {
   }
 
   if (node.iconType === "remote" && node.iconData) {
+    const remoteUrl = normalizeCandidateUrl(node.iconData);
+    if (!remoteUrl || shouldSkipCandidate(remoteUrl)) {
+      return avatarDataUrl(base, node.color || hashColor(base));
+    }
     if (siteKey && !cache[siteKey]) {
-      cache[siteKey] = { url: node.iconData, ts: Date.now() };
+      cache[siteKey] = { url: remoteUrl, ts: Date.now() };
       await saveIconCache(cache);
     }
-    return node.iconData;
+    return remoteUrl;
   }
 
   if (node.iconType === "color") {
@@ -251,12 +269,33 @@ export async function resolveIcon(node, settings) {
     return dataUrl;
   }
 
+  let cacheChanged = false;
+
   if (siteKey && cache[siteKey]) {
-    return cache[siteKey].url || cache[siteKey].dataUrl;
+    const safeUrl = sanitizeCachedIconUrl(cache, siteKey);
+    if (!safeUrl && !cache[siteKey]) cacheChanged = true;
+    if (safeUrl) {
+      if (cacheChanged) await saveIconCache(cache);
+      return safeUrl;
+    }
+    if (cache[siteKey]?.dataUrl) {
+      if (cacheChanged) await saveIconCache(cache);
+      return cache[siteKey].dataUrl;
+    }
   }
 
-  if (cache[cacheKey]?.url) return cache[cacheKey].url;
-  if (cache[cacheKey]?.dataUrl) return cache[cacheKey].dataUrl;
+  if (cache[cacheKey]) {
+    const safeUrl = sanitizeCachedIconUrl(cache, cacheKey);
+    if (!safeUrl && !cache[cacheKey]) cacheChanged = true;
+    if (safeUrl) {
+      if (cacheChanged) await saveIconCache(cache);
+      return safeUrl;
+    }
+    if (cache[cacheKey]?.dataUrl) {
+      if (cacheChanged) await saveIconCache(cache);
+      return cache[cacheKey].dataUrl;
+    }
+  }
 
   if (node.iconType === "letter") {
     const dataUrl = avatarDataUrl(base, node.color || hashColor(base));
@@ -270,6 +309,10 @@ export async function resolveIcon(node, settings) {
   if (settings.iconFetch && node.url) {
     const finalUrl = await resolveFinalUrl(node.url);
     const url = buildFaviconUrl(finalUrl);
+    if (!url) {
+      if (cacheChanged) await saveIconCache(cache);
+      return avatarDataUrl(base, node.color || hashColor(base));
+    }
     cache[cacheKey] = { url, ts: Date.now() };
     if (siteKey && !cache[siteKey]) {
       cache[siteKey] = { url, ts: Date.now() };

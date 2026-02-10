@@ -52,6 +52,11 @@ const SPECIAL_FAVICONS = {
   ],
 };
 const ROOT_REUSE_BLOCKLIST = new Set(["google.com"]);
+const FIREFOX_EXTENSION_CORP_BLOCKLIST = new Set([
+  "mail.google.com",
+  "chatgpt.com",
+  "openai.com",
+]);
 const FINAL_URL_CACHE = new Map();
 
 function hashColor(str) {
@@ -123,17 +128,45 @@ export function getFaviconCandidates(pageUrl) {
     const special = SPECIAL_FAVICONS[host] || [];
     const root = getRootDomain(host);
     const rootHost = root && root !== host && !ROOT_REUSE_BLOCKLIST.has(root) ? root : "";
-    return [
+    const rawCandidates = [
       ...special,
       `${u.origin}/favicon.ico`,
       rootHost ? `${FAVICON_API}${encodeURIComponent(rootHost)}&sz=128` : "",
       `${FAVICON_API}${encodeURIComponent(host)}&sz=128`,
       rootHost ? `https://icons.duckduckgo.com/ip3/${rootHost}.ico` : "",
       `https://icons.duckduckgo.com/ip3/${host}.ico`,
-    ].filter(Boolean);
+    ];
+    const normalized = rawCandidates
+      .map((candidate) => normalizeCandidateUrl(candidate))
+      .filter(Boolean);
+    const filtered = normalized.filter((candidate) => !shouldSkipCandidate(candidate));
+    return Array.from(new Set(filtered));
   } catch (e) {
     // URL 解析失败是预期行为
     return [];
+  }
+}
+
+function normalizeCandidateUrl(raw) {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === "http:") parsed.protocol = "https:";
+    return parsed.toString();
+  } catch (e) {
+    // 非法 URL 直接丢弃
+    return "";
+  }
+}
+
+function shouldSkipCandidate(candidate) {
+  try {
+    if (!isExtensionContext()) return false;
+    if (!/firefox/i.test(navigator?.userAgent || "")) return false;
+    const host = new URL(candidate).hostname;
+    return FIREFOX_EXTENSION_CORP_BLOCKLIST.has(host);
+  } catch (e) {
+    // 容错：解析失败不跳过
+    return false;
   }
 }
 

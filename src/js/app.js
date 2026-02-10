@@ -3914,5 +3914,7 @@ function bindEvents() {
   });
 }
 
-init();
-bindEvents();
+(async () => {
+  await init();
+  bindEvents();
+})();

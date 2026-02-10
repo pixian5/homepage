@@ -1,6 +1,6 @@
 ﻿import { loadIconCache, saveIconCache } from "./storage.js";
 
-const FAVICON_API = "https://www.google.com/s2/favicons?domain=";
+const FAVICON_API = "https://www.google.com/s2/favicons";
 const MULTI_PART_TLDS = new Set([
   "co.uk",
   "org.uk",
@@ -130,11 +130,11 @@ export function getFaviconCandidates(pageUrl) {
     const rootHost = root && root !== host && !ROOT_REUSE_BLOCKLIST.has(root) ? root : "";
     const rawCandidates = [
       ...special,
-      `${u.origin}/favicon.ico`,
-      rootHost ? `${FAVICON_API}${encodeURIComponent(rootHost)}&sz=128` : "",
-      `${FAVICON_API}${encodeURIComponent(host)}&sz=128`,
+      rootHost ? buildGoogleFaviconUrl(rootHost) : "",
+      buildGoogleFaviconUrl(host),
       rootHost ? `https://icons.duckduckgo.com/ip3/${rootHost}.ico` : "",
       `https://icons.duckduckgo.com/ip3/${host}.ico`,
+      `${u.origin}/favicon.ico`,
     ];
     const normalized = rawCandidates
       .map((candidate) => normalizeCandidateUrl(candidate))
@@ -145,6 +145,10 @@ export function getFaviconCandidates(pageUrl) {
     // URL 解析失败是预期行为
     return [];
   }
+}
+
+function buildGoogleFaviconUrl(host) {
+  return `${FAVICON_API}?sz=128&domain_url=${encodeURIComponent(`https://${host}`)}`;
 }
 
 function normalizeCandidateUrl(raw) {

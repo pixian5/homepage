@@ -1404,14 +1404,12 @@ async function renderGrid() {
     const iconSrc = await resolveIcon(node, data.settings);
     img.src = iconSrc;
     if (node.url && data.settings.iconFetch && !iconSrc.startsWith("data:")) {
-      const candidates = getFaviconCandidates(node.url);
-      if (candidates.length) {
-        let idx = Math.max(0, candidates.indexOf(iconSrc));
-        img.onerror = () => {
-          idx += 1;
-          if (idx < candidates.length) img.src = candidates[idx];
-        };
-      }
+      const fallback = letterIconDataUrl(node.title || node.url || "?", node.color);
+      img.onerror = async () => {
+        img.onerror = null;
+        img.src = fallback;
+        await markIconLoadFailed(node.url);
+      };
     }
     if (seq !== renderSeq) return;
     icon.appendChild(img);
@@ -3213,6 +3211,37 @@ function readFileAsDataUrl(file) {
   });
 }
 
+function letterIconDataUrl(text, color) {
+  const base = text || "?";
+  let hash = 0;
+  for (let i = 0; i < base.length; i++) {
+    hash = base.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const c = (hash & 0x00ffffff).toString(16).toUpperCase();
+  const bg = color || `#${"00000".substring(0, 6 - c.length)}${c}`;
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, 128, 128);
+  ctx.fillStyle = "rgba(255,255,255,0.9)";
+  ctx.font = "bold 64px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(base.slice(0, 1).toUpperCase(), 64, 72);
+  return canvas.toDataURL("image/png");
+}
+
+async function markIconLoadFailed(url) {
+  if (!url) return;
+  const cache = await loadIconCache();
+  cache[url] = { failed: true, ts: Date.now() };
+  const siteKey = getSiteKey(url);
+  if (siteKey) cache[siteKey] = { failed: true, ts: Date.now() };
+  await saveIconCache(cache);
+}
+
 function probeImage(url, timeoutMs = ICON_PROBE_TIMEOUT_MS) {
   return new Promise((resolve) => {
     let done = false;
@@ -3264,6 +3293,9 @@ async function fetchFaviconInBackground(nodeId, url) {
   const target = data?.nodes?.[nodeId];
   if (target) {
     target.iconPending = false;
+    cache[url] = { failed: true, ts: Date.now() };
+    if (siteKey) cache[siteKey] = { failed: true, ts: Date.now() };
+    await saveIconCache(cache);
     await persistData();
     render();
   }

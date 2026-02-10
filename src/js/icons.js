@@ -58,6 +58,7 @@ const FIREFOX_EXTENSION_CORP_BLOCKLIST = new Set([
   "openai.com",
 ]);
 const FINAL_URL_CACHE = new Map();
+const ICON_FAILURE_TTL_MS = 24 * 60 * 60 * 1000;
 
 function hashColor(str) {
   let hash = 0;
@@ -134,7 +135,6 @@ export function getFaviconCandidates(pageUrl) {
       buildGoogleFaviconUrl(host),
       rootHost ? `https://icons.duckduckgo.com/ip3/${rootHost}.ico` : "",
       `https://icons.duckduckgo.com/ip3/${host}.ico`,
-      `${u.origin}/favicon.ico`,
     ];
     const normalized = rawCandidates
       .map((candidate) => normalizeCandidateUrl(candidate))
@@ -176,6 +176,7 @@ function shouldSkipCandidate(candidate) {
 
 function sanitizeCachedIconUrl(cache, key) {
   const entry = cache[key];
+  if (isFailedCacheEntry(entry)) return "";
   if (!entry?.url) return "";
   const normalized = normalizeCandidateUrl(entry.url);
   if (!normalized || shouldSkipCandidate(normalized)) {
@@ -186,6 +187,12 @@ function sanitizeCachedIconUrl(cache, key) {
     cache[key] = { ...entry, url: normalized };
   }
   return normalized;
+}
+
+function isFailedCacheEntry(entry) {
+  if (!entry?.failed) return false;
+  if (!entry.ts) return true;
+  return Date.now() - entry.ts < ICON_FAILURE_TTL_MS;
 }
 
 function isExtensionContext() {
@@ -276,6 +283,9 @@ export async function resolveIcon(node, settings) {
   let cacheChanged = false;
 
   if (siteKey && cache[siteKey]) {
+    if (isFailedCacheEntry(cache[siteKey])) {
+      return avatarDataUrl(base, node.color || hashColor(base));
+    }
     const safeUrl = sanitizeCachedIconUrl(cache, siteKey);
     if (!safeUrl && !cache[siteKey]) cacheChanged = true;
     if (safeUrl) {
@@ -289,6 +299,9 @@ export async function resolveIcon(node, settings) {
   }
 
   if (cache[cacheKey]) {
+    if (isFailedCacheEntry(cache[cacheKey])) {
+      return avatarDataUrl(base, node.color || hashColor(base));
+    }
     const safeUrl = sanitizeCachedIconUrl(cache, cacheKey);
     if (!safeUrl && !cache[cacheKey]) cacheChanged = true;
     if (safeUrl) {

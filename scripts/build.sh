@@ -103,9 +103,10 @@ normalize_safari_host_app_sources() {
   local project_root="$1"
   local project_file="$project_root/我的首页 Safari.xcodeproj/project.pbxproj"
   local view_controller_file="$project_root/Shared (App)/ViewController.swift"
+  local view_controller_template="$ROOT_DIR/scripts/templates/safari/ViewController.swift"
   local app_bundle_id extension_bundle_id
 
-  if [[ ! -f "$project_file" || ! -f "$view_controller_file" ]]; then
+  if [[ ! -f "$project_file" || ! -f "$view_controller_template" ]]; then
     return 0
   fi
 
@@ -122,7 +123,7 @@ normalize_safari_host_app_sources() {
 
   extension_bundle_id="${app_bundle_id}.extension"
   echo "[build] Normalize Safari host source extension id -> $extension_bundle_id"
-  perl -0pi -e "s/let extensionBundleIdentifier = \"[^\"]+\"/let extensionBundleIdentifier = \"${extension_bundle_id}\"/g" "$view_controller_file"
+  perl -0pe "s/__SAFARI_EXTENSION_BUNDLE_ID__/${extension_bundle_id}/g" "$view_controller_template" > "$view_controller_file"
 }
 
 build_safari_project() {

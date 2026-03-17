@@ -99,6 +99,32 @@ normalize_safari_project_bundle_ids() {
   perl -0pi -e "s/PRODUCT_BUNDLE_IDENTIFIER = \\Q${app_bundle_id}\\E\\.(?:Extension|extension);/PRODUCT_BUNDLE_IDENTIFIER = ${extension_bundle_id};/g" "$pbxproj_file"
 }
 
+normalize_safari_host_app_sources() {
+  local project_root="$1"
+  local project_file="$project_root/我的首页 Safari.xcodeproj/project.pbxproj"
+  local view_controller_file="$project_root/Shared (App)/ViewController.swift"
+  local app_bundle_id extension_bundle_id
+
+  if [[ ! -f "$project_file" || ! -f "$view_controller_file" ]]; then
+    return 0
+  fi
+
+  app_bundle_id="$(
+    grep 'PRODUCT_BUNDLE_IDENTIFIER = ' "$project_file" \
+      | grep -vE '\.(Extension|extension);' \
+      | head -n 1 \
+      | sed -E 's/.*PRODUCT_BUNDLE_IDENTIFIER = ([^;]+);/\1/'
+  )"
+
+  if [[ -z "$app_bundle_id" ]]; then
+    return 0
+  fi
+
+  extension_bundle_id="${app_bundle_id}.extension"
+  echo "[build] Normalize Safari host source extension id -> $extension_bundle_id"
+  perl -0pi -e "s/let extensionBundleIdentifier = \"[^\"]+\"/let extensionBundleIdentifier = \"${extension_bundle_id}\"/g" "$view_controller_file"
+}
+
 build_safari_project() {
   if ! command -v xcrun >/dev/null 2>&1; then
     echo "[build] xcrun not found, skip Safari app project generation"
@@ -127,6 +153,7 @@ build_safari_project() {
       --no-prompt
     normalize_safari_project_signing "$project_file"
     normalize_safari_project_bundle_ids "$project_file"
+    normalize_safari_host_app_sources "$project_root"
     sync_safari_project_resources "$project_root"
     return 0
   fi
@@ -148,6 +175,7 @@ build_safari_project() {
     project_root="$(dirname "$project_file")"
     normalize_safari_project_signing "$project_file"
     normalize_safari_project_bundle_ids "$project_file"
+    normalize_safari_host_app_sources "$project_root"
     sync_safari_project_resources "$project_root"
   fi
 }

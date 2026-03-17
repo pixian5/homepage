@@ -398,6 +398,12 @@ npm run build
 NO_PAUSE=1 ./dist/build-macos.command
 ```
 
+说明：
+
+- `dist/build-macos.command` 默认使用 Xcode `Release` 配置构建 Safari 宿主 App，避免 `Debug` 产物注入 `__preview.dylib` / `*.debug.dylib` 导致 Safari 扩展新标签页空白。
+- 若本机钥匙串存在 `Apple Development` 证书，`dist/build-macos.command` 会在 Xcode 构建后自动对 Safari 宿主 App 与 `.appex` 进行二次开发签名，避免 Safari 启动后清空新标签页接管设置。
+- 如需临时切回其他配置，可在命令前覆盖环境变量：`SAFARI_XCODE_CONFIGURATION=Debug NO_PAUSE=1 ./dist/build-macos.command`
+
 执行链：
 
 1. `prebuild` -> `scripts/bump-version.mjs` 自动版本 +0.1

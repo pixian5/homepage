@@ -8,6 +8,40 @@ SRC_DIR="${ROOT_DIR}/src"
 SAFARI_PROJECT_DIR="${DIST_DIR}/safari-app"
 SAFARI_BUILD_DIR="${SAFARI_PROJECT_DIR}/build"
 SAFARI_APP_NAME="${SAFARI_APP_NAME:-我的首页 Safari}"
+SAFARI_XCODE_CONFIGURATION="${SAFARI_XCODE_CONFIGURATION:-Release}"
+
+detect_apple_development_identity() {
+  security find-identity -p codesigning -v 2>/dev/null \
+    | sed -n 's/.*"\(Apple Development: .* ([A-Z0-9]\{10\})\)".*/\1/p' \
+    | head -n 1
+}
+
+post_sign_safari_app() {
+  local app_path="$1"
+  local configuration="$2"
+  local identity app_xcent appex_xcent appex_path
+
+  identity="$(detect_apple_development_identity)"
+  if [[ -z "${identity}" ]]; then
+    echo "[build] Skip post-sign: no Apple Development identity found"
+    return 0
+  fi
+
+  appex_path="${app_path}/Contents/PlugIns/${SAFARI_APP_NAME} Extension.appex"
+  app_xcent="${SAFARI_BUILD_DIR}/Build/Intermediates.noindex/我的首页 Safari.build/${configuration}/我的首页 Safari (macOS).build/${SAFARI_APP_NAME}.app.xcent"
+  appex_xcent="${SAFARI_BUILD_DIR}/Build/Intermediates.noindex/我的首页 Safari.build/${configuration}/我的首页 Safari Extension (macOS).build/${SAFARI_APP_NAME} Extension.appex.xcent"
+
+  if [[ ! -d "${appex_path}" || ! -f "${app_xcent}" || ! -f "${appex_xcent}" ]]; then
+    echo "[build] Skip post-sign: signing inputs missing"
+    return 0
+  fi
+
+  echo "[build] Post-sign Safari app with Apple Development identity: ${identity}"
+  /usr/bin/codesign --force --sign "${identity}" --entitlements "${appex_xcent}" --timestamp=none --options runtime "${appex_path}"
+  /usr/bin/codesign --force --sign "${identity}" --entitlements "${app_xcent}" --timestamp=none --options runtime "${app_path}"
+  /usr/bin/codesign --verify --verbose=2 "${appex_path}"
+  /usr/bin/codesign --verify --verbose=2 "${app_path}"
+}
 
 echo "[build] ROOT_DIR=${ROOT_DIR}"
 
@@ -43,7 +77,7 @@ if [[ -n "${PROJECT_FILE}" ]]; then
   XCODEBUILD_ARGS=(
     -project "${PROJECT_FILE}"
     -scheme "${SCHEME_NAME}"
-    -configuration Debug
+    -configuration "${SAFARI_XCODE_CONFIGURATION}"
     -derivedDataPath "${SAFARI_BUILD_DIR}"
   )
 
@@ -53,8 +87,9 @@ if [[ -n "${PROJECT_FILE}" ]]; then
 
   xcodebuild "${XCODEBUILD_ARGS[@]}" build
 
-  APP_PATH="${SAFARI_BUILD_DIR}/Build/Products/Debug/${SAFARI_APP_NAME}.app"
+  APP_PATH="${SAFARI_BUILD_DIR}/Build/Products/${SAFARI_XCODE_CONFIGURATION}/${SAFARI_APP_NAME}.app"
   if [[ -d "${APP_PATH}" ]]; then
+    post_sign_safari_app "${APP_PATH}" "${SAFARI_XCODE_CONFIGURATION}"
     open "${APP_PATH}"
     echo "[build] launched: ${APP_PATH}"
   fi

@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "我的首页",
-  "version": "12.0",
+  "version": "12.1",
   "description": "自定义新标签页",
   "browser_action": {
     "default_title": "保存当前网页",
@@ -35,14 +35,7 @@
   "content_security_policy": "script-src 'self'; object-src 'self'; img-src 'self' data: https: http:;",
   "browser_specific_settings": {
     "gecko": {
-      "id": "homepage@pixian5.github.io",
-      "strict_min_version": "142.0",
-      "data_collection_permissions": {
-        "required": [
-          "none"
-        ],
-        "optional": []
-      }
+      "id": "homepage@pixian5.github.io"
     }
   },
   "icons": {

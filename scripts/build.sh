@@ -15,8 +15,24 @@ copy_target() {
   local manifest_file="$1"
   local target_dir="$2"
   mkdir -p "$target_dir"
-  rsync -a --delete "$SRC_DIR/" "$target_dir/"
+  rsync -a --delete \
+    --exclude '.DS_Store' \
+    --exclude '__MACOSX' \
+    "$SRC_DIR/" "$target_dir/"
   cp "$ROOT_DIR/$manifest_file" "$target_dir/manifest.json"
+  find "$target_dir" \( -name '.DS_Store' -o -name '__MACOSX' \) -exec rm -rf {} +
+}
+
+package_target_dir() {
+  local source_dir="$1"
+  local output_file="$2"
+  (
+    cd "$source_dir"
+    zip -X -r -q "$output_file" . \
+      -x '*.DS_Store' \
+      -x '__MACOSX/*' \
+      -x '*/__MACOSX/*'
+  )
 }
 
 detect_apple_development_team() {
@@ -189,13 +205,10 @@ copy_target "manifest.safari.json" "$SAFARI_DIR"
 
 node "$ROOT_DIR/scripts/bundle-firefox.mjs"
 
-(
-  cd "$DIST_DIR"
-  zip -r -q chrome.zip chrome
-  zip -r -q firefox.zip firefox
-  cp firefox.zip firefox.xpi
-  zip -r -q safari.zip safari
-)
+package_target_dir "$CHROME_DIR" "$DIST_DIR/chrome.zip"
+package_target_dir "$FIREFOX_DIR" "$DIST_DIR/firefox.zip"
+cp "$DIST_DIR/firefox.zip" "$DIST_DIR/firefox.xpi"
+package_target_dir "$SAFARI_DIR" "$DIST_DIR/safari.zip"
 
 build_safari_project
 

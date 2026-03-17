@@ -11,6 +11,7 @@ if exist "%CHROME%" rmdir /s /q "%CHROME%"
 if exist "%FIREFOX%" rmdir /s /q "%FIREFOX%"
 if exist "%DIST%\chrome.zip" del /q "%DIST%\chrome.zip"
 if exist "%DIST%\firefox.zip" del /q "%DIST%\firefox.zip"
+if exist "%DIST%\firefox.xpi" del /q "%DIST%\firefox.xpi"
 
 mkdir "%CHROME%"
 mkdir "%FIREFOX%"
@@ -35,6 +36,11 @@ if errorlevel 1 (
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\zip-normalized.ps1" -SourceDir "%DIST%\firefox" -DestinationZip "%DIST%\firefox.zip"
 if errorlevel 1 (
   echo [build] Failed to package firefox.zip
+  exit /b 1
+)
+copy /Y "%DIST%\firefox.zip" "%DIST%\firefox.xpi" >nul
+if errorlevel 1 (
+  echo [build] Failed to create firefox.xpi
   exit /b 1
 )
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\zip-normalized.ps1" -SourceDir "%DIST%\chrome" -DestinationZip "%DIST%\chrome.zip"

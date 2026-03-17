@@ -379,6 +379,10 @@ scripts/
 
 ## 11. 构建与发布
 
+补充文档：
+
+- Safari 专项说明见 [Safari说明.md](/Users/x/code/homepage/Safari说明.md)
+
 ## 11.1 前置条件
 
 - Node.js（用于脚本）

@@ -23,17 +23,35 @@ bash "${ROOT_DIR}/scripts/build.sh"
 
 PROJECT_FILE="$(find "${SAFARI_PROJECT_DIR}" -maxdepth 3 -name '*.xcodeproj' -print -quit)"
 if [[ -n "${PROJECT_FILE}" ]]; then
+  SCHEME_NAME="$(
+    xcodebuild -list -project "${PROJECT_FILE}" 2>/dev/null \
+      | sed -n '/Schemes:/,$p' \
+      | sed '1d' \
+      | sed 's/^[[:space:]]*//' \
+      | grep '(macOS)' \
+      | head -n 1
+  )"
+  if [[ -z "${SCHEME_NAME}" ]]; then
+    SCHEME_NAME="${SAFARI_APP_NAME}"
+  fi
+
   APP_PROCESS_NAME="${SAFARI_APP_NAME}"
   pkill -x "${APP_PROCESS_NAME}" >/dev/null 2>&1 || true
   pkill -f "${APP_PROCESS_NAME}.app" >/dev/null 2>&1 || true
   rm -rf "${SAFARI_BUILD_DIR}"
 
-  xcodebuild \
-    -project "${PROJECT_FILE}" \
-    -scheme "${SAFARI_APP_NAME}" \
-    -configuration Debug \
-    -derivedDataPath "${SAFARI_BUILD_DIR}" \
-    build
+  XCODEBUILD_ARGS=(
+    -project "${PROJECT_FILE}"
+    -scheme "${SCHEME_NAME}"
+    -configuration Debug
+    -derivedDataPath "${SAFARI_BUILD_DIR}"
+  )
+
+  if [[ "${SAFARI_ENABLE_TEAM_SIGNING:-0}" == "1" ]]; then
+    XCODEBUILD_ARGS+=(-allowProvisioningUpdates)
+  fi
+
+  xcodebuild "${XCODEBUILD_ARGS[@]}" build
 
   APP_PATH="${SAFARI_BUILD_DIR}/Build/Products/Debug/${SAFARI_APP_NAME}.app"
   if [[ -d "${APP_PATH}" ]]; then

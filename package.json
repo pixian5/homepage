@@ -1,6 +1,6 @@
-﻿{
+{
   "name": "newtab-extension",
-  "version": "9.8",
+  "version": "11.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,4 +11,3 @@
     "build:safari": "bash scripts/build.sh"
   }
 }
-

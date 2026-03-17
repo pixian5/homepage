@@ -3947,6 +3947,16 @@ function bindEvents() {
 }
 
 (async () => {
-  await init();
-  bindEvents();
+  try {
+    await init();
+    bindEvents();
+  } catch (error) {
+    console.error("homepage init failed", error);
+    if (typeof window !== "undefined" && typeof window.__homepageRenderFatalError === "function") {
+      window.__homepageRenderFatalError(
+        "我的首页启动失败",
+        error?.stack || error?.message || String(error || "未知错误")
+      );
+    }
+  }
 })();

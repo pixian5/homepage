@@ -1,4 +1,4 @@
-﻿# 我的首页（Chrome / Firefox 新标签页扩展）
+﻿# 我的首页（Chrome / Firefox / Safari 新标签页扩展）
 
 > 本文档基于当前仓库源码（`src/` + `scripts/` + `manifest.*.json`）整理，重点是“实现现状”而不是需求设想。
 
@@ -6,7 +6,7 @@
 
 这是一个浏览器扩展，用来替换浏览器新标签页，提供可维护的快捷入口面板，支持：
 
-- 新标签页接管（Chrome MV3 / Firefox MV2）
+- 新标签页接管（Chrome MV3 / Firefox MV2 / Safari Web Extension）
 - 分组与文件夹管理
 - 快捷卡片增删改查、拖拽排序
 - 最近历史页（读取浏览器历史）
@@ -107,7 +107,8 @@
 ## 3.3 构建模块
 
 - `scripts/build.sh`
-  - 复制 `src` 到 `dist/chrome`、`dist/firefox`，写入对应 manifest，打包 zip/xpi。
+  - 复制 `src` 到 `dist/chrome`、`dist/firefox`、`dist/safari`，写入对应 manifest，打包 zip/xpi；
+  - 在 macOS 上调用 `safari-web-extension-converter` 生成 `dist/safari-app` 宿主工程。
 - `scripts/bundle-firefox.mjs`
   - 将 Firefox 的 `app.js` 依赖打包为内联脚本；
   - 计算内联脚本 SHA-256（LF 归一化）并写入 `dist/firefox/manifest.json` 的 CSP。
@@ -132,6 +133,7 @@ src/
 
 manifest.chrome.json     Chrome Manifest V3 模板
 manifest.firefox.json    Firefox Manifest V2 模板
+manifest.safari.json     Safari Manifest V3 模板
 scripts/
   build.sh               主构建脚本（bash）
   bundle-firefox.mjs     Firefox 内联脚本 + CSP Hash
@@ -364,7 +366,7 @@ scripts/
 - `storage`: 数据存储
 - `tabs` / `activeTab`: popup 获取当前页、后台取标题
 - `history`: 历史分组读取
-- `scripting`（Chrome manifest）: 注入 content toast
+- `scripting`（Chrome / Safari manifest）: 注入 content toast
 - `<all_urls>`: favicon / toast 注入覆盖面
 
 ## 10.2 外部请求
@@ -382,11 +384,18 @@ scripts/
 - Node.js（用于脚本）
 - Bash（`npm run build` 调用 `scripts/build.sh`）
 - zip 工具（`build.sh` 使用 `zip`）
+- macOS 构建 Safari 宿主 App 时需安装 Xcode（使用 `xcrun safari-web-extension-converter` 与 `xcodebuild`）
 
 ## 11.2 构建命令
 
 ```bash
 npm run build
+```
+
+或在 macOS 直接运行项目内构建入口：
+
+```bash
+NO_PAUSE=1 ./dist/build-macos.command
 ```
 
 执行链：
@@ -396,9 +405,12 @@ npm run build
 3. 产物输出：
    - `dist/chrome`
    - `dist/firefox`
+   - `dist/safari`
    - `dist/chrome.zip`
    - `dist/firefox.zip`
    - `dist/firefox.xpi`
+   - `dist/safari.zip`
+   - `dist/safari-app`（仅 macOS，Safari 宿主 App Xcode 工程）
 
 ## 11.3 Firefox 特别说明
 
@@ -423,6 +435,14 @@ Firefox 新标签页若按钮点击无响应，通常是脚本未执行。当前
 1. 打开 `about:debugging#/runtime/this-firefox`
 2. 临时载入附加组件 -> 选择 `dist/firefox/manifest.json`
 
+## 12.3 Safari
+
+1. 运行 `NO_PAUSE=1 ./dist/build-macos.command`
+2. 脚本会生成并构建 `dist/safari-app`
+3. 自动启动生成出的 `我的首页 Safari.app`
+4. 在 Safari 的“设置 -> 高级”开启开发菜单后，到“开发 -> 扩展”里启用对应扩展
+5. Safari 版本不声明 `history` 权限，因此“历史”分组会自动退化为空列表，不影响其余功能
+
 ## 13. 调试入口
 
 - `window.homepageDebugLog()`：读取调试日志。
@@ -441,7 +461,7 @@ Firefox 新标签页若按钮点击无响应，通常是脚本未执行。当前
 
 ## 15. 版本策略
 
-- 版本在 `package.json`、`manifest.chrome.json`、`manifest.firefox.json` 保持一致。
+- 版本在 `package.json`、`manifest.chrome.json`、`manifest.firefox.json`、`manifest.safari.json` 保持一致。
 - 每次构建会自动执行 +0.1（满十进一）。
 
 ---
@@ -452,3 +472,4 @@ Firefox 新标签页若按钮点击无响应，通常是脚本未执行。当前
 - 存储与配额：`src/js/storage.js`
 - 图标系统：`src/js/icons.js`
 - Firefox 构建关键：`scripts/bundle-firefox.mjs`
+- Safari 构建关键：`manifest.safari.json`、`dist/build-macos.command`

@@ -1,14 +1,14 @@
 ﻿{
   "name": "newtab-extension",
-  "version": "9.7",
+  "version": "9.8",
   "private": true,
   "type": "module",
   "scripts": {
     "prebuild": "node scripts/bump-version.mjs",
     "build": "bash scripts/build.sh",
     "build:chrome": "bash scripts/build.sh",
-    "build:firefox": "bash scripts/build.sh"
+    "build:firefox": "bash scripts/build.sh",
+    "build:safari": "bash scripts/build.sh"
   }
 }
-
 

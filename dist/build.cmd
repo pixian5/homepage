@@ -44,6 +44,14 @@ if exist "%ROOT%\logo.png" (
   )
 )
 
+pushd "%ROOT%"
+node "%ROOT%\scripts\bump-version.mjs"
+if errorlevel 1 (
+  popd
+  exit /b 1
+)
+popd
+
 if exist "%DIST%chrome.zip" del /q "%DIST%chrome.zip"
 if exist "%DIST%firefox.zip" del /q "%DIST%firefox.zip"
 
@@ -88,6 +96,5 @@ if errorlevel 1 (
   echo [build] Failed to package chrome.zip
   exit /b 1
 )
-
 echo Build done
 endlocal

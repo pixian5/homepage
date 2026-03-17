@@ -2,7 +2,7 @@
 import path from "path";
 
 const root = process.cwd();
-const files = ["package.json", "manifest.chrome.json", "manifest.firefox.json"];
+const files = ["package.json", "manifest.chrome.json", "manifest.firefox.json", "manifest.safari.json"];
 
 function bumpVersion(version) {
   const parts = version.split(".").map((n) => Number(n));

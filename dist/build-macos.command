@@ -5,8 +5,9 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 DIST_DIR="${ROOT_DIR}/dist"
 SRC_DIR="${ROOT_DIR}/src"
-CHROME_DIR="${DIST_DIR}/chrome"
-FIREFOX_DIR="${DIST_DIR}/firefox"
+SAFARI_PROJECT_DIR="${DIST_DIR}/safari-app"
+SAFARI_BUILD_DIR="${SAFARI_PROJECT_DIR}/build"
+SAFARI_APP_NAME="${SAFARI_APP_NAME:-我的首页 Safari}"
 
 echo "[build] ROOT_DIR=${ROOT_DIR}"
 
@@ -17,25 +18,36 @@ if [[ -f "${ROOT_DIR}/logo.png" ]]; then
   done
 fi
 
-rm -f "${DIST_DIR}/chrome.zip" "${DIST_DIR}/firefox.zip"
+node "${ROOT_DIR}/scripts/bump-version.mjs"
+bash "${ROOT_DIR}/scripts/build.sh"
 
-mkdir -p "${CHROME_DIR}" "${FIREFOX_DIR}"
-rsync -a --delete "${SRC_DIR}/" "${CHROME_DIR}/"
-rsync -a --delete "${SRC_DIR}/" "${FIREFOX_DIR}/"
+PROJECT_FILE="$(find "${SAFARI_PROJECT_DIR}" -maxdepth 3 -name '*.xcodeproj' -print -quit)"
+if [[ -n "${PROJECT_FILE}" ]]; then
+  APP_PROCESS_NAME="${SAFARI_APP_NAME}"
+  pkill -x "${APP_PROCESS_NAME}" >/dev/null 2>&1 || true
+  pkill -f "${APP_PROCESS_NAME}.app" >/dev/null 2>&1 || true
+  rm -rf "${SAFARI_BUILD_DIR}"
 
-cp "${ROOT_DIR}/manifest.chrome.json" "${CHROME_DIR}/manifest.json"
-cp "${ROOT_DIR}/manifest.firefox.json" "${FIREFOX_DIR}/manifest.json"
+  xcodebuild \
+    -project "${PROJECT_FILE}" \
+    -scheme "${SAFARI_APP_NAME}" \
+    -configuration Debug \
+    -derivedDataPath "${SAFARI_BUILD_DIR}" \
+    build
 
-(
-  cd "${ROOT_DIR}"
-  node "${ROOT_DIR}/scripts/bundle-firefox.mjs"
-)
-
-ditto -c -k --sequesterRsrc --keepParent "${CHROME_DIR}" "${DIST_DIR}/chrome.zip"
-ditto -c -k --sequesterRsrc --keepParent "${FIREFOX_DIR}" "${DIST_DIR}/firefox.zip"
+  APP_PATH="${SAFARI_BUILD_DIR}/Build/Products/Debug/${SAFARI_APP_NAME}.app"
+  if [[ -d "${APP_PATH}" ]]; then
+    open "${APP_PATH}"
+    echo "[build] launched: ${APP_PATH}"
+  fi
+fi
 
 echo "[build] done: ${DIST_DIR}/chrome.zip"
 echo "[build] done: ${DIST_DIR}/firefox.zip"
+echo "[build] done: ${DIST_DIR}/safari.zip"
+if [[ -d "${SAFARI_PROJECT_DIR}" ]]; then
+  echo "[build] done: ${SAFARI_PROJECT_DIR}"
+fi
 
 if [[ "${NO_PAUSE:-0}" != "1" ]]; then
   read -r -p "Build finished. Press Enter to close..."

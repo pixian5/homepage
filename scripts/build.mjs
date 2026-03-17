@@ -6,7 +6,12 @@ const srcDir = path.join(root, "src");
 const distDir = path.join(root, "dist");
 const target = process.argv[2] || "chrome";
 
-const manifestName = target === "firefox" ? "manifest.firefox.json" : "manifest.chrome.json";
+const manifestMap = {
+  chrome: "manifest.chrome.json",
+  firefox: "manifest.firefox.json",
+  safari: "manifest.safari.json",
+};
+const manifestName = manifestMap[target] || manifestMap.chrome;
 
 async function copyDir(from, to) {
   await fs.mkdir(to, { recursive: true });
@@ -23,10 +28,11 @@ async function copyDir(from, to) {
 }
 
 async function build() {
-  await fs.rm(distDir, { recursive: true, force: true });
-  await copyDir(srcDir, distDir);
-  await fs.copyFile(path.join(root, manifestName), path.join(distDir, "manifest.json"));
-  console.log(`Built ${target} extension into dist/`);
+  const targetDir = path.join(distDir, target);
+  await fs.rm(targetDir, { recursive: true, force: true });
+  await copyDir(srcDir, targetDir);
+  await fs.copyFile(path.join(root, manifestName), path.join(targetDir, "manifest.json"));
+  console.log(`Built ${target} extension into dist/${target}/`);
 }
 
 build();

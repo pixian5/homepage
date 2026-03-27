@@ -125,7 +125,7 @@ export function getFaviconCandidates(pageUrl) {
   try {
     if (!isHttpUrl(pageUrl)) return [];
     const u = new URL(pageUrl);
-    const host = u.hostname;
+    const host = u.hostname.toLowerCase();
     if (!host.includes(".")) return [];
     if (host === "localhost" || host.endsWith(".local")) return [];
     const special = SPECIAL_FAVICONS[host] || [];

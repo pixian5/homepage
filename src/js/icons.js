@@ -1,26 +1,6 @@
 ﻿import { loadIconCache, saveIconCache } from "./storage.js";
 
 const FAVICON_API = "https://www.google.com/s2/favicons";
-const MULTI_PART_TLDS = new Set([
-  "co.uk",
-  "org.uk",
-  "ac.uk",
-  "gov.uk",
-  "co.jp",
-  "ne.jp",
-  "or.jp",
-  "com.cn",
-  "net.cn",
-  "org.cn",
-  "gov.cn",
-  "edu.cn",
-  "com.au",
-  "net.au",
-  "org.au",
-  "com.br",
-  "com.tw",
-  "com.hk",
-]);
 const SPECIAL_FAVICONS = {
   "gmail.com": [
     "https://mail.google.com/favicon.ico",
@@ -54,7 +34,6 @@ const SPECIAL_FAVICONS = {
     "https://openai.com/favicon.ico",
   ],
 };
-const ROOT_REUSE_BLOCKLIST = new Set(["google.com"]);
 const FIREFOX_EXTENSION_CORP_BLOCKLIST = new Set([
   "mail.google.com",
   "chatgpt.com",
@@ -97,17 +76,6 @@ function isHttpUrl(pageUrl) {
   }
 }
 
-function getRootDomain(host) {
-  if (!host) return "";
-  const parts = host.split(".").filter(Boolean);
-  if (parts.length <= 2) return host;
-  const lastTwo = parts.slice(-2).join(".");
-  const lastThree = parts.slice(-3).join(".");
-  if (MULTI_PART_TLDS.has(lastTwo)) return lastThree;
-  if (parts[parts.length - 1].length <= 2) return lastThree;
-  return lastTwo;
-}
-
 export function getSiteKey(pageUrl) {
   try {
     if (!isHttpUrl(pageUrl)) return "";
@@ -129,15 +97,10 @@ export function getFaviconCandidates(pageUrl) {
     if (!host.includes(".")) return [];
     if (host === "localhost" || host.endsWith(".local")) return [];
     const special = SPECIAL_FAVICONS[host] || [];
-    const root = getRootDomain(host);
-    const rootHost = root && root !== host && !ROOT_REUSE_BLOCKLIST.has(root) ? root : "";
     const rawCandidates = [
       ...special,
       `https://${host}/favicon.ico`,
-      rootHost ? `https://${rootHost}/favicon.ico` : "",
-      rootHost ? buildGoogleFaviconUrl(rootHost) : "",
       buildGoogleFaviconUrl(host),
-      rootHost ? `https://icons.duckduckgo.com/ip3/${rootHost}.ico` : "",
       `https://icons.duckduckgo.com/ip3/${host}.ico`,
     ];
     const normalized = rawCandidates

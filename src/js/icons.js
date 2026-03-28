@@ -37,6 +37,9 @@ const SPECIAL_FAVICONS = {
   "www.google.com": [
     "https://www.google.com/favicon.ico",
   ],
+  "gemini.google.com": [
+    "https://gemini.google.com/favicon.ico",
+  ],
   "chatgpt.com": [
     "https://chatgpt.com/favicon.ico",
     "https://chat.openai.com/favicon.ico",
@@ -108,11 +111,10 @@ function getRootDomain(host) {
 export function getSiteKey(pageUrl) {
   try {
     if (!isHttpUrl(pageUrl)) return "";
-    const host = new URL(pageUrl).hostname;
+    const host = new URL(pageUrl).hostname.toLowerCase();
     if (!host.includes(".")) return "";
     if (host === "localhost" || host.endsWith(".local")) return "";
-    const root = getRootDomain(host);
-    return root ? `site:${root}` : "";
+    return `site:${host}`;
   } catch (e) {
     // URL 解析失败是预期行为
     return "";
@@ -123,7 +125,7 @@ export function getFaviconCandidates(pageUrl) {
   try {
     if (!isHttpUrl(pageUrl)) return [];
     const u = new URL(pageUrl);
-    const host = u.hostname;
+    const host = u.hostname.toLowerCase();
     if (!host.includes(".")) return [];
     if (host === "localhost" || host.endsWith(".local")) return [];
     const special = SPECIAL_FAVICONS[host] || [];
@@ -131,6 +133,8 @@ export function getFaviconCandidates(pageUrl) {
     const rootHost = root && root !== host && !ROOT_REUSE_BLOCKLIST.has(root) ? root : "";
     const rawCandidates = [
       ...special,
+      `https://${host}/favicon.ico`,
+      rootHost ? `https://${rootHost}/favicon.ico` : "",
       rootHost ? buildGoogleFaviconUrl(rootHost) : "",
       buildGoogleFaviconUrl(host),
       rootHost ? `https://icons.duckduckgo.com/ip3/${rootHost}.ico` : "",

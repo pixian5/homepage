@@ -1405,7 +1405,13 @@ async function renderGrid() {
     img.src = iconSrc;
     if (node.url && data.settings.iconFetch && !iconSrc.startsWith("data:")) {
       const fallback = letterIconDataUrl(node.title || node.url || "?", node.color);
+      const triedCandidates = new Set([iconSrc]);
       img.onerror = async () => {
+        const nextIcon = await trySwitchToNextFavicon(node.url, triedCandidates);
+        if (nextIcon) {
+          img.src = nextIcon;
+          return;
+        }
         img.onerror = null;
         img.src = fallback;
         await markIconLoadFailed(node.url);
@@ -3240,6 +3246,25 @@ async function markIconLoadFailed(url) {
   const siteKey = getSiteKey(url);
   if (siteKey) cache[siteKey] = { failed: true, ts: Date.now() };
   await saveIconCache(cache);
+}
+
+async function trySwitchToNextFavicon(url, triedCandidates) {
+  if (!url) return "";
+  const candidates = getFaviconCandidates(url);
+  if (!candidates.length) return "";
+  const cache = await loadIconCache();
+  const siteKey = getSiteKey(url);
+  for (const candidate of candidates) {
+    if (triedCandidates.has(candidate)) continue;
+    triedCandidates.add(candidate);
+    const ok = await probeImage(candidate);
+    if (!ok) continue;
+    cache[url] = { url: candidate, ts: Date.now() };
+    if (siteKey) cache[siteKey] = { url: candidate, ts: Date.now() };
+    await saveIconCache(cache);
+    return candidate;
+  }
+  return "";
 }
 
 function probeImage(url, timeoutMs = ICON_PROBE_TIMEOUT_MS) {

@@ -99,15 +99,19 @@ export function getFaviconCandidates(pageUrl) {
     if (!isHttpUrl(pageUrl)) return [];
     const u = new URL(pageUrl);
     const host = u.hostname.toLowerCase();
+    const pathname = u.pathname || "/";
     if (!host.includes(".")) return [];
     if (host === "localhost" || host.endsWith(".local")) return [];
     const special = SPECIAL_FAVICONS[host] || [];
     const siblingHostSpecial = getSiblingHostCandidates(host);
     const dynamicSpecial = getDynamicSpecialFaviconCandidates(host);
+    const pathSpecific = getPathSpecificCandidates(host, pathname);
     const rawCandidates = [
+      ...pathSpecific,
       ...special,
       ...siblingHostSpecial,
       ...dynamicSpecial,
+      buildGoogleFaviconByPageUrl(pageUrl),
       `https://${host}/favicon.ico`,
       buildGoogleFaviconUrl(host),
       buildGoogleDomainFaviconUrl(host),
@@ -128,8 +132,39 @@ function buildGoogleFaviconUrl(host) {
   return `${FAVICON_API}?sz=128&domain_url=${encodeURIComponent(`https://${host}`)}`;
 }
 
+function buildGoogleFaviconByPageUrl(pageUrl) {
+  return `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&size=128&url=${encodeURIComponent(pageUrl)}`;
+}
+
 function buildGoogleDomainFaviconUrl(host) {
   return `${FAVICON_API}?sz=128&domain=${encodeURIComponent(host)}`;
+}
+
+function getPathSpecificCandidates(host, pathname) {
+  const candidates = [];
+  const normalizedPath = (pathname || "/").toLowerCase();
+
+  if (host === "gmail.com" || host === "mail.google.com") {
+    candidates.push("https://mail.google.com/mail/u/0/images/2/favicon.ico");
+    candidates.push("https://mail.google.com/mail/u/0/images/2/5/unreadcounticon.ico");
+  }
+
+  if (host === "gemini.google.com") {
+    candidates.push("https://gemini.google.com/app/favicon.ico");
+    candidates.push("https://gemini.google.com/favicon.ico");
+  }
+
+  if (host.endsWith(".sharepoint.com") && normalizedPath.startsWith("/my")) {
+    candidates.push(`https://${host}/_layouts/15/images/favicon.ico`);
+    candidates.push(`https://${host}/_layouts/15/images/favicon.ico?rev=47`);
+  }
+
+  if (host === "gitcode.com" || host === "www.gitcode.com") {
+    candidates.push("https://gitcode.com/favicon.svg");
+    candidates.push("https://gitcode.com/favicon.ico");
+  }
+
+  return candidates;
 }
 
 function getDynamicSpecialFaviconCandidates(host) {

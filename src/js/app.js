@@ -80,6 +80,7 @@ let backupFingerprint = "";
 let backupBaselineSnapshot = null;
 let skipAutoBackupOnce = false;
 let suppressTouchClickUntil = 0;
+let modalPointerDownInsideDialog = false;
 const touchDragState = {
   mode: "",
   timer: null,
@@ -2215,6 +2216,7 @@ function closeModal() {
   elements.modalOverlay.setAttribute("inert", "");
   elements.modalOverlay.classList.add("hidden");
   elements.modalOverlay.setAttribute("aria-hidden", "true");
+  modalPointerDownInsideDialog = false;
   elements.modal.replaceChildren();
   settingsOpen = false;
   settingsSaving = false;
@@ -3767,12 +3769,21 @@ function bindEvents() {
 
   elements.modalOverlay.addEventListener("click", async (e) => {
     if (e.target !== elements.modalOverlay) return;
+    if (modalPointerDownInsideDialog) {
+      modalPointerDownInsideDialog = false;
+      return;
+    }
     if (settingsOpen) {
       closeModal();
       return;
     }
     closeModal();
   });
+  const markModalPointerOrigin = (e) => {
+    modalPointerDownInsideDialog = !!e.target.closest("#modal");
+  };
+  elements.modalOverlay.addEventListener("mousedown", markModalPointerOrigin);
+  elements.modalOverlay.addEventListener("pointerdown", markModalPointerOrigin);
 
   const handleBoxSelectStart = (e, grid) => {
     if (e.button !== 0) return;

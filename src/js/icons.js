@@ -19,6 +19,11 @@ const SPECIAL_FAVICONS = {
   ],
   "gemini.google.com": [
     "https://gemini.google.com/favicon.ico",
+    "https://www.google.com/favicon.ico",
+  ],
+  "gitcode.com": [
+    "https://gitcode.com/favicon.ico",
+    "https://www.gitcode.com/favicon.ico",
   ],
   "chatgpt.com": [
     "https://chatgpt.com/favicon.ico",
@@ -97,10 +102,15 @@ export function getFaviconCandidates(pageUrl) {
     if (!host.includes(".")) return [];
     if (host === "localhost" || host.endsWith(".local")) return [];
     const special = SPECIAL_FAVICONS[host] || [];
+    const siblingHostSpecial = getSiblingHostCandidates(host);
+    const dynamicSpecial = getDynamicSpecialFaviconCandidates(host);
     const rawCandidates = [
       ...special,
+      ...siblingHostSpecial,
+      ...dynamicSpecial,
       `https://${host}/favicon.ico`,
       buildGoogleFaviconUrl(host),
+      buildGoogleDomainFaviconUrl(host),
       `https://icons.duckduckgo.com/ip3/${host}.ico`,
     ];
     const normalized = rawCandidates
@@ -116,6 +126,25 @@ export function getFaviconCandidates(pageUrl) {
 
 function buildGoogleFaviconUrl(host) {
   return `${FAVICON_API}?sz=128&domain_url=${encodeURIComponent(`https://${host}`)}`;
+}
+
+function buildGoogleDomainFaviconUrl(host) {
+  return `${FAVICON_API}?sz=128&domain=${encodeURIComponent(host)}`;
+}
+
+function getDynamicSpecialFaviconCandidates(host) {
+  const candidates = [];
+  if (host.endsWith(".sharepoint.com")) {
+    candidates.push(`https://${host}/_layouts/15/images/favicon.ico`);
+  }
+  return candidates;
+}
+
+function getSiblingHostCandidates(host) {
+  if (host.startsWith("www.")) {
+    return [`https://${host.slice(4)}/favicon.ico`];
+  }
+  return [`https://www.${host}/favicon.ico`];
 }
 
 function normalizeCandidateUrl(raw) {

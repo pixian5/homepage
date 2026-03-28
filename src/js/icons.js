@@ -354,21 +354,9 @@ export async function resolveIcon(node, settings) {
     return dataUrl;
   }
 
-  if (settings.iconFetch && node.url) {
-    const finalUrl = await resolveFinalUrl(node.url);
-    const url = buildFaviconUrl(finalUrl);
-    if (!url) {
-      if (cacheChanged) await saveIconCache(cache);
-      return avatarDataUrl(base, node.color || hashColor(base));
-    }
-    cache[cacheKey] = { url, ts: Date.now() };
-    if (siteKey && !cache[siteKey]) {
-      cache[siteKey] = { url, ts: Date.now() };
-    }
-    await saveIconCache(cache);
-    return url;
-  }
-
+  // 不再自动获取图标，只返回字母头像
+  // 图标应该通过 fetchFaviconInBackground() 或手动刷新获取
+  if (cacheChanged) await saveIconCache(cache);
   return avatarDataUrl(base, node.color || hashColor(base));
 }
 
@@ -409,5 +397,38 @@ export async function retryFailedIconsIfDue(settings) {
       changed = true;
     }
   }
+  if (changed) await saveIconCache(cache);
+}
+
+export async function clearIconCacheForUrl(oldUrl, newUrl) {
+  const cache = await loadIconCache();
+  let changed = false;
+
+  // 清除旧 URL 的缓存
+  if (oldUrl && cache[oldUrl]) {
+    delete cache[oldUrl];
+    changed = true;
+  }
+
+  // 清除旧 URL 的站点缓存
+  const oldSiteKey = getSiteKey(oldUrl);
+  if (oldSiteKey && cache[oldSiteKey]) {
+    delete cache[oldSiteKey];
+    changed = true;
+  }
+
+  // 如果 URL 改变，也清除新 URL 的缓存，强制重新获取
+  if (newUrl && oldUrl !== newUrl) {
+    if (cache[newUrl]) {
+      delete cache[newUrl];
+      changed = true;
+    }
+    const newSiteKey = getSiteKey(newUrl);
+    if (newSiteKey && cache[newSiteKey]) {
+      delete cache[newSiteKey];
+      changed = true;
+    }
+  }
+
   if (changed) await saveIconCache(cache);
 }

@@ -11,7 +11,7 @@
   getStorageKey,
 } from "./storage.js";
 import { getBingWallpaper } from "./bing-wallpaper.js";
-import { resolveIcon, refreshAllIcons, retryFailedIconsIfDue, getFaviconCandidates, getSiteKey } from "./icons.js";
+import { resolveIcon, refreshAllIcons, retryFailedIconsIfDue, getFaviconCandidates, getSiteKey, clearIconCacheForUrl } from "./icons.js";
 
 const $ = (id) => document.getElementById(id);
 const qs = (sel, root = document) => root.querySelector(sel);
@@ -2478,6 +2478,11 @@ function openEditModal(node) {
   $("btnSave").addEventListener("click", async () => {
     const snapshot = JSON.parse(JSON.stringify(data));
     pushBackup();
+
+    // 记录原始值以检测变化
+    const oldUrl = node.url;
+    const oldIconType = node.iconType;
+
     node.title = $("fieldTitle").value.trim() || node.title;
     if (node.type === "item") {
       const url = normalizeUrl($("fieldUrl").value.trim());
@@ -2499,6 +2504,20 @@ function openEditModal(node) {
       } else {
         node.iconData = "";
       }
+
+      // 检查是否需要清除缓存并重新获取图标
+      const urlChanged = oldUrl !== url;
+      const iconTypeChanged = oldIconType !== iconType;
+      const shouldRefetchIcon = (urlChanged || (iconTypeChanged && iconType === "auto"));
+
+      if (shouldRefetchIcon) {
+        // 清除旧缓存
+        await clearIconCacheForUrl(oldUrl, url);
+        // 标记需要重新获取图标
+        if (iconType === "auto") {
+          node.iconPending = true;
+        }
+      }
     }
     node.updatedAt = Date.now();
     const result = await persistData();
@@ -2510,6 +2529,12 @@ function openEditModal(node) {
     }
     render();
     closeModal();
+
+    // 如果需要，在后台重新获取图标
+    if (node.type === "item" && node.iconPending && node.iconType === "auto") {
+      fetchFaviconInBackground(node.id, node.url);
+    }
+
     if (result.warning === "local_trimmed_backups") {
       toast(t("toast.save.trimBackup"));
     } else if (result.warning === "local_trimmed_icons") {
@@ -2826,6 +2851,7 @@ function openSettingsModal() {
   });
   $("btnRefreshIcons").addEventListener("click", async () => {
     await refreshAllIcons(Object.values(data.nodes));
+    render();
     toast(t("toast.iconsRefreshed"));
   });
 

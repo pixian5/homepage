@@ -41,9 +41,30 @@ detect_apple_development_team() {
     return 0
   fi
 
-  security find-identity -p codesigning -v 2>/dev/null \
-    | sed -n 's/.*Apple Development: .* (\([A-Z0-9]\{10\}\)).*/\1/p' \
-    | head -n 1
+  local identity tmp_file team
+  identity="$(
+    security find-identity -p codesigning -v 2>/dev/null \
+      | sed -n 's/.*"\(Apple Development: .* ([A-Z0-9]\{10\})\)".*/\1/p' \
+      | head -n 1
+  )"
+
+  if [[ -z "$identity" ]]; then
+    return 0
+  fi
+
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}/homepage-sign-team.XXXXXX")"
+  printf '#!/bin/sh\nexit 0\n' > "$tmp_file"
+  chmod +x "$tmp_file"
+  if /usr/bin/codesign --force --sign "$identity" --timestamp=none "$tmp_file" >/dev/null 2>&1; then
+    team="$(
+      /usr/bin/codesign -dv --verbose=4 "$tmp_file" 2>&1 \
+        | sed -n 's/^TeamIdentifier=//p' \
+        | head -n 1
+    )"
+  fi
+  rm -f "$tmp_file"
+
+  printf '%s\n' "${team:-}"
 }
 
 sync_safari_project_resources() {

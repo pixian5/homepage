@@ -1097,7 +1097,7 @@ async function loadBackground() {
   elements.background.classList.add("is-loading");
 
   if (settings.backgroundType === "bing") {
-    const info = await getBingWallpaper();
+    const info = await getBingWallpaper(settings.language);
     if (info.dataUrl) {
       setBackground(info.dataUrl);
       if (info.failed) toast(t("background.fetchFailedCache"));
@@ -1283,14 +1283,14 @@ function uniqueNodes(nodes) {
 }
 
 function renderGroups() {
-  elements.groupTabs.innerHTML = "";
+  elements.groupTabs.replaceChildren();
   elements.recentTab.classList.toggle("active", activeGroupId === RECENT_GROUP_ID);
   const recentLabel = elements.recentTab.dataset.label || elements.recentTab.textContent || t("sidebar.history");
   elements.recentTab.dataset.label = recentLabel;
   elements.recentTab.setAttribute("aria-label", recentLabel);
   elements.recentTab.textContent = data.settings.sidebarCollapsed ? "" : recentLabel;
   elements.recentTab.dataset.short = t("sidebar.history");
-  data.groups
+  [...data.groups]
     .sort((a, b) => a.order - b.order)
     .forEach((group, idx) => {
       const btn = document.createElement("button");
@@ -1351,7 +1351,7 @@ async function renderGrid() {
   const seq = ++renderSeq;
   const grid = openFolderId ? elements.folderGrid : elements.grid;
   const nodes = uniqueNodes(getCurrentNodes());
-  grid.innerHTML = "";
+  grid.replaceChildren();
 
   const referenceGrid = openFolderId ? elements.grid : grid;
   const width = referenceGrid.getBoundingClientRect().width || referenceGrid.clientWidth || window.innerWidth;
@@ -1839,7 +1839,7 @@ function showContextMenuAt(x, y) {
 }
 
 function openContextMenu(x, y, node) {
-  elements.contextMenu.innerHTML = "";
+  elements.contextMenu.replaceChildren();
   const actions = [];
   if (activeGroupId === RECENT_GROUP_ID && node.type === "history") {
     actions.push({ label: t("context.openCurrent"), fn: () => openUrl(normalizeUrl(node.url)) });
@@ -1875,7 +1875,7 @@ function closeContextMenu() {
 }
 
 function openGroupContextMenu(x, y, group) {
-  elements.contextMenu.innerHTML = "";
+  elements.contextMenu.replaceChildren();
   const actions = [
     { label: t("context.renameGroup"), fn: () => renameGroup(group) },
     { label: t("context.deleteGroup"), fn: () => deleteGroup(group) },
@@ -2101,7 +2101,7 @@ function dedupeData(input) {
 }
 
 function moveGroupBefore(sourceId, targetId) {
-  const targetIndex = data.groups
+  const targetIndex = [...data.groups]
     .sort((a, b) => a.order - b.order)
     .map((g) => g.id)
     .indexOf(targetId);
@@ -2109,7 +2109,7 @@ function moveGroupBefore(sourceId, targetId) {
 }
 
 function moveGroupToIndex(sourceId, index) {
-  const ordered = data.groups.sort((a, b) => a.order - b.order).map((g) => g.id);
+  const ordered = [...data.groups].sort((a, b) => a.order - b.order).map((g) => g.id);
   const ids = ordered.filter((id) => id !== sourceId);
   const safeIndex = Math.max(0, Math.min(index, ids.length));
   ids.splice(safeIndex, 0, sourceId);
@@ -2284,7 +2284,7 @@ function openAddModal() {
   const iconExtra = $("iconExtra");
 
   function renderIconExtra(type) {
-    iconExtra.innerHTML = "";
+    iconExtra.replaceChildren();
     if (type === "upload") {
       const label = document.createElement("label");
       label.textContent = t("field.uploadIcon");
@@ -2461,7 +2461,7 @@ function openEditModal(node) {
     iconTypeEl.value = node.iconType === "letter" ? "auto" : (node.iconType || "auto");
     const iconExtra = $("iconExtra");
     function renderIconExtra(type) {
-      iconExtra.innerHTML = "";
+      iconExtra.replaceChildren();
       if (type === "upload") {
         const label = document.createElement("label");
         label.textContent = t("field.uploadIcon");
@@ -2805,12 +2805,12 @@ function openSettingsModal() {
   });
 
   const defaultGroupId = $("settingDefaultGroupId");
-  defaultGroupId.innerHTML = "";
+  defaultGroupId.replaceChildren();
   const lastOpt = document.createElement("option");
   lastOpt.value = "";
   lastOpt.textContent = t("settings.lastAddedGroup");
   defaultGroupId.appendChild(lastOpt);
-  data.groups
+  [...data.groups]
     .sort((a, b) => a.order - b.order)
     .forEach((g) => {
       const opt = document.createElement("option");
@@ -3124,7 +3124,7 @@ function openImportUrlModal() {
     toast(t("group.noneAvailable"));
     return;
   }
-  const options = data.groups
+  const options = [...data.groups]
     .sort((a, b) => a.order - b.order)
     .map((g) => `<option value="${escapeAttr(g.id)}">${escapeHtml(g.name)}</option>`)
     .join("");
@@ -3460,7 +3460,7 @@ function openAddHistoryToGroup(node) {
     toast(t("group.noneAvailable"));
     return;
   }
-  const options = data.groups
+  const options = [...data.groups]
     .sort((a, b) => a.order - b.order)
     .map((g) => `<option value="${escapeAttr(g.id)}">${escapeHtml(g.name)}</option>`)
     .join("");

@@ -1,7 +1,17 @@
 import { loadBgCache, saveBgCache } from "./storage.js";
 
-const BING_API = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=en-US";
+const BING_API_BASE = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1";
 const CACHE_TTL_MS = 1000 * 60 * 60 * 6;
+
+function buildBingApiUrl(language) {
+  const mktMap = {
+    "zh-CN": "zh-CN",
+    "zh-TW": "zh-TW",
+    "en": "en-US",
+  };
+  const mkt = mktMap[language] || "en-US";
+  return `${BING_API_BASE}&mkt=${encodeURIComponent(mkt)}`;
+}
 
 function todayKey() {
   const d = new Date();
@@ -30,7 +40,7 @@ function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
     .finally(() => clearTimeout(timer));
 }
 
-export async function getBingWallpaper() {
+export async function getBingWallpaper(language = "") {
   const cache = await loadBgCache();
   const key = todayKey();
 
@@ -48,7 +58,7 @@ export async function getBingWallpaper() {
   }
 
   try {
-    const res = await fetchWithTimeout(BING_API, { cache: "no-store" });
+    const res = await fetchWithTimeout(buildBingApiUrl(language), { cache: "no-store" });
     if (!res.ok) throw new Error(`bing api http ${res.status}`);
     const json = await res.json();
     const img = json?.images?.[0];

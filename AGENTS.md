@@ -26,6 +26,7 @@
 - 现象：按钮无响应 = JS 未执行，事件未绑定
 - 常见原因：CSP 拦截内联脚本或模块脚本加载失败
 - 处理规范：
-  - Firefox 版使用 `scripts/bundle-firefox.mjs` 生成内联脚本
-  - 构建时必须用 **LF 归一化** 计算 Hash 并写入 `dist/firefox/manifest.json`
+  - Firefox 版使用 `scripts/bundle-firefox.mjs` 把 `storage.js`/`icons.js`/`bing-wallpaper.js`/`app.js` 合并为外部脚本 `dist/firefox/js/app.ff.js`
+  - 构建时把 `newtab.html` 中的 `<script type="module" src="js/app.js">` 替换为 `<script src="js/app.ff.js">`
+  - CSP 保持 `script-src 'self'`，依靠外部脚本而非内联脚本
   - 产物务必以 `dist/firefox` 为准加载扩展

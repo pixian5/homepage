@@ -1,4 +1,4 @@
-﻿import {
+import {
   getChromeApi,
   getStorageKey,
 } from "./js/storage.js";
@@ -9,8 +9,23 @@ const MAX_LOG_ENTRIES = 30;
 const ICON_DATA_MAX_LENGTH = 2048;
 const TOAST_DURATION_MS = 3000;
 const DEFAULT_FONT_SIZE = 13;
+const TOAST_FONT_STACK = "\"Avenir Next\", \"Noto Sans SC\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif";
+const TOAST_STYLE_PROPS = {
+  position: "fixed",
+  top: "20px",
+  right: "20px",
+  zIndex: "2147483647",
+  background: "rgba(15, 20, 28, 0.88)",
+  color: "#ffffff",
+  padding: "10px 14px",
+  borderRadius: "10px",
+  lineHeight: "1.2",
+  boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+  backdropFilter: "blur(6px)",
+  fontFamily: TOAST_FONT_STACK,
+};
 let popupLanguage = "zh-CN";
-const SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en", "ja", "ko", "de", "fr", "es"];
+const SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en"];
 
 const POPUP_I18N = {
   "zh-CN": {
@@ -510,33 +525,18 @@ async function showToastInTab(tab, message, fontSize) {
         api.scripting.executeScript(
           {
             target: { tabId: tab.id },
-            func: (msg, size, duration) => {
+            func: (msg, size, duration, styleProps) => {
               const toastId = "homepage-save-toast";
               const existing = document.getElementById(toastId);
               if (existing) existing.remove();
               const el = document.createElement("div");
               el.id = toastId;
               el.textContent = msg;
-              const fontSizePx = `${Number(size) || 14}px`;
-              Object.assign(el.style, {
-                position: "fixed",
-                top: "20px",
-                right: "20px",
-                zIndex: "2147483647",
-                background: "rgba(15, 20, 28, 0.88)",
-                color: "#ffffff",
-                padding: "10px 14px",
-                borderRadius: "10px",
-                fontSize: fontSizePx,
-                lineHeight: "1.2",
-                boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
-                backdropFilter: "blur(6px)",
-                fontFamily: "\"Avenir Next\", \"Noto Sans SC\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
-              });
+              Object.assign(el.style, styleProps, { fontSize: `${Number(size) || 14}px` });
               document.body.appendChild(el);
               setTimeout(() => el.remove(), duration);
             },
-            args: [message, fontSize, TOAST_DURATION_MS],
+            args: [message, fontSize, TOAST_DURATION_MS, TOAST_STYLE_PROPS],
           },
           () => {
             const err = api.runtime?.lastError;
@@ -563,7 +563,8 @@ async function showToastInTab(tab, message, fontSize) {
       }
       const msg = JSON.stringify(message || "");
       const size = Number(fontSize) || 14;
-      const code = `(function(){var toastId="homepage-save-toast";var existing=document.getElementById(toastId);if(existing){existing.remove();}var el=document.createElement("div");el.id=toastId;el.textContent=${msg};el.style.position="fixed";el.style.top="20px";el.style.right="20px";el.style.zIndex="2147483647";el.style.background="rgba(15, 20, 28, 0.88)";el.style.color="#ffffff";el.style.padding="10px 14px";el.style.borderRadius="10px";el.style.fontSize="${size}px";el.style.lineHeight="1.2";el.style.boxShadow="0 10px 30px rgba(0,0,0,0.35)";el.style.backdropFilter="blur(6px)";el.style.fontFamily="Avenir Next, Noto Sans SC, PingFang SC, Microsoft YaHei, sans-serif";document.body.appendChild(el);setTimeout(function(){el.remove();},${TOAST_DURATION_MS});})();`;
+      const styleJson = JSON.stringify(TOAST_STYLE_PROPS);
+      const code = `(function(){var toastId="homepage-save-toast";var existing=document.getElementById(toastId);if(existing){existing.remove();}var el=document.createElement("div");el.id=toastId;el.textContent=${msg};Object.assign(el.style,${styleJson},{fontSize:"${size}px"});document.body.appendChild(el);setTimeout(function(){el.remove();},${TOAST_DURATION_MS});})();`;
       await new Promise((resolve, reject) => {
         api.tabs.executeScript(tab.id, { code }, () => {
           const err = api.runtime?.lastError;

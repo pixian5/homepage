@@ -1,4 +1,4 @@
-﻿import { loadIconCache, saveIconCache } from "./storage.js";
+import { loadIconCache, saveIconCache } from "./storage.js";
 
 const FAVICON_API = "https://www.google.com/s2/favicons";
 const SPECIAL_FAVICONS = {
@@ -45,6 +45,7 @@ const FIREFOX_EXTENSION_CORP_BLOCKLIST = new Set([
   "openai.com",
 ]);
 const FINAL_URL_CACHE = new Map();
+const FINAL_URL_CACHE_MAX = 200;
 const ICON_FAILURE_TTL_MS = 24 * 60 * 60 * 1000;
 
 function hashColor(str) {
@@ -255,6 +256,10 @@ async function resolveFinalUrl(pageUrl, timeoutMs = 6000) {
     clearTimeout(timer);
     const finalUrl = res?.url || pageUrl;
     FINAL_URL_CACHE.set(pageUrl, { url: finalUrl, ts: Date.now() });
+    if (FINAL_URL_CACHE.size > FINAL_URL_CACHE_MAX) {
+      const oldest = FINAL_URL_CACHE.keys().next().value;
+      FINAL_URL_CACHE.delete(oldest);
+    }
     return finalUrl;
   } catch (e) {
     // fetch 失败是预期行为（网络错误、超时等）

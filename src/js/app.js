@@ -1,4 +1,4 @@
-﻿import {
+import {
   loadData,
   loadDataFromArea,
   saveData,
@@ -16,6 +16,22 @@ import { resolveIcon, refreshAllIcons, retryFailedIconsIfDue, getFaviconCandidat
 const $ = (id) => document.getElementById(id);
 const qs = (sel, root = document) => root.querySelector(sel);
 const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+const escapeHtml = (str) => String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+const escapeAttr = escapeHtml;
+const rafThrottle = (fn) => {
+  let scheduled = false;
+  let lastArgs = null;
+  return (...args) => {
+    lastArgs = args;
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      fn(...lastArgs);
+    });
+  };
+};
+const deepClone = (obj) => (typeof structuredClone === "function" ? structuredClone(obj) : JSON.parse(JSON.stringify(obj)));
 
 const elements = {
   background: $("background"),
@@ -909,13 +925,19 @@ function applyDensity() {
 function applyTheme() {
   const theme = data.settings.theme || "system";
   if (theme === "system") {
-    const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-    document.documentElement.setAttribute("data-theme", prefersDark ? "dark" : "light");
+    const mq = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+    document.documentElement.setAttribute("data-theme", mq?.matches ? "dark" : "light");
     applyBackgroundOverlay();
     return;
   }
   document.documentElement.setAttribute("data-theme", theme);
   applyBackgroundOverlay();
+}
+
+if (typeof window !== "undefined" && window.matchMedia) {
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => {
+    if ((data?.settings?.theme || "system") === "system") applyTheme();
+  });
 }
 
 function applySidebarState() {
@@ -992,8 +1014,9 @@ async function consumeSaveToast() {
 function showTooltip(text, x, y) {
   if (!data.settings.tooltipEnabled) return;
   elements.tooltip.textContent = text;
-  elements.tooltip.style.left = `${x + 12}px`;
-  elements.tooltip.style.top = `${y + 12}px`;
+  elements.tooltip.style.left = "0";
+  elements.tooltip.style.top = "0";
+  elements.tooltip.style.transform = `translate3d(${x + 12}px, ${y + 12}px, 0)`;
   elements.tooltip.classList.remove("hidden");
 }
 
@@ -1051,7 +1074,8 @@ async function openUrl(url, mode) {
 function setBackground(style) {
   if (!style) return;
   if (style.startsWith("data:") || style.startsWith("http")) {
-    elements.background.style.backgroundImage = `url('${style}')`;
+    const safe = style.replace(/['"\\]/g, "");
+    elements.background.style.backgroundImage = `url('${safe}')`;
   } else {
     elements.background.style.backgroundImage = style;
   }
@@ -1107,7 +1131,7 @@ function pushBackup() {
 }
 
 function cloneDataSnapshot(source) {
-  return JSON.parse(JSON.stringify(source || {}));
+  return deepClone(source || {});
 }
 
 function buildBackupSettingsSnapshot(settings) {
@@ -1205,7 +1229,7 @@ async function persistData() {
     let err = null;
     const err1 = await saveData(data, useSync);
     if (err1) {
-      if (err1 === "sync_quota_exceeded" || err1.startsWith("local_trimmed_")) {
+      if (err1 === "sync_quota_exceeded" || (typeof err1 === "string" && err1.startsWith("local_trimmed_"))) {
         warning = err1;
       } else {
         err = err1;
@@ -1215,16 +1239,7 @@ async function persistData() {
       await saveData(data, false);
     }
     if (changed) {
-      const err2 = await saveData(data, useSync);
-      if (useSync) await saveData(data, false);
-      if (err2) {
-        if (err2 === "sync_quota_exceeded" || err2.startsWith("local_trimmed_")) {
-          warning = err2;
-        } else {
-          err = err2;
-        }
-      }
-      debugLog("persist_dedupe", { changed, err2 });
+      debugLog("persist_dedupe", { changed });
     }
     if (shouldDebugPersist()) {
       const verify = await loadDataFromArea(false);
@@ -2130,25 +2145,27 @@ function deleteNodes(ids) {
   if (!ids.length) return;
   if (activeGroupId === RECENT_GROUP_ID) return;
   pushBackup();
-  const snapshot = JSON.parse(JSON.stringify(data));
+  const snapshot = deepClone(data);
 
   ids.forEach((id) => {
     removeNodeFromLocation(id);
     delete data.nodes[id];
   });
 
-  pendingDeletion = { snapshot, ids };
+  pendingDeletion = { snapshot, ids, timer: null };
   persistData();
   render();
 
   toast(t("delete.deletedCount", { count: ids.length }), t("delete.undo"), () => undoDelete());
-  setTimeout(() => {
+  if (pendingDeletion.timer) clearTimeout(pendingDeletion.timer);
+  pendingDeletion.timer = setTimeout(() => {
     pendingDeletion = null;
   }, UNDO_TIMEOUT_MS);
 }
 
 function undoDelete() {
   if (!pendingDeletion) return;
+  if (pendingDeletion.timer) clearTimeout(pendingDeletion.timer);
   data = pendingDeletion.snapshot;
   pendingDeletion = null;
   persistData();
@@ -2310,6 +2327,10 @@ function openAddModal() {
     const api = getChromeApi();
     if (!api?.tabs) return;
     api.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (api.runtime?.lastError) {
+        toast(t("error.invalidUrl"));
+        return;
+      }
       const tab = tabs?.[0];
       if (!tab) return;
       $("fieldUrl").value = tab.url || "";
@@ -2319,7 +2340,7 @@ function openAddModal() {
 
   $("btnCancel").addEventListener("click", closeModal);
   $("btnSave").addEventListener("click", async () => {
-    const snapshot = JSON.parse(JSON.stringify(data));
+    const snapshot = deepClone(data);
     const url = normalizeUrl($("fieldUrl").value.trim());
     if (!url) {
       toast(t("error.invalidUrl"));
@@ -2410,12 +2431,12 @@ function openEditModal(node) {
     <h2>${t("modal.edit.title")}</h2>
     <div class="section">
       <label>${t("field.title")}</label>
-      <input id="fieldTitle" type="text" value="${node.title || ""}" />
+      <input id="fieldTitle" type="text" value="${escapeAttr(node.title || "")}" />
     </div>
     ${node.type === "item" ? `
     <div class="section">
       <label>${t("field.url")}</label>
-      <input id="fieldUrl" type="url" value="${node.url || ""}" />
+      <input id="fieldUrl" type="url" value="${escapeAttr(node.url || "")}" />
     </div>
     <div class="section">
       <label>${t("field.iconSource")}</label>
@@ -2476,7 +2497,7 @@ function openEditModal(node) {
 
   $("btnCancel").addEventListener("click", closeModal);
   $("btnSave").addEventListener("click", async () => {
-    const snapshot = JSON.parse(JSON.stringify(data));
+    const snapshot = deepClone(data);
     pushBackup();
 
     // 记录原始值以检测变化
@@ -2838,7 +2859,7 @@ function openSettingsModal() {
   $("btnClearCards").addEventListener("click", async () => {
     if (!confirm(t("confirm.clearCards"))) return;
     pushBackup();
-    const preservedSettings = JSON.parse(JSON.stringify(data.settings || {}));
+    const preservedSettings = deepClone(data.settings || {});
     const groupId = `grp_${Date.now()}`;
     data.nodes = {};
     data.groups = [{ id: groupId, name: t("group.default"), order: 0, nodes: [] }];
@@ -2959,7 +2980,7 @@ function openSettingsModal() {
   qsa("input, select, textarea", elements.modal).forEach((el) => {
     const type = el.getAttribute("type") || "";
     const eventName = type === "checkbox" || el.tagName === "SELECT" ? "change" : "input";
-    el.addEventListener(eventName, () => scheduleSettingsSave(true));
+    el.addEventListener(eventName, () => scheduleSettingsSave(false));
   });
   $("settingBgFile").addEventListener("change", () => scheduleSettingsSave(true));
   $("settingBgOverlay").addEventListener("input", () => {
@@ -2985,7 +3006,7 @@ function openManualExportModal() {
   const html = `
     <h2>导出设置</h2>
     <div class="section">
-      <textarea readonly>${payload}</textarea>
+      <textarea readonly>${escapeHtml(payload)}</textarea>
     </div>
     <div class="actions">
       <button id="btnCopy" class="icon-btn">复制</button>
@@ -3105,7 +3126,7 @@ function openImportUrlModal() {
   }
   const options = data.groups
     .sort((a, b) => a.order - b.order)
-    .map((g) => `<option value="${g.id}">${g.name}</option>`)
+    .map((g) => `<option value="${escapeAttr(g.id)}">${escapeHtml(g.name)}</option>`)
     .join("");
   const html = `
     <h2>导入网址</h2>
@@ -3197,7 +3218,7 @@ function openImportUrlModal() {
 function openBackupModal() {
   settingsOpen = false;
   const list = data.backups
-    .map((b) => `<div class="row" data-backup="${b.id}"><div>${new Date(b.ts).toLocaleString()}</div><div class="row-actions"><button class="icon-btn backup-restore">恢复</button><button class="icon-btn backup-delete">删除</button></div></div>`)
+    .map((b) => `<div class="row" data-backup="${escapeAttr(b.id)}"><div>${escapeHtml(new Date(b.ts).toLocaleString())}</div><div class="row-actions"><button class="icon-btn backup-restore">恢复</button><button class="icon-btn backup-delete">删除</button></div></div>`)
     .join("");
   const html = `
     <h2>备份管理</h2>
@@ -3382,9 +3403,11 @@ async function loadRecentHistory() {
   if (!api?.history?.search) return [];
   const startTime = Date.now() - HISTORY_DAYS * 24 * 60 * 60 * 1000;
   try {
-    const result = api.history.search({ text: "", startTime, maxResults: RECENT_LIMIT });
-    const items = typeof result?.then === "function" ? await result : await new Promise((resolve) => {
-      api.history.search({ text: "", startTime, maxResults: RECENT_LIMIT }, (res) => resolve(res || []));
+    const items = await new Promise((resolve) => {
+      let done = false;
+      const settle = (res) => { if (!done) { done = true; resolve(res || []); } };
+      const result = api.history.search({ text: "", startTime, maxResults: RECENT_LIMIT }, settle);
+      if (result && typeof result.then === "function") result.then(settle).catch(() => settle([]));
     });
     const seen = new Set();
     return (items || [])
@@ -3439,7 +3462,7 @@ function openAddHistoryToGroup(node) {
   }
   const options = data.groups
     .sort((a, b) => a.order - b.order)
-    .map((g) => `<option value="${g.id}">${g.name}</option>`)
+    .map((g) => `<option value="${escapeAttr(g.id)}">${escapeHtml(g.name)}</option>`)
     .join("");
   const html = `
     <h2>${t("context.addToShortcuts")}</h2>
@@ -3650,7 +3673,7 @@ function updateOpenModeButton() {
 }
 
 function bindEvents() {
-  window.addEventListener("resize", () => render());
+  window.addEventListener("resize", rafThrottle(() => render()));
 
   elements.btnAdd.addEventListener("click", openAddModal);
   elements.btnFolderAdd.addEventListener("click", openAddModal);
@@ -3856,12 +3879,11 @@ function bindEvents() {
     if (!elements.contextMenu.contains(e.target)) closeContextMenu();
   });
 
-  document.addEventListener("mousemove", (e) => {
+  document.addEventListener("mousemove", rafThrottle((e) => {
     if (!elements.tooltip.classList.contains("hidden")) {
-      elements.tooltip.style.left = `${e.clientX + 12}px`;
-      elements.tooltip.style.top = `${e.clientY + 12}px`;
+      elements.tooltip.style.transform = `translate3d(${e.clientX + 12}px, ${e.clientY + 12}px, 0)`;
     }
-  });
+  }));
 
   document.addEventListener("mouseover", (e) => {
     const target = e.target.closest("[data-tooltip]");

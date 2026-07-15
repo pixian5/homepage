@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body class="hidden">
+  <noscript><div class="empty">请启用 JavaScript 后使用</div></noscript>
   <div class="header">
     <div class="title">添加当前标签页</div>
     <button id="btnSave" class="btn primary">保存</button>
@@ -15,7 +16,7 @@
   <div id="tabCard" class="tab-card"></div>
 
   <div class="section">
-    <label class="label">保存到分组</label>
+    <label class="label" for="groupSelect">保存到分组</label>
     <select id="groupSelect" class="select"></select>
   </div>
 

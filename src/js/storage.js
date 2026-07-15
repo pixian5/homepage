@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 存储模块 - 处理浏览器扩展存储操作
  * @module storage
  */
@@ -9,6 +9,7 @@ const BG_CACHE_KEY = "homepage_bg_cache";
 const SYNC_ITEM_QUOTA_BYTES = 7500;
 const ICON_DATA_MAX_LENGTH = 2048;
 const STORAGE_SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en", "ja", "ko", "de", "fr", "es"];
+const deepClone = (obj) => (typeof structuredClone === "function" ? structuredClone(obj) : JSON.parse(JSON.stringify(obj)));
 
 function normalizeLanguage(input) {
   if (!input) return "";
@@ -376,7 +377,7 @@ export async function saveBgCache(cache) {
  * @returns {Object} - 清理后的数据副本
  */
 function sanitizeForSync(data) {
-  const clone = JSON.parse(JSON.stringify(data));
+  const clone = deepClone(data);
   if (clone.settings) {
     if (clone.settings.backgroundType === "custom") {
       clone.settings.backgroundCustom = "";
@@ -398,7 +399,7 @@ function sanitizeForSync(data) {
  * @returns {Object} - 备份快照对象
  */
 export function createBackupSnapshot(data) {
-  const snapshotData = JSON.parse(JSON.stringify(data || {}));
+  const snapshotData = deepClone(data || {});
   // 备份快照不携带历史备份，避免递归膨胀导致存储清空
   snapshotData.backups = [];
   return {

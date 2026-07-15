@@ -1,4 +1,4 @@
-﻿import { loadBgCache, saveBgCache } from "./storage.js";
+import { loadBgCache, saveBgCache } from "./storage.js";
 
 const BING_API = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=en-US";
 const CACHE_TTL_MS = 1000 * 60 * 60 * 6;
@@ -12,11 +12,22 @@ function todayKey() {
 }
 
 function blobToDataUrl(blob) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result);
+    reader.onloadend = () => {
+      if (reader.error) reject(reader.error);
+      else resolve(reader.result);
+    };
+    reader.onerror = () => reject(reader.error || new Error("FileReader failed"));
     reader.readAsDataURL(blob);
   });
+}
+
+function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal })
+    .finally(() => clearTimeout(timer));
 }
 
 export async function getBingWallpaper() {
@@ -37,12 +48,14 @@ export async function getBingWallpaper() {
   }
 
   try {
-    const res = await fetch(BING_API, { cache: "no-store" });
+    const res = await fetchWithTimeout(BING_API, { cache: "no-store" });
+    if (!res.ok) throw new Error(`bing api http ${res.status}`);
     const json = await res.json();
     const img = json?.images?.[0];
     if (!img?.url) throw new Error("no bing image");
     const fullUrl = img.url.startsWith("http") ? img.url : `https://www.bing.com${img.url}`;
-    const imgRes = await fetch(fullUrl, { cache: "no-store" });
+    const imgRes = await fetchWithTimeout(fullUrl, { cache: "no-store" });
+    if (!imgRes.ok) throw new Error(`bing image http ${imgRes.status}`);
     const blob = await imgRes.blob();
     const dataUrl = await blobToDataUrl(blob);
 

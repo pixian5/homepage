@@ -1,4 +1,4 @@
-﻿# 我的首页（Chrome / Firefox / Safari 新标签页扩展）
+# 我的首页（Chrome / Firefox / Safari 新标签页扩展）
 
 > 本文档基于当前仓库源码（`src/` + `scripts/` + `manifest.*.json`）整理，重点是“实现现状”而不是需求设想。
 
@@ -399,14 +399,14 @@ npm run build
 或在 macOS 直接运行项目内构建入口：
 
 ```bash
-NO_PAUSE=1 ./dist/build-macos.command
+NO_PAUSE=1 ./scripts/build-macos.command
 ```
 
 说明：
 
-- `dist/build-macos.command` 默认使用 Xcode `Release` 配置构建 Safari 宿主 App，避免 `Debug` 产物注入 `__preview.dylib` / `*.debug.dylib` 导致 Safari 扩展新标签页空白。
-- 若本机钥匙串存在 `Apple Development` 证书，`dist/build-macos.command` 会在 Xcode 构建后自动对 Safari 宿主 App 与 `.appex` 进行二次开发签名，避免 Safari 启动后清空新标签页接管设置。
-- 如需临时切回其他配置，可在命令前覆盖环境变量：`SAFARI_XCODE_CONFIGURATION=Debug NO_PAUSE=1 ./dist/build-macos.command`
+- `scripts/build-macos.command` 默认使用 Xcode `Release` 配置构建 Safari 宿主 App，避免 `Debug` 产物注入 `__preview.dylib` / `*.debug.dylib` 导致 Safari 扩展新标签页空白。
+- 若本机钥匙串存在 `Apple Development` 证书，`scripts/build-macos.command` 会在 Xcode 构建后自动对 Safari 宿主 App 与 `.appex` 进行二次开发签名，避免 Safari 启动后清空新标签页接管设置。
+- 如需临时切回其他配置，可在命令前覆盖环境变量：`SAFARI_XCODE_CONFIGURATION=Debug NO_PAUSE=1 ./scripts/build-macos.command`
 
 执行链：
 
@@ -426,9 +426,9 @@ NO_PAUSE=1 ./dist/build-macos.command
 
 Firefox 新标签页若按钮点击无响应，通常是脚本未执行。当前实现已采用：
 
-- `scripts/bundle-firefox.mjs` 生成内联脚本
-- 计算脚本哈希时做 LF 归一化
-- 将 hash 写入 `dist/firefox/manifest.json` 的 CSP
+- `scripts/bundle-firefox.mjs` 把多个 ESM 模块合并为单一外部脚本 `dist/firefox/js/app.ff.js`
+- 把 `newtab.html` 的模块脚本标签替换为普通 `<script src="js/app.ff.js">`
+- CSP 保持 `script-src 'self'`，无需内联脚本哈希
 
 发布与调试均应以 `dist/firefox` 目录为准加载扩展。
 
@@ -447,7 +447,7 @@ Firefox 新标签页若按钮点击无响应，通常是脚本未执行。当前
 
 ## 12.3 Safari
 
-1. 运行 `NO_PAUSE=1 ./dist/build-macos.command`
+1. 运行 `NO_PAUSE=1 ./scripts/build-macos.command`
 2. 脚本会生成并构建 `dist/safari-app`
 3. 自动启动生成出的 `我的首页 Safari.app`
 4. 在 Safari 的“设置 -> 高级”开启开发菜单后，到“开发 -> 扩展”里启用对应扩展

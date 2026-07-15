@@ -14,7 +14,7 @@
 
 ```bash
 cd /Users/x/code/homepage
-NO_PAUSE=1 ./dist/build-macos.command
+NO_PAUSE=1 ./scripts/build-macos.command
 ```
 
 这条命令会自动完成以下动作：
@@ -77,7 +77,7 @@ Safari Web Extension 的 Debug 构建里会出现：
 
 ```bash
 cd /Users/x/code/homepage
-NO_PAUSE=1 ./dist/build-macos.command
+NO_PAUSE=1 ./scripts/build-macos.command
 ```
 
 ### 5.2 在 Safari 中启用
@@ -98,7 +98,7 @@ NO_PAUSE=1 ./dist/build-macos.command
 
 ```bash
 cd /Users/x/code/homepage
-NO_PAUSE=1 ./dist/build-macos.command
+NO_PAUSE=1 ./scripts/build-macos.command
 ```
 
 原因：

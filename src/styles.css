@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --bg-color: #0b0f14;
   --bg-overlay: rgba(12, 15, 20, 0.72);
   --panel: rgba(18, 22, 30, 0.72);
@@ -360,12 +360,7 @@ html, body {
 }
 .overlay-title { font-size: 18px; font-weight: 600; flex: 1; }
 .overlay-actions { display: flex; gap: 8px; }
-.overlay-grid { margin-top: 20px; }
-.overlay-grid {
-  flex: 1;
-  overflow: auto;
-  min-height: 0;
-}
+.overlay-grid { margin-top: 20px; flex: 1; overflow: auto; min-height: 0; }
 
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.45);
@@ -469,7 +464,6 @@ html, body {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 .modal .actions { margin-top: 18px; display: flex; justify-content: flex-end; gap: 10px; }
-.modal .row-actions { display: inline-flex; gap: 8px; }
 .modal .row-actions { display: inline-flex; gap: 8px; }
 
 .context-menu {

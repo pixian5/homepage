@@ -272,6 +272,31 @@ function buildFaviconUrl(url) {
   return candidates[0] || "";
 }
 
+/**
+ * 将远程图片 URL 抓取为 dataURL，便于缓存后瞬显
+ * 抓取失败时返回空字符串
+ */
+export async function fetchAsDataUrl(url, timeoutMs = 8000) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(url, { signal: controller.signal, credentials: "omit", cache: "force-cache" });
+    clearTimeout(timer);
+    if (!res.ok) return "";
+    const blob = await res.blob();
+    if (!blob || blob.size === 0 || blob.size > 512 * 1024) return "";
+    const type = blob.type || "image/png";
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result || "");
+      reader.onerror = () => resolve("");
+      reader.readAsDataURL(new Blob([blob], { type }));
+    });
+  } catch (e) {
+    return "";
+  }
+}
+
 export async function resolveIcon(node, settings, preloadedCache = null) {
   const base = node.title || node.url || "?";
   const isHttp = node.url ? isHttpUrl(node.url) : false;
@@ -376,10 +401,18 @@ export async function refreshAllIcons(nodes) {
       const node = tasks[idx];
       if (!node?.url) continue;
       const finalUrl = await resolveFinalUrl(node.url);
-      const url = buildFaviconUrl(finalUrl);
-      cache[node.url] = { url, ts: Date.now() };
-      const siteKey = getSiteKey(node.url);
-      if (siteKey) cache[siteKey] = { url, ts: Date.now() };
+      const candidate = buildFaviconUrl(finalUrl);
+      // 优先抓取为 dataURL，下次打开页面可瞬显
+      const dataUrl = await fetchAsDataUrl(candidate);
+      if (dataUrl) {
+        cache[node.url] = { dataUrl, ts: Date.now() };
+        const siteKey = getSiteKey(node.url);
+        if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
+      } else {
+        cache[node.url] = { url: candidate, ts: Date.now() };
+        const siteKey = getSiteKey(node.url);
+        if (siteKey) cache[siteKey] = { url: candidate, ts: Date.now() };
+      }
     }
   });
   await Promise.all(workers);
@@ -395,13 +428,27 @@ export async function retryFailedIconsIfDue(settings) {
   if (now.getHours() !== targetHour) return;
   const cache = await loadIconCache();
   let changed = false;
-  for (const key of Object.keys(cache)) {
-    if (cache[key]) {
+  const keys = Object.keys(cache);
+  const limit = 6;
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, keys.length) }, async () => {
+    while (cursor < keys.length) {
+      const idx = cursor++;
+      const key = keys[idx];
+      if (!cache[key]) continue;
       const raw = key.startsWith("site:") ? `https://${key.slice(5)}` : key;
-      cache[key] = { url: buildFaviconUrl(raw), ts: Date.now() };
+      const candidate = buildFaviconUrl(raw);
+      // 优先抓取为 dataURL，下次打开页面可瞬显
+      const dataUrl = await fetchAsDataUrl(candidate);
+      if (dataUrl) {
+        cache[key] = { dataUrl, ts: Date.now() };
+      } else {
+        cache[key] = { url: candidate, ts: Date.now() };
+      }
       changed = true;
     }
-  }
+  });
+  await Promise.all(workers);
   if (changed) await saveIconCache(cache);
 }
 

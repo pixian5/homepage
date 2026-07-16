@@ -11,7 +11,7 @@ import {
   getStorageKey,
 } from "./storage.js";
 import { getBingWallpaper } from "./bing-wallpaper.js";
-import { resolveIcon, refreshAllIcons, retryFailedIconsIfDue, getFaviconCandidates, getSiteKey, clearIconCacheForUrl } from "./icons.js";
+import { resolveIcon, refreshAllIcons, retryFailedIconsIfDue, getFaviconCandidates, getSiteKey, clearIconCacheForUrl, fetchAsDataUrl } from "./icons.js";
 
 const $ = (id) => document.getElementById(id);
 const qs = (sel, root = document) => root.querySelector(sel);
@@ -3341,6 +3341,15 @@ async function trySwitchToNextFavicon(url, triedCandidates) {
     triedCandidates.add(candidate);
     const ok = await probeImage(candidate);
     if (!ok) continue;
+    // 抓取为 dataURL 后缓存，下次打开页面可瞬显
+    const dataUrl = await fetchAsDataUrl(candidate);
+    if (dataUrl) {
+      cache[url] = { dataUrl, ts: Date.now() };
+      if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
+      await saveIconCache(cache);
+      return dataUrl;
+    }
+    // dataURL 化失败时退回远程 URL
     cache[url] = { url: candidate, ts: Date.now() };
     if (siteKey) cache[siteKey] = { url: candidate, ts: Date.now() };
     await saveIconCache(cache);
@@ -3388,6 +3397,19 @@ async function fetchFaviconInBackground(nodeId, url) {
   for (const candidate of candidates) {
     const ok = await probeImage(candidate);
     if (!ok) continue;
+    // 抓取为 dataURL 后缓存，下次打开页面可瞬显
+    const dataUrl = await fetchAsDataUrl(candidate);
+    if (dataUrl) {
+      cache[url] = { dataUrl, ts: Date.now() };
+      if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
+      await saveIconCache(cache);
+      const target = data?.nodes?.[nodeId];
+      if (target) target.iconPending = false;
+      await persistData();
+      render();
+      return;
+    }
+    // dataURL 化失败时退回远程 URL
     cache[url] = { url: candidate, ts: Date.now() };
     if (siteKey) cache[siteKey] = { url: candidate, ts: Date.now() };
     await saveIconCache(cache);

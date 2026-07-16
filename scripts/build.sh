@@ -193,6 +193,7 @@ build_safari_project() {
     normalize_safari_project_bundle_ids "$project_file"
     normalize_safari_host_app_sources "$project_root"
     sync_safari_project_resources "$project_root"
+    rm -rf "${SAFARI_PROJECT_DIR}/build"
     return 0
   fi
 
@@ -216,6 +217,7 @@ build_safari_project() {
     normalize_safari_host_app_sources "$project_root"
     sync_safari_project_resources "$project_root"
   fi
+  rm -rf "${SAFARI_PROJECT_DIR}/build"
 }
 
 rm -f "$DIST_DIR/chrome.zip" "$DIST_DIR/firefox.zip" "$DIST_DIR/firefox.xpi" "$DIST_DIR/safari.zip"

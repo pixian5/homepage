@@ -1,4 +1,4 @@
-﻿import { promises as fs } from "fs";
+import { promises as fs } from "fs";
 import path from "path";
 
 const root = process.cwd();
@@ -7,11 +7,9 @@ const files = ["package.json", "manifest.chrome.json", "manifest.firefox.json", 
 function bumpVersion(version) {
   const parts = version.split(".").map((n) => Number(n));
   if (parts.length < 2) return version;
-  let major = parts[0] || 0;
+  const major = parts[0] || 0;
   const minor = parts[1] || 0;
-  const nextMinor = minor + 1;
-  major += Math.floor(nextMinor / 10);
-  return [major, nextMinor % 10].join(".");
+  return [major, minor + 1].join(".");
 }
 
 async function run() {

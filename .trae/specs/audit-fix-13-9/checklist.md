@@ -1,0 +1,11 @@
+# Checklist
+- [x] `src/js/app.js` 中 `fetchTitleViaTab` 的 `api.tabs.onUpdated.addListener(onUpdated)` 被 try/catch 包裹，catch 分支调用 `finish("")`
+- [x] `node --check src/js/app.js` 语法检查通过
+- [x] `scripts/build.sh` 的 `build_safari_project` 函数末尾包含 `rm -rf "${SAFARI_PROJECT_DIR}/build"`
+- [x] `npm run build` 执行后 `dist/safari-app/build/` 目录不存在或为空
+- [x] 三端 `manifest.*.json` 和 `package.json` 的 `version` 一致为 13.10
+- [x] `dist/firefox/js/app.ff.js` 中 `fetchTitleViaTab` 包含 try/catch 修复
+- [x] `dist/chrome/js/app.js` 中 `fetchTitleViaTab` 包含 try/catch 修复
+- [x] `dist/safari-app/Shared (Extension)/Resources/js/` 不包含已删除的 `constants.js / dom-utils.js / shared.js / toast.js / tooltip.js`
+- [x] git commit 消息为中文且以版本号 `13.10` 开头
+- [x] git push 到 origin/main 成功

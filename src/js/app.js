@@ -3393,7 +3393,11 @@ async function fetchTitleViaTab(url) {
           finish(updatedTab?.title || "");
         }
       };
-      api.tabs.onUpdated.addListener(onUpdated);
+      try {
+        api.tabs.onUpdated.addListener(onUpdated);
+      } catch (e) {
+        finish("");
+      }
     });
   });
 }

@@ -3734,9 +3734,10 @@ async function init() {
   applySidebarState();
   closeModal();
   closeFolder();
-  await loadBackground();
-  await retryFailedIconsIfDue(data.settings);
+  // 先渲染 UI，图标走缓存瞬显；背景和图标重试后台异步进行，不阻塞首屏
   render();
+  loadBackground();
+  retryFailedIconsIfDue(data.settings);
   await consumeSaveToast();
 }
 

@@ -171,9 +171,6 @@ const APP_SUPPORTED_LANGUAGES = [
   { code: "en", label: "English" },
   { code: "ja", label: "日本語" },
   { code: "ko", label: "한국어" },
-  { code: "de", label: "Deutsch" },
-  { code: "fr", label: "Français" },
-  { code: "es", label: "Español" },
 ];
 
 const I18N = {
@@ -252,9 +249,9 @@ const I18N = {
     "settings.iconRetry": "重新获取失败图标（每天）",
     "settings.retryDisabled": "不启用",
     "confirm.clearData": "确认清空全部数据？",
-    "confirm.clearCards": "确认删除所有分组、卡片与卡片？（设置将保留）",
+    "confirm.clearCards": "确认删除所有分组与快捷按钮？（设置将保留）",
     "toast.cleared": "已清空",
-    "toast.cardsCleared": "已删除所有分组、卡片与卡片，可在【备份管理】中恢复",
+    "toast.cardsCleared": "已删除所有分组与快捷按钮，可在【备份管理】中恢复",
     "toast.iconsRefreshed": "图标刷新完成",
     "toast.savedToGroup": "已保存到分组：{name}",
     "common.unnamed": "未命名",
@@ -375,9 +372,9 @@ const I18N = {
     "settings.iconRetry": "重新取得失敗圖示（每日）",
     "settings.retryDisabled": "不啟用",
     "confirm.clearData": "確認清空全部資料？",
-    "confirm.clearCards": "確認刪除所有分組、卡片與卡片？（設定將保留）",
+    "confirm.clearCards": "確認刪除所有分組與快捷按鈕？（設定將保留）",
     "toast.cleared": "已清空",
-    "toast.cardsCleared": "已刪除所有分組、卡片與卡片，可在【備份管理】中還原",
+    "toast.cardsCleared": "已刪除所有分組與快捷按鈕，可在【備份管理】中還原",
     "toast.iconsRefreshed": "圖示已重新整理",
     "group.default": "預設",
     "group.new": "新分組",
@@ -672,9 +669,6 @@ function normalizeLanguageCode(input) {
   if (raw.startsWith("en")) return "en";
   if (raw.startsWith("ja")) return "ja";
   if (raw.startsWith("ko")) return "ko";
-  if (raw.startsWith("de")) return "de";
-  if (raw.startsWith("fr")) return "fr";
-  if (raw.startsWith("es")) return "es";
   return "";
 }
 
@@ -1052,6 +1046,7 @@ function normalizeUrlWithScheme(input, scheme) {
   const candidate = hasScheme ? raw : `${scheme}://${raw.replace(/^\/+/, "")}`;
   try {
     const url = new URL(candidate);
+    if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
     return url.href;
   } catch (e) {
     // URL 解析失败是预期行为，不需要警告
@@ -2775,7 +2770,8 @@ function openSettingsModal() {
   $("settingBgType").value = data.settings.backgroundType;
   $("settingBgColor").value = data.settings.backgroundColor;
   $("settingBgGradient").value = data.settings.backgroundGradient;
-  const match = /linear-gradient\\([^,]+,\\s*([^,]+),\\s*([^\\)]+)\\)/.exec(data.settings.backgroundGradient || "");
+  // 形如 "linear-gradient(120deg, #aaa, #bbb)"，跳过角度，直接取两个颜色
+  const match = /linear-gradient\([^,]+,\s*([^,]+),\s*([^\)]+)\)/.exec(data.settings.backgroundGradient || "");
   const gA = data.settings.backgroundGradientA || match?.[1]?.trim() || "#1d2a3b";
   const gB = data.settings.backgroundGradientB || match?.[2]?.trim() || "#0b0f14";
   $("settingBgGradientA").value = gA;
@@ -3095,6 +3091,22 @@ async function openImportModal() {
           if (existingIds.has(group.id)) continue;
           data.groups.push(group);
           existingIds.add(group.id);
+        }
+      }
+      // 导入完成后对所有节点 URL 做协议白名单校验，丢弃危险协议
+      if (data && data.nodes) {
+        for (const id of Object.keys(data.nodes)) {
+          const node = data.nodes[id];
+          if (!node || node.type === "folder") continue;
+          const safe = normalizeUrl(node.url);
+          if (!safe) {
+            delete data.nodes[id];
+            for (const g of data.groups || []) {
+              if (Array.isArray(g.nodes)) g.nodes = g.nodes.filter((nid) => nid !== id);
+            }
+          } else {
+            node.url = safe;
+          }
         }
       }
       await persistData();

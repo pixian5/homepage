@@ -7,9 +7,11 @@ const files = ["package.json", "manifest.chrome.json", "manifest.firefox.json", 
 function bumpVersion(version) {
   const parts = version.split(".").map((n) => Number(n));
   if (parts.length < 2) return version;
-  const major = parts[0] || 0;
+  let major = parts[0] || 0;
   const minor = parts[1] || 0;
-  return [major, minor + 1].join(".");
+  const nextMinor = minor + 1;
+  major += Math.floor(nextMinor / 10);
+  return [major, nextMinor % 10].join(".");
 }
 
 async function run() {

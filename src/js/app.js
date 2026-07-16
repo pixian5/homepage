@@ -9,6 +9,7 @@ import {
   defaultData,
   getChromeApi,
   getStorageKey,
+  deepClone,
 } from "./storage.js";
 import { getBingWallpaper } from "./bing-wallpaper.js";
 import { resolveIcon, refreshAllIcons, retryFailedIconsIfDue, getFaviconCandidates, getSiteKey, clearIconCacheForUrl, fetchAsDataUrl } from "./icons.js";
@@ -31,7 +32,6 @@ const rafThrottle = (fn) => {
     });
   };
 };
-const deepClone = (obj) => (typeof structuredClone === "function" ? structuredClone(obj) : JSON.parse(JSON.stringify(obj)));
 
 const elements = {
   background: $("background"),

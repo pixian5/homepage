@@ -9,7 +9,7 @@ const BG_CACHE_KEY = "homepage_bg_cache";
 const SYNC_ITEM_QUOTA_BYTES = 7500;
 const ICON_DATA_MAX_LENGTH = 2048;
 const STORAGE_SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en", "ja", "ko", "de", "fr", "es"];
-const deepClone = (obj) => (typeof structuredClone === "function" ? structuredClone(obj) : JSON.parse(JSON.stringify(obj)));
+export const deepClone = (obj) => (typeof structuredClone === "function" ? structuredClone(obj) : JSON.parse(JSON.stringify(obj)));
 
 function normalizeLanguage(input) {
   if (!input) return "";

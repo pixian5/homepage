@@ -347,15 +347,17 @@ export async function resolveIcon(node, settings, preloadedCache = null) {
     if (isFailedCacheEntry(cache[siteKey])) {
       return avatarDataUrl(base, node.color || hashColor(base));
     }
+    // 优先 dataURL（瞬显，无网络请求）
+    if (cache[siteKey]?.dataUrl) {
+      if (cacheChanged) await saveIconCache(cache);
+      return cache[siteKey].dataUrl;
+    }
+    // 其次远程 URL（可能是旧缓存，render 时会后台迁移为 dataUrl）
     const safeUrl = sanitizeCachedIconUrl(cache, siteKey);
     if (!safeUrl && !cache[siteKey]) cacheChanged = true;
     if (safeUrl) {
       if (cacheChanged) await saveIconCache(cache);
       return safeUrl;
-    }
-    if (cache[siteKey]?.dataUrl) {
-      if (cacheChanged) await saveIconCache(cache);
-      return cache[siteKey].dataUrl;
     }
   }
 
@@ -363,15 +365,17 @@ export async function resolveIcon(node, settings, preloadedCache = null) {
     if (isFailedCacheEntry(cache[cacheKey])) {
       return avatarDataUrl(base, node.color || hashColor(base));
     }
+    // 优先 dataURL（瞬显，无网络请求）
+    if (cache[cacheKey]?.dataUrl) {
+      if (cacheChanged) await saveIconCache(cache);
+      return cache[cacheKey].dataUrl;
+    }
+    // 其次远程 URL
     const safeUrl = sanitizeCachedIconUrl(cache, cacheKey);
     if (!safeUrl && !cache[cacheKey]) cacheChanged = true;
     if (safeUrl) {
       if (cacheChanged) await saveIconCache(cache);
       return safeUrl;
-    }
-    if (cache[cacheKey]?.dataUrl) {
-      if (cacheChanged) await saveIconCache(cache);
-      return cache[cacheKey].dataUrl;
     }
   }
 

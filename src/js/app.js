@@ -1436,6 +1436,8 @@ async function renderGrid() {
         img.src = fallback;
         await markIconLoadFailed(node.url);
       };
+      // 旧缓存只有远程 URL，后台异步抓取为 dataURL 更新缓存，成功后直接更新 img.src
+      migrateIconCacheToDataUrl(node, img);
     }
     if (seq !== renderSeq) return;
     icon.appendChild(img);
@@ -3427,6 +3429,30 @@ async function fetchFaviconInBackground(nodeId, url) {
     await saveIconCache(cache);
     await persistData();
     render();
+  }
+}
+
+const _migratingIcons = new Set();
+/**
+ * 旧缓存只有远程 URL（{ url }），后台异步抓取为 dataURL 并更新缓存。
+ * 成功后直接更新 img.src，避免全量 render 闪烁；下次打开页面瞬显。
+ */
+async function migrateIconCacheToDataUrl(node, img) {
+  if (!node?.url || node.iconType !== "auto" || _migratingIcons.has(node.url)) return;
+  _migratingIcons.add(node.url);
+  try {
+    const cache = await loadIconCache();
+    const siteKey = getSiteKey(node.url);
+    const entry = (siteKey && cache[siteKey]) || cache[node.url];
+    if (!entry || entry.dataUrl || !entry.url) return;
+    const dataUrl = await fetchAsDataUrl(entry.url);
+    if (!dataUrl) return;
+    cache[node.url] = { dataUrl, ts: Date.now() };
+    if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
+    await saveIconCache(cache);
+    if (img && img.isConnected) img.src = dataUrl;
+  } finally {
+    _migratingIcons.delete(node.url);
   }
 }
 

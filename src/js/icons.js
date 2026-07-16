@@ -54,6 +54,19 @@ const SPECIAL_FAVICONS = {
     "https://www.doubao.com/favicon.ico",
     "https://doubao.com/favicon.ico",
   ],
+  "ip233.cn": [
+    "https://www.ip233.cn/favicon.ico",
+    "https://ip233.cn/favicon.ico",
+  ],
+  "www.ip233.cn": [
+    "https://www.ip233.cn/favicon.ico",
+    "https://ip233.cn/favicon.ico",
+  ],
+  "sharepoint.com": [
+    "https://www.sharepoint.com/favicon.ico",
+    "https://sharepoint.com/favicon.ico",
+    "https://login.microsoftonline.com/favicon.ico",
+  ],
 };
 const FIREFOX_EXTENSION_CORP_BLOCKLIST = new Set([
   "mail.google.com",

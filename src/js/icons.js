@@ -38,12 +38,36 @@ const SPECIAL_FAVICONS = {
     "https://chatgpt.com/favicon.ico",
     "https://openai.com/favicon.ico",
   ],
+  "grok.com": [
+    "https://grok.com/favicon.ico",
+    "https://x.ai/favicon.ico",
+  ],
+  "x.ai": [
+    "https://x.ai/favicon.ico",
+    "https://grok.com/favicon.ico",
+  ],
+  "doubao.com": [
+    "https://doubao.com/favicon.ico",
+    "https://www.doubao.com/favicon.ico",
+  ],
+  "www.doubao.com": [
+    "https://www.doubao.com/favicon.ico",
+    "https://doubao.com/favicon.ico",
+  ],
 };
 const FIREFOX_EXTENSION_CORP_BLOCKLIST = new Set([
   "mail.google.com",
   "chatgpt.com",
   "openai.com",
 ]);
+
+function isFirefoxExtension() {
+  try {
+    return isExtensionContext() && /firefox/i.test(navigator?.userAgent || "");
+  } catch (e) {
+    return false;
+  }
+}
 const FINAL_URL_CACHE = new Map();
 const FINAL_URL_CACHE_MAX = 200;
 const ICON_FAILURE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -107,17 +131,31 @@ export function getFaviconCandidates(pageUrl) {
     const siblingHostSpecial = getSiblingHostCandidates(host);
     const dynamicSpecial = getDynamicSpecialFaviconCandidates(host);
     const pathSpecific = getPathSpecificCandidates(host, pathname);
-    const rawCandidates = [
-      ...pathSpecific,
-      ...special,
-      ...siblingHostSpecial,
-      ...dynamicSpecial,
-      buildGoogleFaviconByPageUrl(pageUrl),
-      `https://${host}/favicon.ico`,
-      buildGoogleFaviconUrl(host),
-      buildGoogleDomainFaviconUrl(host),
-      `https://icons.duckduckgo.com/ip3/${host}.ico`,
-    ];
+    const duckduckgo = `https://icons.duckduckgo.com/ip3/${host}.ico`;
+    const rawCandidates = isFirefoxExtension()
+      ? [
+          // Firefox 扩展对 CORP 敏感，优先使用 DuckDuckGo（对扩展友好）
+          duckduckgo,
+          ...pathSpecific,
+          ...special,
+          ...siblingHostSpecial,
+          ...dynamicSpecial,
+          buildGoogleFaviconByPageUrl(pageUrl),
+          `https://${host}/favicon.ico`,
+          buildGoogleFaviconUrl(host),
+          buildGoogleDomainFaviconUrl(host),
+        ]
+      : [
+          ...pathSpecific,
+          ...special,
+          ...siblingHostSpecial,
+          ...dynamicSpecial,
+          buildGoogleFaviconByPageUrl(pageUrl),
+          `https://${host}/favicon.ico`,
+          buildGoogleFaviconUrl(host),
+          buildGoogleDomainFaviconUrl(host),
+          duckduckgo,
+        ];
     const normalized = rawCandidates
       .map((candidate) => normalizeCandidateUrl(candidate))
       .filter(Boolean);

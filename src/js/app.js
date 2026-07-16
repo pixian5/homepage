@@ -678,7 +678,7 @@ function t(key, vars = null) {
 
 function ensureLanguageSetting() {
   if (!data?.settings) return false;
-  const normalized = normalizeLanguageCode(data.settings.language || "");
+  const normalized = normalizeLanguage(data.settings.language || "");
   if (normalized) {
     data.settings.language = normalized;
     return false;
@@ -688,7 +688,7 @@ function ensureLanguageSetting() {
 }
 
 function buildLanguageOptions(selectedLanguage) {
-  const normalized = normalizeLanguageCode(selectedLanguage || "") || currentLang();
+  const normalized = normalizeLanguage(selectedLanguage || "") || currentLang();
   return APP_SUPPORTED_LANGUAGES
     .map((item) => `<option value="${item.code}" ${item.code === normalized ? "selected" : ""}>${item.label}</option>`)
     .join("");
@@ -2792,7 +2792,7 @@ function openSettingsModal() {
     }
   });
   $("settingLanguage").addEventListener("change", async () => {
-    data.settings.language = normalizeLanguageCode($("settingLanguage").value) || detectPreferredLanguage();
+    data.settings.language = normalizeLanguage($("settingLanguage").value) || detectPreferredLanguage();
     applyStaticI18n();
     render();
     await persistData();
@@ -2874,7 +2874,7 @@ function openSettingsModal() {
     data.settings.keyboardNav = $("settingKeyboard").checked;
     data.settings.fontSize = Number($("settingFontSize").value) || data.settings.fontSize;
     data.settings.theme = $("settingTheme").value;
-    data.settings.language = normalizeLanguageCode($("settingLanguage").value) || detectPreferredLanguage();
+    data.settings.language = normalizeLanguage($("settingLanguage").value) || detectPreferredLanguage();
     const selectedDefaultGroupId = $("settingDefaultGroupId").value;
     data.settings.defaultGroupMode = selectedDefaultGroupId ? "fixed" : "last";
     data.settings.defaultGroupId = selectedDefaultGroupId;

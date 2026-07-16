@@ -90,8 +90,15 @@ if [[ -n "${PROJECT_FILE}" ]]; then
   APP_PATH="${SAFARI_BUILD_DIR}/Build/Products/${SAFARI_XCODE_CONFIGURATION}/${SAFARI_APP_NAME}.app"
   if [[ -d "${APP_PATH}" ]]; then
     post_sign_safari_app "${APP_PATH}" "${SAFARI_XCODE_CONFIGURATION}"
-    open "${APP_PATH}"
-    echo "[build] launched: ${APP_PATH}"
+
+    # 复制到应用程序目录
+    APPS_DIR_APP="/Applications/${SAFARI_APP_NAME}.app"
+    echo "[build] Copying to ${APPS_DIR_APP}..."
+    rm -rf "${APPS_DIR_APP}"
+    cp -R "${APP_PATH}" "${APPS_DIR_APP}"
+
+    open "${APPS_DIR_APP}"
+    echo "[build] launched: ${APPS_DIR_APP}"
   fi
 fi
 

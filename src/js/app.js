@@ -785,9 +785,11 @@ function debugLog(event, payload = {}) {
     list.unshift(entry);
     localStorage.setItem(DEBUG_LOG_KEY, JSON.stringify(list.slice(0, MAX_DEBUG_LOG_ENTRIES)));
   } catch (err) {
-    console.warn("debugLog failed", err);
+    // localStorage 写入失败是预期行为，不需要警告
   }
-  console.log("[debug]", entry);
+  if (shouldDebugPersist()) {
+    console.log("[debug]", entry);
+  }
 }
 
 function getRuntimeInfo() {
@@ -3246,6 +3248,22 @@ function openBackupModal() {
       const backupsBeforeRestore = Array.isArray(data.backups) ? cloneDataSnapshot(data.backups) : [];
       const restoredData = cloneDataSnapshot(backup.data);
       restoredData.backups = backupsBeforeRestore;
+      // 恢复后对所有节点 URL 做协议白名单校验，丢弃危险协议
+      if (restoredData && restoredData.nodes) {
+        for (const id of Object.keys(restoredData.nodes)) {
+          const node = restoredData.nodes[id];
+          if (!node || node.type === "folder") continue;
+          const safe = normalizeUrl(node.url);
+          if (!safe) {
+            delete restoredData.nodes[id];
+            for (const g of restoredData.groups || []) {
+              if (Array.isArray(g.nodes)) g.nodes = g.nodes.filter((nid) => nid !== id);
+            }
+          } else {
+            node.url = safe;
+          }
+        }
+      }
       data = restoredData;
       skipAutoBackupOnce = true;
       persistData();
@@ -3504,6 +3522,11 @@ function openAddHistoryToGroup(node) {
 
 async function addHistoryToShortcutsInGroup(node, groupId) {
   if (!node?.url) return;
+  const safeUrl = normalizeUrl(node.url);
+  if (!safeUrl) {
+    toast(t("error.invalidUrlSimple"));
+    return;
+  }
   const targetGroup = data.groups.find((g) => g.id === groupId);
   if (!targetGroup) {
     toast(t("group.notFound"));
@@ -3514,8 +3537,8 @@ async function addHistoryToShortcutsInGroup(node, groupId) {
   data.nodes[id] = {
     id,
     type: "item",
-    title: node.title || new URL(node.url).hostname,
-    url: node.url,
+    title: node.title || new URL(safeUrl).hostname,
+    url: safeUrl,
     iconType: "auto",
     iconData: "",
     color: "",

@@ -23,7 +23,13 @@ const SPECIAL_FAVICONS = {
   ],
   "gitcode.com": [
     "https://gitcode.com/favicon.ico",
+    "https://gitcode.com/favicon.svg",
     "https://www.gitcode.com/favicon.ico",
+  ],
+  "www.gitcode.com": [
+    "https://www.gitcode.com/favicon.ico",
+    "https://gitcode.com/favicon.ico",
+    "https://gitcode.com/favicon.svg",
   ],
   "chatgpt.com": [
     "https://chatgpt.com/favicon.ico",
@@ -74,9 +80,11 @@ const FIREFOX_EXTENSION_CORP_BLOCKLIST = new Set([
   "openai.com",
 ]);
 
-function isFirefoxExtension() {
+function isBrowserExtension() {
   try {
-    return isExtensionContext() && /firefox/i.test(navigator?.userAgent || "");
+    if (!isExtensionContext()) return false;
+    const ua = navigator?.userAgent || "";
+    return /firefox/i.test(ua) || /safari/i.test(ua) || /applewebkit/i.test(ua);
   } catch (e) {
     return false;
   }
@@ -145,18 +153,18 @@ export function getFaviconCandidates(pageUrl) {
     const dynamicSpecial = getDynamicSpecialFaviconCandidates(host);
     const pathSpecific = getPathSpecificCandidates(host, pathname);
     const duckduckgo = `https://icons.duckduckgo.com/ip3/${host}.ico`;
-    const rawCandidates = isFirefoxExtension()
+    const rawCandidates = isBrowserExtension()
       ? [
-          // Firefox 扩展对 CORP 敏感，优先使用 DuckDuckGo（对扩展友好）
-          duckduckgo,
+          // Firefox/Safari 扩展：优先站点自身 favicon，DuckDuckGo 作为后备
           ...pathSpecific,
           ...special,
+          `https://${host}/favicon.ico`,
           ...siblingHostSpecial,
           ...dynamicSpecial,
           buildGoogleFaviconByPageUrl(pageUrl),
-          `https://${host}/favicon.ico`,
           buildGoogleFaviconUrl(host),
           buildGoogleDomainFaviconUrl(host),
+          duckduckgo,
         ]
       : [
           ...pathSpecific,

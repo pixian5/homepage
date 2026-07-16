@@ -1421,25 +1421,28 @@ async function renderGrid() {
     icon.className = "tile-icon";
     const img = document.createElement("img");
     img.alt = node.title || node.url || "";
-    const iconSrc = await resolveIcon(node, data.settings, iconCache);
-    img.src = iconSrc;
-    if (node.url && data.settings.iconFetch && !iconSrc.startsWith("data:")) {
-      const fallback = letterIconDataUrl(node.title || node.url || "?", node.color);
-      const triedCandidates = new Set([iconSrc]);
-      img.onerror = async () => {
-        const nextIcon = await trySwitchToNextFavicon(node.url, triedCandidates);
-        if (nextIcon) {
-          img.src = nextIcon;
-          return;
-        }
-        img.onerror = null;
-        img.src = fallback;
-        await markIconLoadFailed(node.url);
-      };
-      // 旧缓存只有远程 URL，后台异步抓取为 dataURL 更新缓存，成功后直接更新 img.src
-      migrateIconCacheToDataUrl(node, img);
-    }
-    if (seq !== renderSeq) return;
+    // 先用字母头像占位，图标并发解析后异步更新，避免串行 await 阻塞渲染
+    img.src = letterIconDataUrl(node.title || node.url || "?", node.color);
+    resolveIcon(node, data.settings, iconCache).then((iconSrc) => {
+      if (seq !== renderSeq || !img.isConnected) return;
+      img.src = iconSrc;
+      if (node.url && data.settings.iconFetch && !iconSrc.startsWith("data:")) {
+        const fallback = letterIconDataUrl(node.title || node.url || "?", node.color);
+        const triedCandidates = new Set([iconSrc]);
+        img.onerror = async () => {
+          const nextIcon = await trySwitchToNextFavicon(node.url, triedCandidates);
+          if (nextIcon) {
+            img.src = nextIcon;
+            return;
+          }
+          img.onerror = null;
+          img.src = fallback;
+          await markIconLoadFailed(node.url);
+        };
+        // 旧缓存只有远程 URL，后台异步抓取为 dataURL 更新缓存，成功后直接更新 img.src
+        migrateIconCacheToDataUrl(node, img);
+      }
+    });
     icon.appendChild(img);
 
     const title = document.createElement("div");
@@ -2941,8 +2944,8 @@ function openSettingsModal() {
     applyTheme();
     applyStaticI18n();
     await persistData();
-    await loadBackground();
     render();
+    loadBackground();
     if (toastOnSave) toast(t("settings.saved"));
     if (close) closeModal();
     settingsSaving = false;
@@ -3683,6 +3686,8 @@ async function init() {
   debugLog("init_start", getRuntimeInfo());
   listenForExternalToast();
   attachStorageListener();
+  // loadData 和 loadRecentHistory 并行，减少首屏等待
+  const recentPromise = loadRecentHistory();
   const localData = await loadData();
   debugLog("init_local", {
     groups: localData.groups?.length || 0,
@@ -3728,7 +3733,7 @@ async function init() {
     activeGroupId = data.groups?.[0]?.id || RECENT_GROUP_ID;
     data.settings.lastActiveGroupId = activeGroupId;
   }
-  recentItems = await loadRecentHistory();
+  recentItems = await recentPromise;
   applyDensity();
   applyTheme();
   applySidebarState();

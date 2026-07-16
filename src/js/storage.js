@@ -343,14 +343,19 @@ export async function clearData(useSync = false) {
   await storageRemove(area, ROOT_KEY);
 }
 
+let _iconCacheMemory = null;
+
 export async function loadIconCache() {
+  if (_iconCacheMemory) return _iconCacheMemory;
   const api = getChrome();
   if (!api) return {};
   const local = storageArea(false);
-  return (await storageGet(local, ICON_CACHE_KEY)) || {};
+  _iconCacheMemory = (await storageGet(local, ICON_CACHE_KEY)) || {};
+  return _iconCacheMemory;
 }
 
 export async function saveIconCache(cache) {
+  _iconCacheMemory = cache;
   const api = getChrome();
   if (!api) return;
   const local = storageArea(false);

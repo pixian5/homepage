@@ -1405,6 +1405,9 @@ async function renderGrid() {
   grid.style.setProperty("--tile-gap", tileGap);
   grid.style.gridTemplateColumns = `repeat(${columns}, minmax(${tileSize}px, 1fr))`;
 
+  // 预加载图标缓存，避免每个 tile 都独立读存储
+  const iconCache = await loadIconCache();
+
   for (const [idx, node] of nodes.entries()) {
     if (seq !== renderSeq) return;
     const tile = document.createElement("div");
@@ -1418,7 +1421,7 @@ async function renderGrid() {
     icon.className = "tile-icon";
     const img = document.createElement("img");
     img.alt = node.title || node.url || "";
-    const iconSrc = await resolveIcon(node, data.settings);
+    const iconSrc = await resolveIcon(node, data.settings, iconCache);
     img.src = iconSrc;
     if (node.url && data.settings.iconFetch && !iconSrc.startsWith("data:")) {
       const fallback = letterIconDataUrl(node.title || node.url || "?", node.color);

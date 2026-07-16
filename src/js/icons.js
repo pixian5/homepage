@@ -272,11 +272,11 @@ function buildFaviconUrl(url) {
   return candidates[0] || "";
 }
 
-export async function resolveIcon(node, settings) {
+export async function resolveIcon(node, settings, preloadedCache = null) {
   const base = node.title || node.url || "?";
   const isHttp = node.url ? isHttpUrl(node.url) : false;
   const siteKey = node.url ? getSiteKey(node.url) : "";
-  const cache = await loadIconCache();
+  const cache = preloadedCache || await loadIconCache();
   const cacheKey = node.url || node.id;
 
   if (node.url && !isHttp) {

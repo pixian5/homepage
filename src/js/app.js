@@ -1024,15 +1024,19 @@ function hideTooltip() {
   elements.tooltip.classList.add("hidden");
 }
 
+const SAFE_URL_PROTOCOLS = new Set(["http:", "https:", "ftp:"]);
+
 function normalizeUrl(input) {
   if (!input) return "";
   try {
     const url = new URL(input);
+    if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
     return url.href;
   } catch (err) {
     const withScheme = `https://${input}`;
     try {
       const url = new URL(withScheme);
+      if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
       return url.href;
     } catch (err2) {
       return "";
@@ -2183,16 +2187,6 @@ function safeSetText(el, text) {
 }
 
 /**
- * 安全地设置元素属性，防止 XSS
- * @param {HTMLElement} el
- * @param {string} attr
- * @param {string} value
- */
-function safeSetAttr(el, attr, value) {
-  el.setAttribute(attr, value);
-}
-
-/**
  * 创建带标签和输入框的表单项
  * @param {string} labelText
  * @param {HTMLElement} inputEl
@@ -2891,7 +2885,13 @@ function openSettingsModal() {
 
     data.settings.showSearch = $("settingShowSearch").checked;
     data.settings.enableSearchEngine = true;
-    data.settings.searchEngineUrl = $("settingSearchEngine").value.trim() || data.settings.searchEngineUrl;
+    {
+      const engineInput = $("settingSearchEngine").value.trim();
+      if (engineInput) {
+        const normalizedEngine = normalizeUrl(engineInput);
+        data.settings.searchEngineUrl = normalizedEngine || data.settings.searchEngineUrl;
+      }
+    }
     data.settings.fixedLayout = $("settingFixedLayout").checked;
     data.settings.fixedCols = Number($("settingCols").value) || 8;
     const selectedDensity = qsa("input[name='density']", elements.modal).find((r) => r.checked);

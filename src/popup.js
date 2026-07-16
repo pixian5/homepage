@@ -206,13 +206,19 @@ function appendLog(entry) {
  * @param {string} input
  * @returns {string}
  */
+const SAFE_URL_PROTOCOLS = new Set(["http:", "https:", "ftp:"]);
+
 function normalizeUrl(input) {
   if (!input) return "";
   try {
-    return new URL(input).href;
+    const url = new URL(input);
+    if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
+    return url.href;
   } catch (e) {
     try {
-      return new URL(`https://${input}`).href;
+      const url = new URL(`https://${input}`);
+      if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
+      return url.href;
     } catch (e2) {
       // URL 解析失败是预期行为
       return "";

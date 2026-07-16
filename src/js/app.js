@@ -10,6 +10,8 @@ import {
   getChromeApi,
   getStorageKey,
   deepClone,
+  normalizeLanguage,
+  detectPreferredLanguage,
 } from "./storage.js";
 import { getBingWallpaper } from "./bing-wallpaper.js";
 import { resolveIcon, refreshAllIcons, retryFailedIconsIfDue, getFaviconCandidates, getSiteKey, clearIconCacheForUrl, fetchAsDataUrl } from "./icons.js";
@@ -660,50 +662,8 @@ const I18N = {
   },
 };
 
-function normalizeLanguageCode(input) {
-  if (!input) return "";
-  const raw = String(input).trim().replace(/_/g, "-").toLowerCase();
-  if (!raw) return "";
-  if (raw === "zh" || raw.startsWith("zh-hans") || raw.startsWith("zh-cn") || raw.startsWith("zh-sg")) return "zh-CN";
-  if (raw.startsWith("zh-hant") || raw.startsWith("zh-tw") || raw.startsWith("zh-hk") || raw.startsWith("zh-mo")) return "zh-TW";
-  if (raw.startsWith("en")) return "en";
-  if (raw.startsWith("ja")) return "ja";
-  if (raw.startsWith("ko")) return "ko";
-  return "";
-}
-
-function detectSystemLanguage() {
-  try {
-    return normalizeLanguageCode(Intl?.DateTimeFormat?.().resolvedOptions?.().locale || "");
-  } catch (e) {
-    return "";
-  }
-}
-
-function detectBrowserLanguage() {
-  const api = getChromeApi();
-  const candidates = [
-    api?.i18n?.getUILanguage?.(),
-    navigator?.language,
-    ...(Array.isArray(navigator?.languages) ? navigator.languages : []),
-  ];
-  for (const candidate of candidates) {
-    const normalized = normalizeLanguageCode(candidate);
-    if (APP_SUPPORTED_LANGUAGES.some((item) => item.code === normalized)) return normalized;
-  }
-  return "";
-}
-
-function detectPreferredLanguage() {
-  const systemLang = detectSystemLanguage();
-  if (systemLang) return systemLang;
-  const browserLang = detectBrowserLanguage();
-  if (browserLang) return browserLang;
-  return "zh-CN";
-}
-
 function currentLang() {
-  const stored = normalizeLanguageCode(data?.settings?.language || "");
+  const stored = normalizeLanguage(data?.settings?.language || "");
   if (stored) return stored;
   return detectPreferredLanguage();
 }

@@ -11,7 +11,7 @@ const ICON_DATA_MAX_LENGTH = 2048;
 const STORAGE_SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en", "ja", "ko", "de", "fr", "es"];
 export const deepClone = (obj) => (typeof structuredClone === "function" ? structuredClone(obj) : JSON.parse(JSON.stringify(obj)));
 
-function normalizeLanguage(input) {
+export function normalizeLanguage(input) {
   if (!input) return "";
   const raw = String(input).trim().replace(/_/g, "-").toLowerCase();
   if (!raw) return "";
@@ -26,7 +26,7 @@ function normalizeLanguage(input) {
   return "";
 }
 
-function detectSystemLanguage() {
+export function detectSystemLanguage() {
   try {
     const locale = Intl?.DateTimeFormat?.().resolvedOptions?.().locale || "";
     return normalizeLanguage(locale);
@@ -35,7 +35,7 @@ function detectSystemLanguage() {
   }
 }
 
-function detectBrowserLanguage() {
+export function detectBrowserLanguage() {
   const api = getChrome();
   const candidates = [
     api?.i18n?.getUILanguage?.(),
@@ -49,7 +49,7 @@ function detectBrowserLanguage() {
   return "";
 }
 
-function detectPreferredLanguage() {
+export function detectPreferredLanguage() {
   const systemLanguage = detectSystemLanguage();
   if (STORAGE_SUPPORTED_LANGUAGES.includes(systemLanguage)) return systemLanguage;
   const browserLanguage = detectBrowserLanguage();

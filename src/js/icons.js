@@ -290,7 +290,7 @@ function isExtensionContext() {
   try {
     if (typeof window === "undefined" || !window.location?.protocol) return false;
     const protocol = window.location.protocol;
-    return protocol === "chrome-extension:" || protocol === "moz-extension:" || protocol === "edge-extension:";
+    return protocol === "chrome-extension:" || protocol === "moz-extension:" || protocol === "edge-extension:" || protocol === "safari-web-extension:";
   } catch (e) {
     // 环境检测失败是预期行为
     return false;

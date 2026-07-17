@@ -9,7 +9,7 @@ FIREFOX_DIR="$DIST_DIR/firefox"
 SAFARI_DIR="$DIST_DIR/safari"
 SAFARI_PROJECT_DIR="$DIST_DIR/safari-app"
 SAFARI_APP_NAME="${SAFARI_APP_NAME:-我的首页 Safari}"
-SAFARI_BUNDLE_ID="${SAFARI_BUNDLE_ID:-com.homepage.newtab.safari}"
+SAFARI_BUNDLE_ID="${SAFARI_BUNDLE_ID:-com.aeroluna.homepage.safari}"
 
 copy_target() {
   local manifest_file="$1"
@@ -69,10 +69,19 @@ detect_apple_development_team() {
 
 sync_safari_project_resources() {
   local project_root="$1"
-  local extension_resources_dir="$project_root/Shared (Extension)/Resources"
+  local extension_resources_dir=""
 
-  if [[ ! -d "$extension_resources_dir" ]]; then
-    echo "[build] Safari extension resources dir not found: $extension_resources_dir"
+  for candidate in \
+    "$project_root/Shared (Extension)/Resources" \
+    "$project_root/$SAFARI_APP_NAME Extension/Resources"; do
+    if [[ -d "$candidate" ]]; then
+      extension_resources_dir="$candidate"
+      break
+    fi
+  done
+
+  if [[ -z "$extension_resources_dir" ]]; then
+    echo "[build] Safari extension resources dir not found in $project_root"
     return 0
   fi
 
@@ -85,16 +94,8 @@ normalize_safari_project_signing() {
   local pbxproj_file="$project_file/project.pbxproj"
   local development_team
 
-  if [[ "${SAFARI_ENABLE_TEAM_SIGNING:-0}" != "1" ]]; then
-    return 0
-  fi
-
   if [[ ! -f "$pbxproj_file" ]]; then
     echo "[build] Skip Safari signing normalization: pbxproj not found -> $pbxproj_file"
-    return 0
-  fi
-
-  if grep -q 'DEVELOPMENT_TEAM = ' "$pbxproj_file"; then
     return 0
   fi
 
@@ -105,13 +106,16 @@ normalize_safari_project_signing() {
   fi
 
   echo "[build] Normalize Safari development team -> $development_team"
+
+  perl -0pi -e "s/\n\t\t\t\tDEVELOPMENT_TEAM = [A-Z0-9]+;//g" "$pbxproj_file"
   perl -0pi -e "s/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Automatic;\\n\\t\\t\\t\\tDEVELOPMENT_TEAM = ${development_team};/g" "$pbxproj_file"
+  perl -0pi -e "s/CODE_SIGN_IDENTITY = \"?[^\"]*\"?;/CODE_SIGN_IDENTITY = \"Apple Development\";/g" "$pbxproj_file"
 }
 
 normalize_safari_project_bundle_ids() {
   local project_file="$1"
   local pbxproj_file="$project_file/project.pbxproj"
-  local app_bundle_id
+  local app_bundle_id extension_bundle_id
 
   if [[ ! -f "$pbxproj_file" ]]; then
     echo "[build] Skip Safari bundle id normalization: pbxproj not found -> $pbxproj_file"
@@ -122,28 +126,38 @@ normalize_safari_project_bundle_ids() {
     grep 'PRODUCT_BUNDLE_IDENTIFIER = ' "$pbxproj_file" \
       | grep -vE '\.(Extension|extension);' \
       | head -n 1 \
-      | sed -E 's/.*PRODUCT_BUNDLE_IDENTIFIER = ([^;]+);/\1/'
+      | sed -E 's/.*PRODUCT_BUNDLE_IDENTIFIER = "?([^";]+)"?;/\1/'
+  )"
+  extension_bundle_id="$(
+    grep 'PRODUCT_BUNDLE_IDENTIFIER = ' "$pbxproj_file" \
+      | grep -E '\.(Extension|extension);' \
+      | head -n 1 \
+      | sed -E 's/.*PRODUCT_BUNDLE_IDENTIFIER = "?([^";]+)"?;/\1/'
   )"
 
-  if [[ -z "$app_bundle_id" ]]; then
-    echo "[build] Skip Safari bundle id normalization: app bundle id not found"
+  if [[ -z "$app_bundle_id" || -z "$extension_bundle_id" ]]; then
+    echo "[build] Skip Safari bundle id normalization: app or extension bundle id not found"
     return 0
   fi
 
-  local extension_bundle_id="${app_bundle_id}.extension"
-  echo "[build] Normalize Safari extension bundle id -> $extension_bundle_id"
+  local target_app_bundle_id="$SAFARI_BUNDLE_ID"
+  local target_extension_bundle_id="${SAFARI_BUNDLE_ID}.extension"
+  echo "[build] Normalize Safari bundle ids -> app: $target_app_bundle_id, extension: $target_extension_bundle_id"
 
-  perl -0pi -e "s/PRODUCT_BUNDLE_IDENTIFIER = \\Q${app_bundle_id}\\E\\.(?:Extension|extension);/PRODUCT_BUNDLE_IDENTIFIER = ${extension_bundle_id};/g" "$pbxproj_file"
+  perl -0pi -e "s/PRODUCT_BUNDLE_IDENTIFIER = \"\\Q${app_bundle_id}\\E\";/PRODUCT_BUNDLE_IDENTIFIER = \"$target_app_bundle_id\";/g" "$pbxproj_file"
+  perl -0pi -e "s/PRODUCT_BUNDLE_IDENTIFIER = \\Q${app_bundle_id}\\E;/PRODUCT_BUNDLE_IDENTIFIER = ${target_app_bundle_id};/g" "$pbxproj_file"
+  perl -0pi -e "s/PRODUCT_BUNDLE_IDENTIFIER = \"\\Q${extension_bundle_id}\\E\";/PRODUCT_BUNDLE_IDENTIFIER = \"$target_extension_bundle_id\";/g" "$pbxproj_file"
+  perl -0pi -e "s/PRODUCT_BUNDLE_IDENTIFIER = \\Q${extension_bundle_id}\\E;/PRODUCT_BUNDLE_IDENTIFIER = ${target_extension_bundle_id};/g" "$pbxproj_file"
 }
 
 normalize_safari_host_app_sources() {
   local project_root="$1"
-  local project_file="$project_root/我的首页 Safari.xcodeproj/project.pbxproj"
-  local view_controller_file="$project_root/Shared (App)/ViewController.swift"
+  local project_file="$project_root/$SAFARI_APP_NAME.xcodeproj/project.pbxproj"
   local view_controller_template="$ROOT_DIR/scripts/templates/safari/ViewController.swift"
-  local app_bundle_id extension_bundle_id
+  local view_controller_file="$project_root/Shared (App)/ViewController.swift"
+  local app_bundle_id
 
-  if [[ ! -f "$project_file" || ! -f "$view_controller_template" ]]; then
+  if [[ ! -f "$project_file" || ! -f "$view_controller_template" || ! -f "$view_controller_file" ]]; then
     return 0
   fi
 
@@ -151,16 +165,57 @@ normalize_safari_host_app_sources() {
     grep 'PRODUCT_BUNDLE_IDENTIFIER = ' "$project_file" \
       | grep -vE '\.(Extension|extension);' \
       | head -n 1 \
-      | sed -E 's/.*PRODUCT_BUNDLE_IDENTIFIER = ([^;]+);/\1/'
+      | sed -E 's/.*PRODUCT_BUNDLE_IDENTIFIER = "?([^";]+)"?;/\1/'
   )"
 
   if [[ -z "$app_bundle_id" ]]; then
     return 0
   fi
 
-  extension_bundle_id="${app_bundle_id}.extension"
-  echo "[build] Normalize Safari host source extension id -> $extension_bundle_id"
-  perl -0pe "s/__SAFARI_EXTENSION_BUNDLE_ID__/${extension_bundle_id}/g" "$view_controller_template" > "$view_controller_file"
+  local target_extension_bundle_id="${SAFARI_BUNDLE_ID}.extension"
+  echo "[build] Normalize Safari host source extension id -> $target_extension_bundle_id"
+  perl -0pe "s/__SAFARI_EXTENSION_BUNDLE_ID__/$target_extension_bundle_id/g" "$view_controller_template" > "$view_controller_file"
+}
+
+fix_safari_extension_info_plist() {
+  local project_root="$1"
+  local ext_info_plist=""
+
+  for candidate in \
+    "$project_root/macOS (Extension)/Info.plist" \
+    "$project_root/$SAFARI_APP_NAME Extension/Info.plist"; do
+    if [[ -f "$candidate" ]]; then
+      ext_info_plist="$candidate"
+      break
+    fi
+  done
+
+  if [[ -z "$ext_info_plist" ]]; then
+    echo "[build] Extension Info.plist not found in $project_root"
+    return 0
+  fi
+
+  echo "[build] Fixing Safari extension Info.plist -> $ext_info_plist"
+
+  EXT_INFO_PLIST="$ext_info_plist" python3 -c "
+import plistlib, os
+
+path = os.environ['EXT_INFO_PLIST']
+with open(path, 'rb') as f:
+    data = plistlib.load(f)
+
+if 'SFSafariWebsiteAccess' not in data:
+    data['SFSafariWebsiteAccess'] = {
+        'Level': 'All',
+        'Allowed Domains': []
+    }
+    print('Added SFSafariWebsiteAccess with Level: All')
+
+with open(path, 'wb') as f:
+    plistlib.dump(data, f)
+
+print('Extension Info.plist updated successfully')
+"
 }
 
 build_safari_project() {
@@ -174,7 +229,7 @@ build_safari_project() {
   fi
 
   local project_file
-  project_file="$(find "$SAFARI_PROJECT_DIR" -maxdepth 3 -name '*.xcodeproj' -print -quit)"
+  project_file="$(find "$SAFARI_PROJECT_DIR" -maxdepth 3 -name '*.xcodeproj' -print -quit 2>/dev/null || true)"
   local project_root=""
 
   if [[ -n "$project_file" ]]; then
@@ -193,32 +248,77 @@ build_safari_project() {
     normalize_safari_project_bundle_ids "$project_file"
     normalize_safari_host_app_sources "$project_root"
     sync_safari_project_resources "$project_root"
-    rm -rf "${SAFARI_PROJECT_DIR}/build"
+    fix_safari_extension_info_plist "$project_root"
+  else
+    rm -rf "$SAFARI_PROJECT_DIR"
+    xcrun safari-web-extension-converter "$SAFARI_DIR" \
+      --project-location "$SAFARI_PROJECT_DIR" \
+      --app-name "$SAFARI_APP_NAME" \
+      --bundle-identifier "$SAFARI_BUNDLE_ID" \
+      --swift \
+      --macos-only \
+      --copy-resources \
+      --force \
+      --no-open \
+      --no-prompt
+
+    project_file="$(find "$SAFARI_PROJECT_DIR" -maxdepth 3 -name '*.xcodeproj' -print -quit 2>/dev/null || true)"
+    if [[ -n "$project_file" ]]; then
+      project_root="$(dirname "$project_file")"
+      normalize_safari_project_signing "$project_file"
+      normalize_safari_project_bundle_ids "$project_file"
+      normalize_safari_host_app_sources "$project_root"
+      sync_safari_project_resources "$project_root"
+      fix_safari_extension_info_plist "$project_root"
+    fi
+  fi
+
+  if [[ -z "$project_file" ]]; then
+    echo "[build] Safari project not found, skip building"
     return 0
   fi
 
-  rm -rf "$SAFARI_PROJECT_DIR"
-  xcrun safari-web-extension-converter "$SAFARI_DIR" \
-    --project-location "$SAFARI_PROJECT_DIR" \
-    --app-name "$SAFARI_APP_NAME" \
-    --bundle-identifier "$SAFARI_BUNDLE_ID" \
-    --swift \
-    --macos-only \
-    --copy-resources \
-    --force \
-    --no-open \
-    --no-prompt
+  local build_dir="${SAFARI_PROJECT_DIR}/build-output"
+  local dev_team safari_scheme
+  dev_team="$(detect_apple_development_team)"
 
-  project_file="$(find "$SAFARI_PROJECT_DIR" -maxdepth 3 -name '*.xcodeproj' -print -quit)"
-  if [[ -n "$project_file" ]]; then
-    project_root="$(dirname "$project_file")"
-    normalize_safari_project_signing "$project_file"
-    normalize_safari_project_bundle_ids "$project_file"
-    normalize_safari_host_app_sources "$project_root"
-    sync_safari_project_resources "$project_root"
+  safari_scheme="${SAFARI_APP_NAME} (macOS)"
+  if ! xcodebuild -list -project "$project_file" 2>/dev/null | grep -qF "$safari_scheme"; then
+    safari_scheme="${SAFARI_APP_NAME}"
   fi
-  rm -rf "${SAFARI_PROJECT_DIR}/build"
+
+  echo "[build] Building Safari app with xcodebuild (scheme: $safari_scheme)..."
+  if [[ -n "$dev_team" ]]; then
+    echo "[build] Using development team: $dev_team"
+    xcodebuild -project "$project_file" \
+      -scheme "$safari_scheme" \
+      -configuration Release \
+      -sdk macosx \
+      -destination 'platform=macOS' \
+      -derivedDataPath "${SAFARI_PROJECT_DIR}/build-derived" \
+      SYMROOT="${build_dir}" \
+      ONLY_ACTIVE_ARCH=YES \
+      DEVELOPMENT_TEAM="$dev_team" \
+      CODE_SIGN_STYLE=Automatic \
+      build
+  else
+    echo "[build] No development team found, building with adhoc signing..."
+    xcodebuild -project "$project_file" \
+      -scheme "$safari_scheme" \
+      -configuration Release \
+      -sdk macosx \
+      -destination 'platform=macOS' \
+      -derivedDataPath "${SAFARI_PROJECT_DIR}/build-derived" \
+      SYMROOT="${build_dir}" \
+      ONLY_ACTIVE_ARCH=YES \
+      CODE_SIGN_IDENTITY="-" \
+      build
+  fi
+
+  rm -rf "${SAFARI_PROJECT_DIR}/build-derived"
 }
+
+node "$ROOT_DIR/scripts/bump-version.mjs"
 
 rm -f "$DIST_DIR/chrome.zip" "$DIST_DIR/firefox.zip" "$DIST_DIR/firefox.xpi" "$DIST_DIR/safari.zip"
 
@@ -233,6 +333,54 @@ package_target_dir "$FIREFOX_DIR" "$DIST_DIR/firefox.zip"
 cp "$DIST_DIR/firefox.zip" "$DIST_DIR/firefox.xpi"
 package_target_dir "$SAFARI_DIR" "$DIST_DIR/safari.zip"
 
+install_safari_app() {
+  local app_name="$SAFARI_APP_NAME"
+  local source_app
+  local dest_app="/Applications/${app_name}.app"
+
+  source_app="$(find "$SAFARI_PROJECT_DIR" -maxdepth 5 -name "${app_name}.app" -type d -print -quit 2>/dev/null || true)"
+  if [[ -z "$source_app" ]]; then
+    echo "[install] Safari app not found in build output"
+    return 0
+  fi
+
+  echo "[install] Found Safari app: $source_app"
+  echo "[install] Installing to: $dest_app"
+
+  pkill -f "${app_name}" 2>/dev/null || true
+  sleep 1
+
+  if [[ -d "$dest_app" ]]; then
+    echo "[install] Removing old app..."
+    rm -rf "$dest_app" 2>/dev/null || true
+    sleep 1
+  fi
+
+  echo "[install] Copying app..."
+  ditto "$source_app" "$dest_app"
+
+  if [[ ! -d "$dest_app" ]]; then
+    echo "[install] ERROR: ditto failed, trying sudo..."
+    sudo rm -rf "$dest_app" 2>/dev/null || true
+    sudo ditto "$source_app" "$dest_app"
+  fi
+
+  if [[ ! -d "$dest_app" ]]; then
+    echo "[install] ERROR: Failed to install to /Applications"
+    echo "[install] Please manually copy $source_app to /Applications"
+    return 1
+  fi
+
+  echo "[install] App copied successfully"
+  echo "[install] Launching app to register extension..."
+  open "$dest_app"
+
+  sleep 3
+
+  echo "[install] Install completed"
+}
+
 build_safari_project
+install_safari_app
 
 echo "Build done: chrome/firefox/safari"

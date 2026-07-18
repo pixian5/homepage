@@ -29,8 +29,5 @@ window.addEventListener("error", (event) => {
 
 window.addEventListener("unhandledrejection", (event) => {
   const reason = event?.reason;
-  renderFatalError(
-    "我的首页初始化失败",
-    reason?.stack || reason?.message || String(reason || "未知错误")
-  );
+  renderFatalError("我的首页初始化失败", reason?.stack || reason?.message || String(reason || "未知错误"));
 });

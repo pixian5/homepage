@@ -1,5 +1,5 @@
-import { promises as fs } from "fs";
-import path from "path";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 
 const root = process.cwd();
 const srcDir = path.join(root, "src", "js");
@@ -8,12 +8,7 @@ const outDir = path.join(firefoxDir, "js");
 const outFile = path.join(outDir, "app.ff.js");
 const htmlPath = path.join(firefoxDir, "newtab.html");
 
-const files = [
-  "storage.js",
-  "icons.js",
-  "bing-wallpaper.js",
-  "app.js",
-];
+const files = ["storage.js", "icons.js", "bing-wallpaper.js", "app.js"];
 
 function stripImports(code) {
   return code.replace(/^\s*import[\s\S]*?;\s*/gm, "");
@@ -33,26 +28,16 @@ async function bundle() {
     code = stripExports(stripImports(code));
     chunks.push(code.trimEnd());
   }
-  const output = [
-    "/* Firefox bundle (no ESM imports) */",
-    ...chunks,
-    "",
-  ].join("\n\n");
+  const output = ["/* Firefox bundle (no ESM imports) */", ...chunks, ""].join("\n\n");
   await fs.writeFile(outFile, output, "utf8");
 }
 
 async function patchHtml() {
-  let html = await fs.readFile(htmlPath, "utf8");
+  const html = await fs.readFile(htmlPath, "utf8");
   const externalScript = `<script src="js/app.ff.js"></script>`;
-  let updated = html.replace(
-    /<script\s+src="js\/app\.ff\.js"\s*><\/script>/i,
-    externalScript
-  );
+  let updated = html.replace(/<script\s+src="js\/app\.ff\.js"\s*><\/script>/i, externalScript);
   if (updated === html) {
-    updated = html.replace(
-      /<script\s+type="module"\s+src="js\/app\.js"\s*><\/script>/i,
-      externalScript
-    );
+    updated = html.replace(/<script\s+type="module"\s+src="js\/app\.js"\s*><\/script>/i, externalScript);
   }
   if (updated === html) {
     throw new Error("newtab.html missing app script tag");

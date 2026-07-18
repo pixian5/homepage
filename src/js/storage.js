@@ -9,14 +9,16 @@ const BG_CACHE_KEY = "homepage_bg_cache";
 const SYNC_ITEM_QUOTA_BYTES = 7500;
 const ICON_DATA_MAX_LENGTH = 2048;
 const STORAGE_SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en", "ja", "ko", "de", "fr", "es"];
-export const deepClone = (obj) => (typeof structuredClone === "function" ? structuredClone(obj) : JSON.parse(JSON.stringify(obj)));
+export const deepClone = (obj) =>
+  typeof structuredClone === "function" ? structuredClone(obj) : JSON.parse(JSON.stringify(obj));
 
 export function normalizeLanguage(input) {
   if (!input) return "";
   const raw = String(input).trim().replace(/_/g, "-").toLowerCase();
   if (!raw) return "";
   if (raw === "zh" || raw.startsWith("zh-hans") || raw.startsWith("zh-cn") || raw.startsWith("zh-sg")) return "zh-CN";
-  if (raw.startsWith("zh-hant") || raw.startsWith("zh-tw") || raw.startsWith("zh-hk") || raw.startsWith("zh-mo")) return "zh-TW";
+  if (raw.startsWith("zh-hant") || raw.startsWith("zh-tw") || raw.startsWith("zh-hk") || raw.startsWith("zh-mo"))
+    return "zh-TW";
   if (raw.startsWith("ja")) return "ja";
   if (raw.startsWith("ko")) return "ko";
   if (raw.startsWith("de")) return "de";
@@ -30,7 +32,7 @@ export function detectSystemLanguage() {
   try {
     const locale = Intl?.DateTimeFormat?.().resolvedOptions?.().locale || "";
     return normalizeLanguage(locale);
-  } catch (e) {
+  } catch (_e) {
     return "";
   }
 }
@@ -73,7 +75,6 @@ function getDefaultGroupNameByLanguage(language) {
       return "Par defaut";
     case "es":
       return "Predeterminado";
-    case "zh-CN":
     default:
       return "默认";
   }
@@ -129,9 +130,7 @@ function createDefaultData() {
   return {
     schemaVersion: 1,
     settings: { ...DEFAULT_SETTINGS, language },
-    groups: [
-      { id: groupId, name: getDefaultGroupNameByLanguage(language), order: 0, nodes: [] }
-    ],
+    groups: [{ id: groupId, name: getDefaultGroupNameByLanguage(language), order: 0, nodes: [] }],
     nodes: {},
     backups: [],
     lastUpdated: nowTs(),
@@ -146,7 +145,7 @@ function getChrome() {
 
 function storageArea(useSync) {
   const api = getChrome();
-  if (!api || !api.storage) return null;
+  if (!api?.storage) return null;
   return useSync ? api.storage.sync : api.storage.local;
 }
 
@@ -210,10 +209,13 @@ async function storageGet(area, key) {
         finish(res?.[key]);
       });
       if (result && typeof result.then === "function") {
-        result.then((res) => finish(res?.[key]), (e) => {
-          console.warn("storageGet promise rejected", e);
-          finish(undefined);
-        });
+        result.then(
+          (res) => finish(res?.[key]),
+          (e) => {
+            console.warn("storageGet promise rejected", e);
+            finish(undefined);
+          },
+        );
       }
     } catch (e) {
       console.warn("storageGet failed", e);
@@ -236,7 +238,10 @@ async function storageSet(area, obj) {
         finish(err ? err.message : null);
       });
       if (result && typeof result.then === "function") {
-        result.then(() => finish(null), (err) => finish(err?.message || String(err)));
+        result.then(
+          () => finish(null),
+          (err) => finish(err?.message || String(err)),
+        );
       }
     } catch (err) {
       finish(err?.message || String(err));
@@ -258,7 +263,10 @@ async function storageRemove(area, key) {
         finish(err ? err.message : null);
       });
       if (result && typeof result.then === "function") {
-        result.then(() => finish(null), (err) => finish(err?.message || String(err)));
+        result.then(
+          () => finish(null),
+          (err) => finish(err?.message || String(err)),
+        );
       }
     } catch (err) {
       finish(err?.message || String(err));
@@ -267,7 +275,7 @@ async function storageRemove(area, key) {
 }
 
 function migrateData(data) {
-  if (!data || !data.schemaVersion) return data;
+  if (!data?.schemaVersion) return data;
   // placeholder for future migrations
   return data;
 }

@@ -1,5 +1,5 @@
-import { promises as fs } from "fs";
-import path from "path";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 
 const root = process.cwd();
 const files = ["package.json", "manifest.chrome.json", "manifest.firefox.json", "manifest.safari.json"];

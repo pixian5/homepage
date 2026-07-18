@@ -1,6 +1,6 @@
 {
   "name": "newtab-extension",
-  "version": "16.0",
+  "version": "16.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,6 +8,13 @@
     "build": "bash scripts/build.sh",
     "build:chrome": "bash scripts/build.sh",
     "build:firefox": "bash scripts/build.sh",
-    "build:safari": "bash scripts/build.sh"
+    "build:safari": "bash scripts/build.sh",
+    "check": "biome check src scripts *.json",
+    "lint": "biome lint src scripts *.json",
+    "format": "biome format --write src scripts *.json",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.4"
   }
 }

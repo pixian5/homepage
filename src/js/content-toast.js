@@ -1,5 +1,5 @@
 const TOAST_ID = "homepage-save-toast";
-const FONT_STACK = "\"Avenir Next\", \"Noto Sans SC\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif";
+const FONT_STACK = '"Avenir Next", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif';
 const TOAST_STYLE_PROPS = {
   position: "fixed",
   top: "20px",

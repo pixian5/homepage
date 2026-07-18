@@ -2,25 +2,11 @@ import { loadIconCache, saveIconCache } from "./storage.js";
 
 const FAVICON_API = "https://www.google.com/s2/favicons";
 const SPECIAL_FAVICONS = {
-  "gmail.com": [
-    "https://mail.google.com/favicon.ico",
-    "https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico",
-  ],
-  "mail.google.com": [
-    "https://mail.google.com/favicon.ico",
-    "https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico",
-  ],
-  "google.com": [
-    "https://www.google.com/favicon.ico",
-    "https://google.com/favicon.ico",
-  ],
-  "www.google.com": [
-    "https://www.google.com/favicon.ico",
-  ],
-  "gemini.google.com": [
-    "https://gemini.google.com/favicon.ico",
-    "https://www.google.com/favicon.ico",
-  ],
+  "gmail.com": ["https://mail.google.com/favicon.ico", "https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico"],
+  "mail.google.com": ["https://mail.google.com/favicon.ico", "https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico"],
+  "google.com": ["https://www.google.com/favicon.ico", "https://google.com/favicon.ico"],
+  "www.google.com": ["https://www.google.com/favicon.ico"],
+  "gemini.google.com": ["https://gemini.google.com/favicon.ico", "https://www.google.com/favicon.ico"],
   "gitcode.com": [
     "https://gitcode.com/favicon.ico",
     "https://gitcode.com/favicon.svg",
@@ -36,56 +22,28 @@ const SPECIAL_FAVICONS = {
     "https://chat.openai.com/favicon.ico",
     "https://openai.com/favicon.ico",
   ],
-  "openai.com": [
-    "https://openai.com/favicon.ico",
-    "https://chatgpt.com/favicon.ico",
-  ],
-  "chat.openai.com": [
-    "https://chatgpt.com/favicon.ico",
-    "https://openai.com/favicon.ico",
-  ],
-  "grok.com": [
-    "https://grok.com/favicon.ico",
-    "https://x.ai/favicon.ico",
-  ],
-  "x.ai": [
-    "https://x.ai/favicon.ico",
-    "https://grok.com/favicon.ico",
-  ],
-  "doubao.com": [
-    "https://doubao.com/favicon.ico",
-    "https://www.doubao.com/favicon.ico",
-  ],
-  "www.doubao.com": [
-    "https://www.doubao.com/favicon.ico",
-    "https://doubao.com/favicon.ico",
-  ],
-  "ip233.cn": [
-    "https://www.ip233.cn/favicon.ico",
-    "https://ip233.cn/favicon.ico",
-  ],
-  "www.ip233.cn": [
-    "https://www.ip233.cn/favicon.ico",
-    "https://ip233.cn/favicon.ico",
-  ],
+  "openai.com": ["https://openai.com/favicon.ico", "https://chatgpt.com/favicon.ico"],
+  "chat.openai.com": ["https://chatgpt.com/favicon.ico", "https://openai.com/favicon.ico"],
+  "grok.com": ["https://grok.com/favicon.ico", "https://x.ai/favicon.ico"],
+  "x.ai": ["https://x.ai/favicon.ico", "https://grok.com/favicon.ico"],
+  "doubao.com": ["https://doubao.com/favicon.ico", "https://www.doubao.com/favicon.ico"],
+  "www.doubao.com": ["https://www.doubao.com/favicon.ico", "https://doubao.com/favicon.ico"],
+  "ip233.cn": ["https://www.ip233.cn/favicon.ico", "https://ip233.cn/favicon.ico"],
+  "www.ip233.cn": ["https://www.ip233.cn/favicon.ico", "https://ip233.cn/favicon.ico"],
   "sharepoint.com": [
     "https://www.sharepoint.com/favicon.ico",
     "https://sharepoint.com/favicon.ico",
     "https://login.microsoftonline.com/favicon.ico",
   ],
 };
-const FIREFOX_EXTENSION_CORP_BLOCKLIST = new Set([
-  "mail.google.com",
-  "chatgpt.com",
-  "openai.com",
-]);
+const FIREFOX_EXTENSION_CORP_BLOCKLIST = new Set(["mail.google.com", "chatgpt.com", "openai.com"]);
 
 function isBrowserExtension() {
   try {
     if (!isExtensionContext()) return false;
     const ua = navigator?.userAgent || "";
     return /firefox/i.test(ua) || /safari/i.test(ua) || /applewebkit/i.test(ua);
-  } catch (e) {
+  } catch (_e) {
     return false;
   }
 }
@@ -121,7 +79,7 @@ function isHttpUrl(pageUrl) {
   try {
     const u = new URL(pageUrl);
     return u.protocol === "http:" || u.protocol === "https:";
-  } catch (e) {
+  } catch (_e) {
     // URL 解析失败是预期行为
     return false;
   }
@@ -134,7 +92,7 @@ export function getSiteKey(pageUrl) {
     if (!host.includes(".")) return "";
     if (host === "localhost" || host.endsWith(".local")) return "";
     return `site:${host}`;
-  } catch (e) {
+  } catch (_e) {
     // URL 解析失败是预期行为
     return "";
   }
@@ -177,12 +135,10 @@ export function getFaviconCandidates(pageUrl) {
           buildGoogleDomainFaviconUrl(host),
           duckduckgo,
         ];
-    const normalized = rawCandidates
-      .map((candidate) => normalizeCandidateUrl(candidate))
-      .filter(Boolean);
+    const normalized = rawCandidates.map((candidate) => normalizeCandidateUrl(candidate)).filter(Boolean);
     const filtered = normalized.filter((candidate) => !shouldSkipCandidate(candidate));
     return Array.from(new Set(filtered));
-  } catch (e) {
+  } catch (_e) {
     // URL 解析失败是预期行为
     return [];
   }
@@ -247,7 +203,7 @@ function normalizeCandidateUrl(raw) {
     const parsed = new URL(raw);
     if (parsed.protocol === "http:") parsed.protocol = "https:";
     return parsed.toString();
-  } catch (e) {
+  } catch (_e) {
     // 非法 URL 直接丢弃
     return "";
   }
@@ -259,7 +215,7 @@ function shouldSkipCandidate(candidate) {
     if (!/firefox/i.test(navigator?.userAgent || "")) return false;
     const host = new URL(candidate).hostname;
     return FIREFOX_EXTENSION_CORP_BLOCKLIST.has(host);
-  } catch (e) {
+  } catch (_e) {
     // 容错：解析失败不跳过
     return false;
   }
@@ -290,8 +246,13 @@ function isExtensionContext() {
   try {
     if (typeof window === "undefined" || !window.location?.protocol) return false;
     const protocol = window.location.protocol;
-    return protocol === "chrome-extension:" || protocol === "moz-extension:" || protocol === "edge-extension:" || protocol === "safari-web-extension:";
-  } catch (e) {
+    return (
+      protocol === "chrome-extension:" ||
+      protocol === "moz-extension:" ||
+      protocol === "edge-extension:" ||
+      protocol === "safari-web-extension:"
+    );
+  } catch (_e) {
     // 环境检测失败是预期行为
     return false;
   }
@@ -320,7 +281,7 @@ async function resolveFinalUrl(pageUrl, timeoutMs = 6000) {
       FINAL_URL_CACHE.delete(oldest);
     }
     return finalUrl;
-  } catch (e) {
+  } catch (_e) {
     // fetch 失败是预期行为（网络错误、超时等）
     return pageUrl;
   }
@@ -351,16 +312,16 @@ export async function fetchAsDataUrl(url, timeoutMs = 8000) {
       reader.onerror = () => resolve("");
       reader.readAsDataURL(new Blob([blob], { type }));
     });
-  } catch (e) {
+  } catch (_e) {
     return "";
   }
 }
 
-export async function resolveIcon(node, settings, preloadedCache = null) {
+export async function resolveIcon(node, _settings, preloadedCache = null) {
   const base = node.title || node.url || "?";
   const isHttp = node.url ? isHttpUrl(node.url) : false;
   const siteKey = node.url ? getSiteKey(node.url) : "";
-  const cache = preloadedCache || await loadIconCache();
+  const cache = preloadedCache || (await loadIconCache());
   const cacheKey = node.url || node.id;
 
   if (node.url && !isHttp) {

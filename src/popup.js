@@ -1,7 +1,4 @@
-import {
-  getChromeApi,
-  getStorageKey,
-} from "./js/storage.js";
+import { getChromeApi, getStorageKey } from "./js/storage.js";
 
 const ROOT_KEY = getStorageKey();
 const SYNC_ITEM_QUOTA_BYTES = 7500;
@@ -9,7 +6,7 @@ const MAX_LOG_ENTRIES = 30;
 const ICON_DATA_MAX_LENGTH = 2048;
 const TOAST_DURATION_MS = 3000;
 const DEFAULT_FONT_SIZE = 13;
-const TOAST_FONT_STACK = "\"Avenir Next\", \"Noto Sans SC\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif";
+const TOAST_FONT_STACK = '"Avenir Next", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif';
 const TOAST_STYLE_PROPS = {
   position: "fixed",
   top: "20px",
@@ -65,7 +62,8 @@ function normalizeLanguage(input) {
   const raw = String(input).trim().replace(/_/g, "-").toLowerCase();
   if (!raw) return "";
   if (raw === "zh" || raw.startsWith("zh-hans") || raw.startsWith("zh-cn") || raw.startsWith("zh-sg")) return "zh-CN";
-  if (raw.startsWith("zh-hant") || raw.startsWith("zh-tw") || raw.startsWith("zh-hk") || raw.startsWith("zh-mo")) return "zh-TW";
+  if (raw.startsWith("zh-hant") || raw.startsWith("zh-tw") || raw.startsWith("zh-hk") || raw.startsWith("zh-mo"))
+    return "zh-TW";
   if (raw.startsWith("ja")) return "ja";
   if (raw.startsWith("ko")) return "ko";
   if (raw.startsWith("de")) return "de";
@@ -78,7 +76,7 @@ function normalizeLanguage(input) {
 function detectSystemLanguage() {
   try {
     return normalizeLanguage(Intl?.DateTimeFormat?.().resolvedOptions?.().locale || "");
-  } catch (e) {
+  } catch (_e) {
     return "";
   }
 }
@@ -104,9 +102,9 @@ function detectPreferredLanguage() {
 function tr(key, language, vars = null) {
   const lang = normalizeLanguage(language) || "zh-CN";
   const dict = POPUP_I18N[lang] || POPUP_I18N.en || POPUP_I18N["zh-CN"];
-  let text = dict[key] || POPUP_I18N.en?.[key] || POPUP_I18N["zh-CN"]?.[key] || key;
+  const text = dict[key] || POPUP_I18N.en?.[key] || POPUP_I18N["zh-CN"]?.[key] || key;
   if (!vars) return text;
-  return text.replace(/\{(\w+)\}/g, (_, name) => (vars[name] ?? ""));
+  return text.replace(/\{(\w+)\}/g, (_, name) => vars[name] ?? "");
 }
 
 function applyPopupI18n(language) {
@@ -146,7 +144,7 @@ function getLastError() {
  */
 function storageArea(useSync) {
   const api = getChrome();
-  if (!api || !api.storage) return null;
+  if (!api?.storage) return null;
   return useSync ? api.storage.sync : api.storage.local;
 }
 
@@ -214,12 +212,12 @@ function normalizeUrl(input) {
     const url = new URL(input);
     if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
     return url.href;
-  } catch (e) {
+  } catch (_e) {
     try {
       const url = new URL(`https://${input}`);
       if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
       return url.href;
-    } catch (e2) {
+    } catch (_e2) {
       // URL 解析失败是预期行为
       return "";
     }
@@ -300,7 +298,9 @@ async function getCurrentTab() {
     const tabs = await result;
     return tabs?.[0] || null;
   }
-  return new Promise((resolve) => api.tabs.query({ active: true, currentWindow: true }, (tabs) => resolve(tabs?.[0] || null)));
+  return new Promise((resolve) =>
+    api.tabs.query({ active: true, currentWindow: true }, (tabs) => resolve(tabs?.[0] || null)),
+  );
 }
 
 /**
@@ -338,7 +338,7 @@ function sendRuntimeMessage(message) {
         if (err) return resolve(null);
         resolve(res || null);
       });
-    } catch (e) {
+    } catch (_e) {
       // 消息发送失败是预期情况，静默处理
       resolve(null);
     }
@@ -361,7 +361,7 @@ function sendTabMessage(tabId, message) {
         if (err) return resolve(null);
         resolve(res || null);
       });
-    } catch (e) {
+    } catch (_e) {
       // 消息发送失败是预期情况，静默处理
       resolve(null);
     }
@@ -435,7 +435,7 @@ async function saveToGroup(tab, selectedGroupId, customTitle = "") {
     return null;
   }
   const { data, useSync } = await loadLatestData();
-  if (!data || !data.groups || !data.nodes) {
+  if (!data?.groups || !data.nodes) {
     await appendLog({ ts: Date.now(), stage: "no_data" });
     return null;
   }
@@ -513,14 +513,11 @@ async function showToastInTab(tab, message, fontSize) {
     if (api?.scripting?.executeScript) {
       try {
         await new Promise((resolve, reject) => {
-          api.scripting.executeScript(
-            { target: { tabId: tab.id }, files: ["js/content-toast.js"] },
-            () => {
-              const err = api.runtime?.lastError;
-              if (err) return reject(err);
-              resolve();
-            }
-          );
+          api.scripting.executeScript({ target: { tabId: tab.id }, files: ["js/content-toast.js"] }, () => {
+            const err = api.runtime?.lastError;
+            if (err) return reject(err);
+            resolve();
+          });
         });
         const res = await sendTabMessage(tab.id, payload);
         if (res?.ok) return true;
@@ -548,7 +545,7 @@ async function showToastInTab(tab, message, fontSize) {
             const err = api.runtime?.lastError;
             if (err) return reject(err);
             resolve();
-          }
+          },
         );
       });
       return true;
@@ -602,7 +599,11 @@ async function init() {
     if (tab) {
       const result = await saveToGroup(tab, fixedId);
       if (result) {
-        await showToastInTab(tab, tr("savedToGroup", popupLanguage, { name: result.groupName || tr("unnamed", popupLanguage) }), result.fontSize);
+        await showToastInTab(
+          tab,
+          tr("savedToGroup", popupLanguage, { name: result.groupName || tr("unnamed", popupLanguage) }),
+          result.fontSize,
+        );
       }
     }
     window.close();
@@ -626,7 +627,11 @@ async function init() {
     const customTitle = tabTitleInput ? tabTitleInput.value : "";
     const result = await saveToGroup(tab, selectedGroupId, customTitle);
     if (result) {
-      await showToastInTab(tab, tr("savedToGroup", popupLanguage, { name: result.groupName || tr("unnamed", popupLanguage) }), result.fontSize);
+      await showToastInTab(
+        tab,
+        tr("savedToGroup", popupLanguage, { name: result.groupName || tr("unnamed", popupLanguage) }),
+        result.fontSize,
+      );
     }
     window.close();
   });

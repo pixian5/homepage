@@ -1,25 +1,39 @@
+import { getBingWallpaper } from "./bing-wallpaper.js";
 import {
-  loadData,
-  loadDataFromArea,
-  saveData,
+  clearIconCacheForUrl,
+  fetchAsDataUrl,
+  getFaviconCandidates,
+  getSiteKey,
+  refreshAllIcons,
+  resolveIcon,
+  retryFailedIconsIfDue,
+} from "./icons.js";
+import {
   clearData,
   createBackupSnapshot,
-  loadIconCache,
-  saveIconCache,
+  deepClone,
   defaultData,
+  detectPreferredLanguage,
   getChromeApi,
   getStorageKey,
-  deepClone,
+  loadData,
+  loadDataFromArea,
+  loadIconCache,
   normalizeLanguage,
-  detectPreferredLanguage,
+  saveData,
+  saveIconCache,
 } from "./storage.js";
-import { getBingWallpaper } from "./bing-wallpaper.js";
-import { resolveIcon, refreshAllIcons, retryFailedIconsIfDue, getFaviconCandidates, getSiteKey, clearIconCacheForUrl, fetchAsDataUrl } from "./icons.js";
 
 const $ = (id) => document.getElementById(id);
 const qs = (sel, root = document) => root.querySelector(sel);
 const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-const escapeHtml = (str) => String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+const escapeHtml = (str) =>
+  String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 const escapeAttr = escapeHtml;
 const rafThrottle = (fn) => {
   let scheduled = false;
@@ -87,7 +101,7 @@ let settingsOpen = false;
 let settingsSaving = false;
 let settingsSaveTimer = null;
 let settingsSaveQueued = false;
-let settingsSaveNow = null;
+let _settingsSaveNow = null;
 let renderSeq = 0;
 let lastMainLayout = null;
 let storageReloadTimer = null;
@@ -150,19 +164,14 @@ const TOUCH_TILE_LONG_PRESS_MS = 3000;
 const TOUCH_GROUP_LONG_PRESS_MS = 260;
 const TOUCH_DRAG_MOVE_THRESHOLD = 18;
 const TOUCH_CLICK_SUPPRESS_MS = 400;
-const BACKUP_IGNORED_SETTINGS_KEYS = new Set([
-  "lastActiveGroupId",
-  "lastSaveUrl",
-  "lastSaveTs",
-  "lastSaveToast",
-]);
+const BACKUP_IGNORED_SETTINGS_KEYS = new Set(["lastActiveGroupId", "lastSaveUrl", "lastSaveTs", "lastSaveToast"]);
 
 const densityMap = {
   compact: { gap: 10 },
   standard: { gap: 16 },
   spacious: { gap: 22 },
 };
-const bgOverlayMap = {
+const _bgOverlayMap = {
   light: "rgba(245, 246, 250, 0.85)",
   dark: "rgba(12, 15, 20, 0.72)",
 };
@@ -469,7 +478,7 @@ const I18N = {
     "group.new": "New Group",
     "group.promptName": "Group name",
     "group.keepOne": "At least one group must remain",
-    "group.deleteConfirm": "Delete group \"{name}\"?",
+    "group.deleteConfirm": 'Delete group "{name}"?',
     "delete.deletedCount": "Deleted {count} shortcuts",
     "delete.undo": "Undo",
     "delete.restored": "Restored",
@@ -671,9 +680,9 @@ function currentLang() {
 function t(key, vars = null) {
   const lang = currentLang();
   const dict = I18N[lang] || I18N.en || I18N["zh-CN"];
-  let text = dict[key] || I18N.en?.[key] || I18N["zh-CN"]?.[key] || key;
+  const text = dict[key] || I18N.en?.[key] || I18N["zh-CN"]?.[key] || key;
   if (!vars) return text;
-  return text.replace(/\{(\w+)\}/g, (_, name) => (vars[name] ?? ""));
+  return text.replace(/\{(\w+)\}/g, (_, name) => vars[name] ?? "");
 }
 
 function ensureLanguageSetting() {
@@ -689,9 +698,9 @@ function ensureLanguageSetting() {
 
 function buildLanguageOptions(selectedLanguage) {
   const normalized = normalizeLanguage(selectedLanguage || "") || currentLang();
-  return APP_SUPPORTED_LANGUAGES
-    .map((item) => `<option value="${item.code}" ${item.code === normalized ? "selected" : ""}>${item.label}</option>`)
-    .join("");
+  return APP_SUPPORTED_LANGUAGES.map(
+    (item) => `<option value="${item.code}" ${item.code === normalized ? "selected" : ""}>${item.label}</option>`,
+  ).join("");
 }
 
 function applyStaticI18n() {
@@ -744,7 +753,7 @@ function debugLog(event, payload = {}) {
     const list = raw ? JSON.parse(raw) : [];
     list.unshift(entry);
     localStorage.setItem(DEBUG_LOG_KEY, JSON.stringify(list.slice(0, MAX_DEBUG_LOG_ENTRIES)));
-  } catch (err) {
+  } catch (_err) {
     // localStorage 写入失败是预期行为，不需要警告
   }
   if (shouldDebugPersist()) {
@@ -785,7 +794,7 @@ async function loadLatestDataForApp() {
   const localData = await loadData();
   if (localData.settings.syncEnabled) {
     const syncData = await loadDataFromArea(true);
-    if (syncData && syncData.groups?.length) {
+    if (syncData?.groups?.length) {
       const localTs = Number(localData.lastUpdated || 0);
       const syncTs = Number(syncData.lastUpdated || 0);
       return syncTs >= localTs ? syncData : localData;
@@ -837,7 +846,7 @@ function attachStorageListener() {
   api.storage.onChanged.addListener((changes, areaName) => {
     if (persistInFlight > 0) return;
     if (Date.now() < suppressStorageUntil) return;
-    if (!changes || !changes[key]) return;
+    if (!changes?.[key]) return;
     if (areaName !== "local" && areaName !== "sync") return;
     const incoming = changes[key].newValue;
     const incomingTs = Number(incoming?.lastUpdated || 0);
@@ -873,7 +882,11 @@ function applyDensity() {
   const baseFont = Number(data.settings.fontSize) || DEFAULT_BASE_FONT;
   document.documentElement.style.setProperty("--tile-font", `${baseFont}px`);
   document.documentElement.style.setProperty("--base-font", `${baseFont}px`);
-  if (!data.settings.lastTileSize || data.settings.lastTileSize <= 0 || data.settings.lastTileSize < DEFAULT_TILE_SIZE) {
+  if (
+    !data.settings.lastTileSize ||
+    data.settings.lastTileSize <= 0 ||
+    data.settings.lastTileSize < DEFAULT_TILE_SIZE
+  ) {
     data.settings.lastTileSize = DEFAULT_TILE_SIZE;
   }
 }
@@ -881,7 +894,7 @@ function applyDensity() {
 function applyTheme() {
   const theme = data.settings.theme || "system";
   if (theme === "system") {
-    const mq = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+    const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
     document.documentElement.setAttribute("data-theme", mq?.matches ? "dark" : "light");
     applyBackgroundOverlay();
     return;
@@ -900,7 +913,9 @@ function applySidebarState() {
   document.body.classList.toggle("sidebar-collapsed", !!data.settings.sidebarCollapsed);
   document.body.classList.toggle("sidebar-hidden", !!data.settings.sidebarHidden);
   if (elements.btnToggleSidebar) {
-    elements.btnToggleSidebar.textContent = data.settings.sidebarCollapsed ? t("sidebar.expand") : t("sidebar.collapse");
+    elements.btnToggleSidebar.textContent = data.settings.sidebarCollapsed
+      ? t("sidebar.expand")
+      : t("sidebar.collapse");
   }
   syncSidebarTabLabels();
 }
@@ -988,13 +1003,13 @@ function normalizeUrl(input) {
     const url = new URL(input);
     if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
     return url.href;
-  } catch (err) {
+  } catch (_err) {
     const withScheme = `https://${input}`;
     try {
       const url = new URL(withScheme);
       if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
       return url.href;
-    } catch (err2) {
+    } catch (_err2) {
       return "";
     }
   }
@@ -1010,7 +1025,7 @@ function normalizeUrlWithScheme(input, scheme) {
     const url = new URL(candidate);
     if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
     return url.href;
-  } catch (e) {
+  } catch (_e) {
     // URL 解析失败是预期行为，不需要警告
     return "";
   }
@@ -1116,7 +1131,7 @@ function buildBackupFingerprint(source) {
       order: Number(group.order) || 0,
       nodes: Array.isArray(group.nodes) ? group.nodes.map((id) => String(id)) : [],
     }))
-    .sort((a, b) => (a.order - b.order) || a.id.localeCompare(b.id));
+    .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   const nodes = Object.keys(input.nodes || {})
     .sort()
     .map((id) => {
@@ -1284,7 +1299,9 @@ function renderGroups() {
       btn.addEventListener("dragend", () => {
         draggingGroupId = null;
         btn.classList.remove("dragging");
-        qsa(".group-tab", elements.groupTabs).forEach((el) => el.classList.remove("drop-target"));
+        qsa(".group-tab", elements.groupTabs).forEach((el) => {
+          el.classList.remove("drop-target");
+        });
       });
       btn.addEventListener("dragover", (e) => {
         e.preventDefault();
@@ -1299,11 +1316,15 @@ function renderGroups() {
         if (!draggingGroupId || draggingGroupId === group.id) return;
         moveGroupBefore(draggingGroupId, group.id);
       });
-      btn.addEventListener("touchstart", (e) => {
-        if (e.touches.length !== 1) return;
-        const touch = e.touches[0];
-        beginTouchLongPress("group", group.id, btn, touch.clientX, touch.clientY);
-      }, { passive: true });
+      btn.addEventListener(
+        "touchstart",
+        (e) => {
+          if (e.touches.length !== 1) return;
+          const touch = e.touches[0];
+          beginTouchLongPress("group", group.id, btn, touch.clientX, touch.clientY);
+        },
+        { passive: true },
+      );
       elements.groupTabs.appendChild(btn);
     });
 }
@@ -1321,9 +1342,9 @@ async function renderGrid() {
   const style = getComputedStyle(referenceGrid);
   const paddingX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
   const available = Math.max(0, width - paddingX);
-  const isMobileViewport = !!(window.matchMedia && window.matchMedia("(max-width: 720px)").matches);
+  const isMobileViewport = !!window.matchMedia?.("(max-width: 720px)").matches;
   const baseSize = data.settings.lastTileSize || density.size || 96;
-  let maxColumns = Math.max(1, Math.floor((available + gap) / (baseSize + gap)));
+  const maxColumns = Math.max(1, Math.floor((available + gap) / (baseSize + gap)));
   let columns = maxColumns;
   if (data.settings.fixedLayout) {
     const desired = Math.max(1, data.settings.fixedCols || 8);
@@ -1485,12 +1506,16 @@ async function renderGrid() {
       dragState = null;
     });
 
-    tile.addEventListener("touchstart", (e) => {
-      if (e.touches.length !== 1) return;
-      if (selectionMode || activeGroupId === RECENT_GROUP_ID) return;
-      const touch = e.touches[0];
-      beginTouchTileHold(node, node.id, tile, touch.clientX, touch.clientY);
-    }, { passive: true });
+    tile.addEventListener(
+      "touchstart",
+      (e) => {
+        if (e.touches.length !== 1) return;
+        if (selectionMode || activeGroupId === RECENT_GROUP_ID) return;
+        const touch = e.touches[0];
+        beginTouchTileHold(node, node.id, tile, touch.clientX, touch.clientY);
+      },
+      { passive: true },
+    );
 
     grid.appendChild(tile);
   }
@@ -1656,7 +1681,9 @@ function clearTouchDragVisual() {
   if (touchDragState.targetGroupBtn) {
     touchDragState.targetGroupBtn.classList.remove("drop-target");
   }
-  qsa(".group-tab", elements.groupTabs).forEach((el) => el.classList.remove("drop-target"));
+  qsa(".group-tab", elements.groupTabs).forEach((el) => {
+    el.classList.remove("drop-target");
+  });
   document.body.classList.remove("touch-dragging");
 }
 
@@ -1764,7 +1791,7 @@ function finishTouchDrag() {
     } else if (activeGroupId !== RECENT_GROUP_ID) {
       const inFolder = !!openFolderId;
       const container = inFolder ? data.nodes[openFolderId] : getActiveGroup();
-      const list = inFolder ? (container.children || []) : container.nodes;
+      const list = inFolder ? container.children || [] : container.nodes;
       const grid = inFolder ? elements.folderGrid : elements.grid;
       const next = moveNodeInList(list, sourceId, getDropIndex(grid, x, y));
       if (next !== list) {
@@ -1886,7 +1913,7 @@ function isDropOnIcon(targetId, x, y) {
   return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
 }
 
-function getInsertIndexFromTarget(list, sourceId, targetId, x, y) {
+function getInsertIndexFromTarget(list, _sourceId, targetId, x, _y) {
   const targetIndex = list.indexOf(targetId);
   if (targetIndex < 0) return list.length;
   const tile = getTileElementById(targetId);
@@ -1896,7 +1923,7 @@ function getInsertIndexFromTarget(list, sourceId, targetId, x, y) {
   const centerX = rect.left + rect.width / 2;
   // 非图标区域拖放仅按左右半区判断前后，避免误判到行首/左侧。
   const insertAfter = x >= centerX;
-  let insertIndex = targetIndex + (insertAfter ? 1 : 0);
+  const insertIndex = targetIndex + (insertAfter ? 1 : 0);
   return Math.max(0, Math.min(insertIndex, list.length));
 }
 
@@ -1975,7 +2002,7 @@ function handleDropOnTile(targetId, x, y) {
 
 function dissolveFolder(folderId) {
   const folder = data.nodes[folderId];
-  if (!folder || folder.type !== "folder") return;
+  if (folder?.type !== "folder") return;
   const children = Array.isArray(folder.children) ? folder.children.slice() : [];
   pushBackup();
   let replaced = false;
@@ -2016,7 +2043,6 @@ function removeNodeFromLocation(id) {
     }
   }
 }
-
 
 function moveNodeInList(list, id, index) {
   const currentIndex = list.indexOf(id);
@@ -2154,7 +2180,7 @@ function undoDelete() {
  * @param {HTMLElement} el
  * @param {string} text
  */
-function safeSetText(el, text) {
+function _safeSetText(el, text) {
   el.textContent = text;
 }
 
@@ -2164,7 +2190,7 @@ function safeSetText(el, text) {
  * @param {HTMLElement} inputEl
  * @returns {HTMLElement}
  */
-function createFormSection(labelText, inputEl) {
+function _createFormSection(labelText, inputEl) {
   const section = document.createElement("div");
   section.className = "section";
   const label = document.createElement("label");
@@ -2204,7 +2230,7 @@ function closeModal() {
   settingsOpen = false;
   settingsSaving = false;
   settingsSaveQueued = false;
-  settingsSaveNow = null;
+  _settingsSaveNow = null;
   if (settingsSaveTimer) {
     clearTimeout(settingsSaveTimer);
     settingsSaveTimer = null;
@@ -2399,7 +2425,9 @@ function openEditModal(node) {
       <label>${t("field.title")}</label>
       <input id="fieldTitle" type="text" value="${escapeAttr(node.title || "")}" />
     </div>
-    ${node.type === "item" ? `
+    ${
+      node.type === "item"
+        ? `
     <div class="section">
       <label>${t("field.url")}</label>
       <input id="fieldUrl" type="url" value="${escapeAttr(node.url || "")}" />
@@ -2414,7 +2442,9 @@ function openEditModal(node) {
       </select>
     </div>
     <div id="iconExtra" class="section"></div>
-    ` : ""}
+    `
+        : ""
+    }
     <div class="actions">
       <button id="btnCancel" class="icon-btn">${t("common.cancel")}</button>
       <button id="btnSave" class="icon-btn">${t("common.save")}</button>
@@ -2424,7 +2454,7 @@ function openEditModal(node) {
 
   if (node.type === "item") {
     const iconTypeEl = $("fieldIconType");
-    iconTypeEl.value = node.iconType === "letter" ? "auto" : (node.iconType || "auto");
+    iconTypeEl.value = node.iconType === "letter" ? "auto" : node.iconType || "auto";
     const iconExtra = $("iconExtra");
     function renderIconExtra(type) {
       iconExtra.replaceChildren();
@@ -2495,7 +2525,7 @@ function openEditModal(node) {
       // 检查是否需要清除缓存并重新获取图标
       const urlChanged = oldUrl !== url;
       const iconTypeChanged = oldIconType !== iconType;
-      const shouldRefetchIcon = (urlChanged || (iconTypeChanged && iconType === "auto"));
+      const shouldRefetchIcon = urlChanged || (iconTypeChanged && iconType === "auto");
 
       if (shouldRefetchIcon) {
         // 清除旧缓存
@@ -2748,7 +2778,7 @@ function openSettingsModal() {
   $("settingBgColor").value = data.settings.backgroundColor;
   $("settingBgGradient").value = data.settings.backgroundGradient;
   // 形如 "linear-gradient(120deg, #aaa, #bbb)"，跳过角度，直接取两个颜色
-  const match = /linear-gradient\([^,]+,\s*([^,]+),\s*([^\)]+)\)/.exec(data.settings.backgroundGradient || "");
+  const match = /linear-gradient\([^,]+,\s*([^,]+),\s*([^)]+)\)/.exec(data.settings.backgroundGradient || "");
   const gA = data.settings.backgroundGradientA || match?.[1]?.trim() || "#1d2a3b";
   const gB = data.settings.backgroundGradientB || match?.[2]?.trim() || "#0b0f14";
   $("settingBgGradientA").value = gA;
@@ -2923,7 +2953,7 @@ function openSettingsModal() {
     }
     return;
   };
-  settingsSaveNow = saveSettings;
+  _settingsSaveNow = saveSettings;
 
   const scheduleSettingsSave = (immediate = false) => {
     if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
@@ -3071,7 +3101,7 @@ async function openImportModal() {
         }
       }
       // 导入完成后对所有节点 URL 做协议白名单校验，丢弃危险协议
-      if (data && data.nodes) {
+      if (data?.nodes) {
         for (const id of Object.keys(data.nodes)) {
           const node = data.nodes[id];
           if (!node || node.type === "folder") continue;
@@ -3207,7 +3237,10 @@ function openImportUrlModal() {
 function openBackupModal() {
   settingsOpen = false;
   const list = data.backups
-    .map((b) => `<div class="row" data-backup="${escapeAttr(b.id)}"><div>${escapeHtml(new Date(b.ts).toLocaleString())}</div><div class="row-actions"><button class="icon-btn backup-restore">恢复</button><button class="icon-btn backup-delete">删除</button></div></div>`)
+    .map(
+      (b) =>
+        `<div class="row" data-backup="${escapeAttr(b.id)}"><div>${escapeHtml(new Date(b.ts).toLocaleString())}</div><div class="row-actions"><button class="icon-btn backup-restore">恢复</button><button class="icon-btn backup-delete">删除</button></div></div>`,
+    )
     .join("");
   const html = `
     <h2>备份管理</h2>
@@ -3224,7 +3257,7 @@ function openBackupModal() {
       const restoredData = cloneDataSnapshot(backup.data);
       restoredData.backups = backupsBeforeRestore;
       // 恢复后对所有节点 URL 做协议白名单校验，丢弃危险协议
-      if (restoredData && restoredData.nodes) {
+      if (restoredData?.nodes) {
         for (const id of Object.keys(restoredData.nodes)) {
           const node = restoredData.nodes[id];
           if (!node || node.type === "folder") continue;
@@ -3359,7 +3392,7 @@ async function fetchTitleInBackground(nodeId, url) {
   const title = await fetchTitleViaTab(url);
   if (!title) return;
   const target = data?.nodes?.[nodeId];
-  if (!target || !target.titlePending) return;
+  if (!target?.titlePending) return;
   target.title = title;
   target.titlePending = false;
   await persistData();
@@ -3426,7 +3459,7 @@ async function migrateIconCacheToDataUrl(node, img) {
     cache[node.url] = { dataUrl, ts: Date.now() };
     if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
     await saveIconCache(cache);
-    if (img && img.isConnected) img.src = dataUrl;
+    if (img?.isConnected) img.src = dataUrl;
   } finally {
     _migratingIcons.delete(node.url);
   }
@@ -3452,7 +3485,7 @@ async function fetchTitleViaTab(url) {
       };
       try {
         api.tabs.onUpdated.addListener(onUpdated);
-      } catch (e) {
+      } catch (_e) {
         finish("");
       }
     });
@@ -3466,7 +3499,12 @@ async function loadRecentHistory() {
   try {
     const items = await new Promise((resolve) => {
       let done = false;
-      const settle = (res) => { if (!done) { done = true; resolve(res || []); } };
+      const settle = (res) => {
+        if (!done) {
+          done = true;
+          resolve(res || []);
+        }
+      };
       const result = api.history.search({ text: "", startTime, maxResults: RECENT_LIMIT }, settle);
       if (result && typeof result.then === "function") result.then(settle).catch(() => settle([]));
     });
@@ -3475,7 +3513,9 @@ async function loadRecentHistory() {
       .filter((item) => item.url)
       .filter((item) => {
         let norm = item.url;
-        try { norm = new URL(item.url).href; } catch (e) {
+        try {
+          norm = new URL(item.url).href;
+        } catch (e) {
           console.warn("loadRecentHistory: invalid URL", item.url, e);
         }
         if (seen.has(norm)) return false;
@@ -3488,12 +3528,12 @@ async function loadRecentHistory() {
         title: item.title || item.url,
         url: item.url,
       }));
-  } catch (err) {
+  } catch (_err) {
     return [];
   }
 }
 
-async function addHistoryToShortcuts(node) {
+async function _addHistoryToShortcuts(node) {
   if (!node?.url) return;
   const targetGroupId = getPreferredGroupIdForNewItem();
   if (!targetGroupId) {
@@ -3670,7 +3710,7 @@ async function init() {
   });
   if (localData.settings.syncEnabled) {
     const syncData = await loadDataFromArea(true);
-    if (syncData && syncData.groups?.length) {
+    if (syncData?.groups?.length) {
       const localTs = Number(localData.lastUpdated || 0);
       const syncTs = Number(syncData.lastUpdated || 0);
       data = syncTs >= localTs ? syncData : localData;
@@ -3742,7 +3782,10 @@ function updateOpenModeButton() {
 }
 
 function bindEvents() {
-  window.addEventListener("resize", rafThrottle(() => render()));
+  window.addEventListener(
+    "resize",
+    rafThrottle(() => render()),
+  );
 
   elements.btnAdd.addEventListener("click", openAddModal);
   elements.btnFolderAdd.addEventListener("click", openAddModal);
@@ -3817,7 +3860,9 @@ function bindEvents() {
   elements.btnSelectAll.addEventListener("click", () => {
     if (!selectionMode) return;
     const grid = openFolderId ? elements.folderGrid : elements.grid;
-    qsa(".tile", grid).forEach((tile) => selectedIds.add(tile.dataset.id));
+    qsa(".tile", grid).forEach((tile) => {
+      selectedIds.add(tile.dataset.id);
+    });
     updateSelectionStyles();
   });
 
@@ -3948,11 +3993,14 @@ function bindEvents() {
     if (!elements.contextMenu.contains(e.target)) closeContextMenu();
   });
 
-  document.addEventListener("mousemove", rafThrottle((e) => {
-    if (!elements.tooltip.classList.contains("hidden")) {
-      elements.tooltip.style.transform = `translate3d(${e.clientX + 12}px, ${e.clientY + 12}px, 0)`;
-    }
-  }));
+  document.addEventListener(
+    "mousemove",
+    rafThrottle((e) => {
+      if (!elements.tooltip.classList.contains("hidden")) {
+        elements.tooltip.style.transform = `translate3d(${e.clientX + 12}px, ${e.clientY + 12}px, 0)`;
+      }
+    }),
+  );
 
   document.addEventListener("mouseover", (e) => {
     const target = e.target.closest("[data-tooltip]");
@@ -3976,62 +4024,74 @@ function bindEvents() {
     }
   });
 
-  document.addEventListener("touchmove", (e) => {
-    if (e.touches.length !== 1) return;
-    const touch = e.touches[0];
-    if (!touchDragState.active && touchMenuState.timer) {
-      touchMenuState.x = touch.clientX;
-      touchMenuState.y = touch.clientY;
-      const moved = Math.hypot(touch.clientX - touchMenuState.startX, touch.clientY - touchMenuState.startY);
-      if (moved > TOUCH_DRAG_MOVE_THRESHOLD) {
-        resetTouchMenuState();
-        clearTouchDragTimer();
+  document.addEventListener(
+    "touchmove",
+    (e) => {
+      if (e.touches.length !== 1) return;
+      const touch = e.touches[0];
+      if (!touchDragState.active && touchMenuState.timer) {
+        touchMenuState.x = touch.clientX;
+        touchMenuState.y = touch.clientY;
+        const moved = Math.hypot(touch.clientX - touchMenuState.startX, touch.clientY - touchMenuState.startY);
+        if (moved > TOUCH_DRAG_MOVE_THRESHOLD) {
+          resetTouchMenuState();
+          clearTouchDragTimer();
+        }
       }
-    }
-    if (touchMenuState.active && !touchDragState.active) {
-      e.preventDefault();
-      return;
-    }
-    if (!touchDragState.active && touchDragState.timer) {
-      const moved = Math.hypot(touch.clientX - touchDragState.startX, touch.clientY - touchDragState.startY);
-      if (moved > TOUCH_DRAG_MOVE_THRESHOLD) {
-        clearTouchDragTimer();
-        resetTouchMenuState();
+      if (touchMenuState.active && !touchDragState.active) {
+        e.preventDefault();
+        return;
       }
-      return;
-    }
-    if (!touchDragState.active) return;
-    e.preventDefault();
-    updateTouchDragTarget(touch.clientX, touch.clientY);
-  }, { passive: false });
-
-  document.addEventListener("touchend", (e) => {
-    if (touchMenuState.timer && !touchMenuState.active) {
-      resetTouchMenuState();
-    }
-    if (touchMenuState.active && !touchDragState.active) {
+      if (!touchDragState.active && touchDragState.timer) {
+        const moved = Math.hypot(touch.clientX - touchDragState.startX, touch.clientY - touchDragState.startY);
+        if (moved > TOUCH_DRAG_MOVE_THRESHOLD) {
+          clearTouchDragTimer();
+          resetTouchMenuState();
+        }
+        return;
+      }
+      if (!touchDragState.active) return;
       e.preventDefault();
-      suppressTouchClickUntil = Date.now() + TOUCH_CLICK_SUPPRESS_MS;
-      resetTouchMenuState();
-      clearTouchDragTimer();
-      return;
-    }
-    if (touchDragState.timer && !touchDragState.active) {
-      clearTouchDragTimer();
-      return;
-    }
-    if (!touchDragState.active) return;
-    const touch = e.changedTouches?.[0];
-    if (touch) {
       updateTouchDragTarget(touch.clientX, touch.clientY);
-    }
-    e.preventDefault();
-    finishTouchDrag();
-  }, { passive: false });
+    },
+    { passive: false },
+  );
 
-  document.addEventListener("touchcancel", () => {
-    resetTouchDragState();
-  }, { passive: true });
+  document.addEventListener(
+    "touchend",
+    (e) => {
+      if (touchMenuState.timer && !touchMenuState.active) {
+        resetTouchMenuState();
+      }
+      if (touchMenuState.active && !touchDragState.active) {
+        e.preventDefault();
+        suppressTouchClickUntil = Date.now() + TOUCH_CLICK_SUPPRESS_MS;
+        resetTouchMenuState();
+        clearTouchDragTimer();
+        return;
+      }
+      if (touchDragState.timer && !touchDragState.active) {
+        clearTouchDragTimer();
+        return;
+      }
+      if (!touchDragState.active) return;
+      const touch = e.changedTouches?.[0];
+      if (touch) {
+        updateTouchDragTarget(touch.clientX, touch.clientY);
+      }
+      e.preventDefault();
+      finishTouchDrag();
+    },
+    { passive: false },
+  );
+
+  document.addEventListener(
+    "touchcancel",
+    () => {
+      resetTouchDragState();
+    },
+    { passive: true },
+  );
 
   elements.grid.addEventListener("dragover", (e) => e.preventDefault());
   elements.grid.addEventListener("drop", (e) => {
@@ -4095,7 +4155,9 @@ function bindEvents() {
     } else if (e.clientY > rect.bottom - edge) {
       moveGroupToIndex(draggingGroupId, total);
     }
-    qsa(".group-tab", elements.groupTabs).forEach((el) => el.classList.remove("drop-target"));
+    qsa(".group-tab", elements.groupTabs).forEach((el) => {
+      el.classList.remove("drop-target");
+    });
   });
 }
 
@@ -4108,7 +4170,7 @@ function bindEvents() {
     if (typeof window !== "undefined" && typeof window.__homepageRenderFatalError === "function") {
       window.__homepageRenderFatalError(
         "我的首页启动失败",
-        error?.stack || error?.message || String(error || "未知错误")
+        error?.stack || error?.message || String(error || "未知错误"),
       );
     }
   }

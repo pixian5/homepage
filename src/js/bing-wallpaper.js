@@ -7,7 +7,7 @@ function buildBingApiUrl(language) {
   const mktMap = {
     "zh-CN": "zh-CN",
     "zh-TW": "zh-TW",
-    "en": "en-US",
+    en: "en-US",
   };
   const mkt = mktMap[language] || "en-US";
   return `${BING_API_BASE}&mkt=${encodeURIComponent(mkt)}`;
@@ -36,15 +36,14 @@ function blobToDataUrl(blob) {
 function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(url, { ...options, signal: controller.signal })
-    .finally(() => clearTimeout(timer));
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
 export async function getBingWallpaper(language = "") {
   const cache = await loadBgCache();
   const key = todayKey();
 
-  if (cache && cache.dataUrl) {
+  if (cache?.dataUrl) {
     const ts = Number(cache.ts || 0);
     const freshByDate = cache.date === key;
     const freshByTtl = ts > 0 && Date.now() - ts < CACHE_TTL_MS;
@@ -72,7 +71,7 @@ export async function getBingWallpaper(language = "") {
     const payload = { date: key, url: fullUrl, dataUrl, ts: Date.now() };
     await saveBgCache(payload);
     return { ...payload, fromCache: false };
-  } catch (err) {
+  } catch (_err) {
     if (cache?.dataUrl) return { ...cache, fromCache: true, failed: true };
     return { date: key, url: "", dataUrl: "", failed: true };
   }

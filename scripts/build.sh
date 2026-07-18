@@ -11,6 +11,12 @@ SAFARI_PROJECT_DIR="$DIST_DIR/safari-app"
 SAFARI_APP_NAME="${SAFARI_APP_NAME:-我的首页 Safari}"
 SAFARI_BUNDLE_ID="${SAFARI_BUNDLE_ID:-com.aeroluna.homepage.safari}"
 
+# 统一版本号自增入口：允许 SKIP_BUMP=1 跳过（如 CI 或调试场景）
+if [[ "${SKIP_BUMP:-0}" != "1" ]]; then
+  echo "[build] Bumping version..."
+  node "$ROOT_DIR/scripts/bump-version.mjs"
+fi
+
 copy_target() {
   local manifest_file="$1"
   local target_dir="$2"

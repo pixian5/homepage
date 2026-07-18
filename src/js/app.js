@@ -1082,11 +1082,17 @@ async function openUrl(url, mode) {
 function setBackground(style) {
   if (!style) return;
   if (style.startsWith("data:") || style.startsWith("http")) {
-    const safe = style.replace(/['"\\]/g, "");
-    elements.background.style.backgroundImage = `url('${safe}')`;
-  } else {
+    // 用 CSS.escape 处理 URL 中的特殊字符，避免引号逃逸注入
+    const safe = CSS.escape(style);
+    elements.background.style.backgroundImage = `url("${safe}")`;
+  } else if (/^[a-zA-Z-]+\([^)]*\)$/.test(style)) {
+    // 仅允许形如 linear-gradient(...) / radial-gradient(...) 的 CSS 函数
+    elements.background.style.backgroundImage = style;
+  } else if (/^[a-zA-Z-]+$/.test(style)) {
+    // 仅允许纯关键字（如 none）
     elements.background.style.backgroundImage = style;
   }
+  // 其它情况一律忽略，避免注入
 }
 
 function applyBackgroundOverlay() {

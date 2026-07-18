@@ -467,7 +467,7 @@ Firefox 新标签页若按钮点击无响应，通常是脚本未执行。当前
 - “清空数据”先 `defaultData()` 再 `clearData(false)`，不会主动清理旧的 `storage.sync` 残留。
 - 导入 JSON 仅检查 `schemaVersion`，不做严格 schema 校验。
 - 搜索框回车/按钮始终新页搜索，不受 `openMode` 影响。
-- 暂无自动化测试（无单元测试/端到端测试脚本）。
+- 已有自动化测试：`tests/` 目录下 4 个测试文件、25 个用例，覆盖 storage/icons/bing-wallpaper/bump-version；通过 `npm test` 运行；GitHub Actions CI 自动执行 `npm run check` + `npm test`。
 
 ## 15. 版本策略
 

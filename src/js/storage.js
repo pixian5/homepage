@@ -274,10 +274,57 @@ async function storageRemove(area, key) {
   });
 }
 
-function migrateData(data) {
-  if (!data?.schemaVersion) return data;
-  // placeholder for future migrations
-  return data;
+const CURRENT_SCHEMA_VERSION = 1;
+
+/**
+ * 已注册的迁移函数：键为起始版本号，值为将该版本数据升级到下一版本的函数。
+ * 新增 schema 升级时，只需在这里追加一个版本号 -> 迁移函数的映射。
+ * 每个迁移函数必须返回新数据对象（或原对象），并保证不抛错。
+ */
+const MIGRATIONS = {
+  // 示例（保留以便未来追加）：
+  // 1: (data) => {
+  //   data.schemaVersion = 2;
+  //   // ... 字段调整 ...
+  //   return data;
+  // },
+};
+
+/**
+ * 按版本号顺序执行数据迁移。
+ * - 没有 schemaVersion 的旧数据直接返回（视为最新）。
+ * - 缺失的迁移步骤会被跳过，最终统一抬升到 CURRENT_SCHEMA_VERSION。
+ * - 任何迁移函数抛错都会被吞掉，返回当前已迁移到的副本，避免阻塞加载。
+ * @param {object} data
+ * @returns {object}
+ */
+export function migrateData(data) {
+  if (!data || typeof data !== "object") return data;
+  if (!data.schemaVersion) return data;
+
+  let current = deepClone(data);
+  let version = Number(data.schemaVersion) || 0;
+  const maxSteps = 32; // 防御性上限，避免错误数据导致死循环
+
+  for (let i = 0; i < maxSteps && version < CURRENT_SCHEMA_VERSION; i++) {
+    const migrator = MIGRATIONS[version];
+    if (typeof migrator !== "function") {
+      // 没有对应迁移函数，直接抬升版本号
+      version = CURRENT_SCHEMA_VERSION;
+      break;
+    }
+    try {
+      current = migrator(current) || current;
+      version = Number(current.schemaVersion) || version + 1;
+    } catch (_err) {
+      // 单步迁移失败：保留已有结果并停止
+      version = CURRENT_SCHEMA_VERSION;
+      break;
+    }
+  }
+
+  current.schemaVersion = CURRENT_SCHEMA_VERSION;
+  return current;
 }
 
 export async function loadData() {

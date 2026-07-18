@@ -65,6 +65,7 @@ describe("storage", async () => {
     loadData,
     clearData,
     getStorageKey,
+    migrateData,
   } = await import("../src/js/storage.js");
 
   it("normalizeLanguage handles zh-CN variants", () => {
@@ -139,5 +140,40 @@ describe("storage", async () => {
 
   it("getStorageKey returns root key", () => {
     assert.equal(getStorageKey(), "homepage_data");
+  });
+
+  it("migrateData returns input when schemaVersion missing", () => {
+    const data = { settings: {}, groups: [] };
+    const result = migrateData(data);
+    assert.equal(result, data);
+  });
+
+  it("migrateData keeps data unchanged at current version", () => {
+    const data = defaultData();
+    const result = migrateData(data);
+    assert.equal(result.schemaVersion, 1);
+    assert.deepEqual(result.groups, data.groups);
+    assert.deepEqual(result.settings, data.settings);
+  });
+
+  it("migrateData bumps version when missing migrator", () => {
+    // 模拟一个未来的旧版本数据：没有对应迁移函数时直接抬升版本号
+    const data = { schemaVersion: 1, settings: { language: "en" }, groups: [], nodes: {}, backups: [] };
+    const result = migrateData(data);
+    assert.equal(result.schemaVersion, 1);
+    assert.equal(result.settings.language, "en");
+  });
+
+  it("migrateData does not mutate input", () => {
+    const data = defaultData();
+    const snapshot = deepClone(data);
+    migrateData(data);
+    assert.deepEqual(data, snapshot);
+  });
+
+  it("migrateData returns input for non-object", () => {
+    assert.equal(migrateData(null), null);
+    assert.equal(migrateData(undefined), undefined);
+    assert.equal(migrateData("str"), "str");
   });
 });

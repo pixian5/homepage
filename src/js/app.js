@@ -1,4 +1,5 @@
 import { getBingWallpaper } from "./bing-wallpaper.js";
+import { buildBackupFingerprint, cloneDataSnapshot, dedupeData, moveNodeInList } from "./data-utils.js";
 import {
   clearIconCacheForUrl,
   fetchAsDataUrl,
@@ -1144,56 +1145,13 @@ function pushBackup() {
   return true;
 }
 
-function cloneDataSnapshot(source) {
-  return deepClone(source || {});
-}
-
-function buildBackupSettingsSnapshot(settings) {
-  const input = settings || {};
-  const out = {};
-  const keys = Object.keys(input).sort();
-  for (const key of keys) {
-    if (BACKUP_IGNORED_SETTINGS_KEYS.has(key)) continue;
-    out[key] = input[key];
-  }
-  return out;
-}
-
-function buildBackupFingerprint(source) {
-  const input = source || {};
-  const settings = buildBackupSettingsSnapshot(input.settings);
-  const groups = (input.groups || [])
-    .map((group) => ({
-      id: String(group.id || ""),
-      name: String(group.name || ""),
-      order: Number(group.order) || 0,
-      nodes: Array.isArray(group.nodes) ? group.nodes.map((id) => String(id)) : [],
-    }))
-    .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-  const nodes = Object.keys(input.nodes || {})
-    .sort()
-    .map((id) => {
-      const node = input.nodes[id] || {};
-      return {
-        id,
-        type: String(node.type || ""),
-        title: String(node.title || ""),
-        url: String(node.url || ""),
-        iconType: String(node.iconType || ""),
-        color: String(node.color || ""),
-        children: Array.isArray(node.children) ? node.children.map((cid) => String(cid)) : [],
-      };
-    });
-  return JSON.stringify({ settings, groups, nodes });
-}
-
 function syncBackupBaseline(source = data) {
-  backupFingerprint = buildBackupFingerprint(source);
+  backupFingerprint = buildBackupFingerprint(source, BACKUP_IGNORED_SETTINGS_KEYS);
   backupBaselineSnapshot = cloneDataSnapshot(source);
 }
 
 function ensureAutoBackupBeforePersist() {
-  const currentFingerprint = buildBackupFingerprint(data);
+  const currentFingerprint = buildBackupFingerprint(data, BACKUP_IGNORED_SETTINGS_KEYS);
   if (!backupFingerprint) {
     backupFingerprint = currentFingerprint;
     backupBaselineSnapshot = cloneDataSnapshot(data);
@@ -2080,64 +2038,6 @@ function removeNodeFromLocation(id) {
       node.children = node.children.filter((nid) => nid !== id);
     }
   }
-}
-
-function moveNodeInList(list, id, index) {
-  const currentIndex = list.indexOf(id);
-  if (currentIndex < 0) return list;
-  const safeIndex = Math.max(0, Math.min(index, list.length));
-  let targetIndex = safeIndex;
-  if (targetIndex > currentIndex) targetIndex -= 1;
-  if (targetIndex === currentIndex) return list;
-  const next = list.slice();
-  next.splice(currentIndex, 1);
-  next.splice(targetIndex, 0, id);
-  return next;
-}
-
-function dedupeData(input) {
-  let changed = false;
-  input.nodes = { ...(input.nodes || {}) };
-
-  for (const group of input.groups || []) {
-    const uniq = [];
-    const set = new Set();
-    for (const id of group.nodes || []) {
-      if (!input.nodes[id]) {
-        changed = true;
-        continue;
-      }
-      if (set.has(id)) {
-        changed = true;
-        continue;
-      }
-      set.add(id);
-      uniq.push(id);
-    }
-    group.nodes = uniq;
-  }
-
-  for (const node of Object.values(input.nodes)) {
-    if (node.type === "folder" && Array.isArray(node.children)) {
-      const uniq = [];
-      const set = new Set();
-      for (const id of node.children) {
-        if (!input.nodes[id]) {
-          changed = true;
-          continue;
-        }
-        if (set.has(id)) {
-          changed = true;
-          continue;
-        }
-        set.add(id);
-        uniq.push(id);
-      }
-      node.children = uniq;
-    }
-  }
-
-  return changed;
 }
 
 function moveGroupBefore(sourceId, targetId) {

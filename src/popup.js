@@ -1,4 +1,15 @@
-import { deepClone, getChromeApi, getStorageKey } from "./js/storage.js";
+import { pickLatestData } from "./js/data-utils.js";
+import {
+  detectPreferredLanguage,
+  estimateBytes,
+  normalizeLanguage,
+  normalizeUrl,
+  sanitizeForSync,
+  storageGet as sharedStorageGet,
+  storageSet as sharedStorageSet,
+  storageArea,
+} from "./js/shared-utils.js";
+import { getStorageKey } from "./js/storage.js";
 
 const ROOT_KEY = getStorageKey();
 const SYNC_ITEM_QUOTA_BYTES = 7500;
@@ -57,48 +68,6 @@ const POPUP_I18N = {
   },
 };
 
-function normalizeLanguage(input) {
-  if (!input) return "";
-  const raw = String(input).trim().replace(/_/g, "-").toLowerCase();
-  if (!raw) return "";
-  if (raw === "zh" || raw.startsWith("zh-hans") || raw.startsWith("zh-cn") || raw.startsWith("zh-sg")) return "zh-CN";
-  if (raw.startsWith("zh-hant") || raw.startsWith("zh-tw") || raw.startsWith("zh-hk") || raw.startsWith("zh-mo"))
-    return "zh-TW";
-  if (raw.startsWith("ja")) return "ja";
-  if (raw.startsWith("ko")) return "ko";
-  if (raw.startsWith("de")) return "de";
-  if (raw.startsWith("fr")) return "fr";
-  if (raw.startsWith("es")) return "es";
-  if (raw.startsWith("en")) return "en";
-  return "";
-}
-
-function detectSystemLanguage() {
-  try {
-    return normalizeLanguage(Intl?.DateTimeFormat?.().resolvedOptions?.().locale || "");
-  } catch (_e) {
-    return "";
-  }
-}
-
-function detectBrowserLanguage() {
-  const api = getChrome();
-  const candidates = [
-    api?.i18n?.getUILanguage?.(),
-    navigator?.language,
-    ...(Array.isArray(navigator?.languages) ? navigator.languages : []),
-  ];
-  for (const candidate of candidates) {
-    const normalized = normalizeLanguage(candidate);
-    if (SUPPORTED_LANGUAGES.includes(normalized)) return normalized;
-  }
-  return "";
-}
-
-function detectPreferredLanguage() {
-  return detectSystemLanguage() || detectBrowserLanguage() || "zh-CN";
-}
-
 function tr(key, language, vars = null) {
   const lang = normalizeLanguage(language) || "zh-CN";
   const dict = POPUP_I18N[lang] || POPUP_I18N.en || POPUP_I18N["zh-CN"];
@@ -121,48 +90,13 @@ function applyPopupI18n(language) {
 }
 
 /**
- * 获取浏览器 API
- * @returns {typeof chrome | null}
- */
-function getChrome() {
-  return getChromeApi();
-}
-
-/**
- * 获取最后一个错误
- * @returns {chrome.runtime.LastError | null}
- */
-function getLastError() {
-  const api = getChrome();
-  return api?.runtime?.lastError || null;
-}
-
-/**
- * 获取存储区域
- * @param {boolean} useSync
- * @returns {chrome.storage.StorageArea | null}
- */
-function storageArea(useSync) {
-  const api = getChrome();
-  if (!api?.storage) return null;
-  return useSync ? api.storage.sync : api.storage.local;
-}
-
-/**
  * 从存储中获取数据
  * @param {string} key
  * @param {boolean} useSync
  * @returns {Promise<any>}
  */
 function storageGet(key, useSync = false) {
-  const area = storageArea(useSync);
-  return new Promise((resolve) => {
-    area.get(key, (res) => {
-      const err = getLastError();
-      if (err) return resolve(undefined);
-      resolve(res[key]);
-    });
-  });
+  return sharedStorageGet(storageArea(useSync), key);
 }
 
 /**
@@ -172,13 +106,7 @@ function storageGet(key, useSync = false) {
  * @returns {Promise<string | null>}
  */
 function storageSet(obj, useSync = false) {
-  const area = storageArea(useSync);
-  return new Promise((resolve) => {
-    area.set(obj, () => {
-      const err = getLastError();
-      resolve(err ? err.message : null);
-    });
-  });
+  return sharedStorageSet(storageArea(useSync), obj);
 }
 
 const LOG_KEY = "homepage_save_log";
@@ -200,80 +128,6 @@ function appendLog(entry) {
 }
 
 /**
- * 规范化 URL
- * @param {string} input
- * @returns {string}
- */
-const SAFE_URL_PROTOCOLS = new Set(["http:", "https:", "ftp:"]);
-
-function normalizeUrl(input) {
-  if (!input) return "";
-  try {
-    const url = new URL(input);
-    if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
-    return url.href;
-  } catch (_e) {
-    try {
-      const url = new URL(`https://${input}`);
-      if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
-      return url.href;
-    } catch (_e2) {
-      // URL 解析失败是预期行为
-      return "";
-    }
-  }
-}
-
-/**
- * 估算字节大小
- * @param {any} value
- * @returns {number}
- */
-function estimateBytes(value) {
-  const str = JSON.stringify(value);
-  if (typeof TextEncoder !== "undefined") {
-    return new TextEncoder().encode(str).length;
-  }
-  return str.length;
-}
-
-/**
- * 清理数据以适应同步存储
- * @param {object} data
- * @returns {object}
- */
-function sanitizeForSync(data) {
-  const clone = deepClone(data);
-  if (clone.settings) {
-    if (clone.settings.backgroundType === "custom") {
-      clone.settings.backgroundCustom = "";
-    }
-  }
-  clone.backups = [];
-  for (const node of Object.values(clone.nodes || {})) {
-    if (node.iconType === "upload" && node.iconData && node.iconData.length > ICON_DATA_MAX_LENGTH) {
-      node.iconData = "";
-      node.iconType = "auto";
-    }
-  }
-  return clone;
-}
-
-/**
- * 选择最新的数据
- * @param {object | null} localData
- * @param {object | null} syncData
- * @returns {object | null}
- */
-function pickLatestData(localData, syncData) {
-  if (!syncData) return localData || null;
-  if (!localData) return syncData || null;
-  const localTs = Number(localData.lastUpdated || 0);
-  const syncTs = Number(syncData.lastUpdated || 0);
-  return syncTs >= localTs ? syncData : localData;
-}
-
-/**
  * 加载最新数据
  * @returns {Promise<{data: object | null, useSync: boolean}>}
  */
@@ -291,7 +145,7 @@ async function loadLatestData() {
  * @returns {Promise<chrome.tabs.Tab | null>}
  */
 async function getCurrentTab() {
-  const api = getChrome();
+  const api = getChromeApi();
   if (!api?.tabs) return null;
   const result = api.tabs.query({ active: true, currentWindow: true });
   if (typeof result?.then === "function") {
@@ -318,7 +172,7 @@ async function getCurrentTab() {
  * @returns {string}
  */
 function getExtensionBaseUrl() {
-  const api = getChrome();
+  const api = getChromeApi();
   if (!api?.runtime?.getURL) return "";
   return api.runtime.getURL("");
 }
@@ -339,7 +193,7 @@ function isExtensionPageUrl(url) {
  * @returns {Promise<any>}
  */
 function sendRuntimeMessage(message) {
-  const api = getChrome();
+  const api = getChromeApi();
   if (!api?.runtime?.sendMessage) return Promise.resolve(null);
   return new Promise((resolve) => {
     try {
@@ -362,7 +216,7 @@ function sendRuntimeMessage(message) {
  * @returns {Promise<any>}
  */
 function sendTabMessage(tabId, message) {
-  const api = getChrome();
+  const api = getChromeApi();
   if (!api?.tabs?.sendMessage) return Promise.resolve(null);
   return new Promise((resolve) => {
     try {
@@ -478,7 +332,7 @@ async function saveToGroup(tab, selectedGroupId, customTitle = "") {
   // 弹窗保存仅在当前网页显示 toast，避免新标签页读取存储后重复提示
   data.settings.lastSaveToast = null;
   data.lastUpdated = Date.now();
-  const payload = useSync ? sanitizeForSync(data) : data;
+  const payload = useSync ? sanitizeForSync(data, ICON_DATA_MAX_LENGTH) : data;
   if (useSync) {
     const size = estimateBytes(payload);
     if (size > SYNC_ITEM_QUOTA_BYTES) {
@@ -510,7 +364,7 @@ async function saveToGroup(tab, selectedGroupId, customTitle = "") {
  * @returns {Promise<boolean>}
  */
 async function showToastInTab(tab, message, fontSize) {
-  const api = getChrome();
+  const api = getChromeApi();
   if (!tab?.id) return false;
   const payload = { type: "homepage_show_toast", text: message, fontSize };
   if (isExtensionPageUrl(tab.url)) {
@@ -599,7 +453,8 @@ async function showToastInTab(tab, message, fontSize) {
  */
 async function init() {
   const { data } = await loadLatestData();
-  popupLanguage = normalizeLanguage(data?.settings?.language || detectPreferredLanguage()) || "zh-CN";
+  popupLanguage =
+    normalizeLanguage(data?.settings?.language || detectPreferredLanguage(SUPPORTED_LANGUAGES)) || "zh-CN";
   applyPopupI18n(popupLanguage);
   const tab = await getCurrentTab();
   const fixedId = data?.settings?.defaultGroupId;
@@ -651,7 +506,7 @@ init().catch((error) => {
   console.error("popup init failed", error);
   const empty = document.getElementById("empty");
   if (empty) {
-    empty.textContent = tr("loadFailed", popupLanguage || detectPreferredLanguage());
+    empty.textContent = tr("loadFailed", popupLanguage || detectPreferredLanguage(SUPPORTED_LANGUAGES));
     empty.classList.remove("hidden");
   }
   document.body.classList.remove("hidden");

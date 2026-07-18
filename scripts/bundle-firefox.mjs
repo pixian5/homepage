@@ -8,7 +8,7 @@ const outDir = path.join(firefoxDir, "js");
 const outFile = path.join(outDir, "app.ff.js");
 const htmlPath = path.join(firefoxDir, "newtab.html");
 
-const files = ["storage.js", "icons.js", "bing-wallpaper.js", "app.js"];
+const files = ["shared-utils.js", "data-utils.js", "storage.js", "icons.js", "bing-wallpaper.js", "app.js"];
 
 export function stripImports(code) {
   return code.replace(/^\s*import[\s\S]*?;\s*/gm, "");

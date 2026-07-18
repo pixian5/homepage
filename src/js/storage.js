@@ -1,63 +1,33 @@
 /**
  * 存储模块 - 处理浏览器扩展存储操作
  * @module storage
+ *
+ * @typedef {import('./types.js').HomepageData} HomepageData
+ * @typedef {import('./types.js').IconCacheEntry} IconCacheEntry
  */
+
+import {
+  detectPreferredLanguage,
+  estimateBytes,
+  getLastError,
+  normalizeLanguage,
+  sanitizeForSync,
+  getChromeApi as sharedGetChromeApi,
+  storageArea,
+} from "./shared-utils.js";
 
 const ROOT_KEY = "homepage_data";
 const ICON_CACHE_KEY = "homepage_icon_cache";
 const BG_CACHE_KEY = "homepage_bg_cache";
 const SYNC_ITEM_QUOTA_BYTES = 7500;
 const ICON_DATA_MAX_LENGTH = 2048;
+const MAX_ICON_CACHE_ENTRIES = 500;
 const STORAGE_SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en", "ja", "ko", "de", "fr", "es"];
 export const deepClone = (obj) =>
   typeof structuredClone === "function" ? structuredClone(obj) : JSON.parse(JSON.stringify(obj));
 
-export function normalizeLanguage(input) {
-  if (!input) return "";
-  const raw = String(input).trim().replace(/_/g, "-").toLowerCase();
-  if (!raw) return "";
-  if (raw === "zh" || raw.startsWith("zh-hans") || raw.startsWith("zh-cn") || raw.startsWith("zh-sg")) return "zh-CN";
-  if (raw.startsWith("zh-hant") || raw.startsWith("zh-tw") || raw.startsWith("zh-hk") || raw.startsWith("zh-mo"))
-    return "zh-TW";
-  if (raw.startsWith("ja")) return "ja";
-  if (raw.startsWith("ko")) return "ko";
-  if (raw.startsWith("de")) return "de";
-  if (raw.startsWith("fr")) return "fr";
-  if (raw.startsWith("es")) return "es";
-  if (raw.startsWith("en")) return "en";
-  return "";
-}
-
-export function detectSystemLanguage() {
-  try {
-    const locale = Intl?.DateTimeFormat?.().resolvedOptions?.().locale || "";
-    return normalizeLanguage(locale);
-  } catch (_e) {
-    return "";
-  }
-}
-
-export function detectBrowserLanguage() {
-  const api = getChrome();
-  const candidates = [
-    api?.i18n?.getUILanguage?.(),
-    navigator?.language,
-    ...(Array.isArray(navigator?.languages) ? navigator.languages : []),
-  ];
-  for (const candidate of candidates) {
-    const normalized = normalizeLanguage(candidate);
-    if (STORAGE_SUPPORTED_LANGUAGES.includes(normalized)) return normalized;
-  }
-  return "";
-}
-
-export function detectPreferredLanguage() {
-  const systemLanguage = detectSystemLanguage();
-  if (STORAGE_SUPPORTED_LANGUAGES.includes(systemLanguage)) return systemLanguage;
-  const browserLanguage = detectBrowserLanguage();
-  if (STORAGE_SUPPORTED_LANGUAGES.includes(browserLanguage)) return browserLanguage;
-  return "zh-CN";
-}
+// 兼容旧引用：从 shared-utils.js 重新导出
+export { detectPreferredLanguage, normalizeLanguage };
 
 function getDefaultGroupNameByLanguage(language) {
   switch (language) {
@@ -125,7 +95,7 @@ function nowTs() {
 }
 
 function createDefaultData() {
-  const language = detectPreferredLanguage();
+  const language = detectPreferredLanguage(STORAGE_SUPPORTED_LANGUAGES);
   const groupId = `grp_${nowTs()}`;
   return {
     schemaVersion: 1,
@@ -135,31 +105,6 @@ function createDefaultData() {
     backups: [],
     lastUpdated: nowTs(),
   };
-}
-
-function getChrome() {
-  if (typeof chrome !== "undefined") return chrome;
-  if (typeof browser !== "undefined") return browser;
-  return null;
-}
-
-function storageArea(useSync) {
-  const api = getChrome();
-  if (!api?.storage) return null;
-  return useSync ? api.storage.sync : api.storage.local;
-}
-
-function getLastError() {
-  const api = getChrome();
-  return api?.runtime?.lastError || null;
-}
-
-function estimateBytes(value) {
-  const str = JSON.stringify(value);
-  if (typeof TextEncoder !== "undefined") {
-    return new TextEncoder().encode(str).length;
-  }
-  return str.length;
 }
 
 function isQuotaError(err) {
@@ -295,8 +240,8 @@ const MIGRATIONS = {
  * - 没有 schemaVersion 的旧数据直接返回（视为最新）。
  * - 缺失的迁移步骤会被跳过，最终统一抬升到 CURRENT_SCHEMA_VERSION。
  * - 任何迁移函数抛错都会被吞掉，返回当前已迁移到的副本，避免阻塞加载。
- * @param {object} data
- * @returns {object}
+ * @param {HomepageData | object} data
+ * @returns {HomepageData | object}
  */
 export function migrateData(data) {
   if (!data || typeof data !== "object") return data;
@@ -327,9 +272,13 @@ export function migrateData(data) {
   return current;
 }
 
+/**
+ * 加载本地数据
+ * @returns {Promise<HomepageData>}
+ */
 export async function loadData() {
   const base = createDefaultData();
-  const api = getChrome();
+  const api = sharedGetChromeApi();
   if (!api) return base;
 
   const local = storageArea(false);
@@ -343,9 +292,14 @@ export async function loadData() {
   return data;
 }
 
+/**
+ * 从指定存储区域加载数据
+ * @param {boolean} useSync
+ * @returns {Promise<HomepageData>}
+ */
 export async function loadDataFromArea(useSync = false) {
   const base = createDefaultData();
-  const api = getChrome();
+  const api = sharedGetChromeApi();
   if (!api) return base;
   const area = storageArea(useSync);
   let data = await storageGet(area, ROOT_KEY);
@@ -355,12 +309,18 @@ export async function loadDataFromArea(useSync = false) {
   return data;
 }
 
+/**
+ * 保存数据
+ * @param {HomepageData} data
+ * @param {boolean} useSync
+ * @returns {Promise<string | null>}
+ */
 export async function saveData(data, useSync = false) {
-  const api = getChrome();
+  const api = sharedGetChromeApi();
   if (!api) return;
   const area = storageArea(useSync);
   data.lastUpdated = nowTs();
-  const payload = useSync ? sanitizeForSync(data) : data;
+  const payload = useSync ? sanitizeForSync(data, ICON_DATA_MAX_LENGTH) : data;
   if (useSync) {
     const size = estimateBytes(payload);
     if (size > SYNC_ITEM_QUOTA_BYTES) {
@@ -392,7 +352,7 @@ export async function saveData(data, useSync = false) {
 }
 
 export async function clearData(useSync = false) {
-  const api = getChrome();
+  const api = sharedGetChromeApi();
   if (!api) return;
   const area = storageArea(useSync);
   await storageRemove(area, ROOT_KEY);
@@ -400,63 +360,95 @@ export async function clearData(useSync = false) {
 
 let _iconCacheMemory = null;
 
+/**
+ * 规范化图标缓存条目，兼容旧版字符串格式
+ * @param {IconCacheEntry | string} entry
+ * @returns {IconCacheEntry}
+ */
+function normalizeIconCacheEntry(entry) {
+  const now = Date.now();
+  if (typeof entry === "string") {
+    return { dataUrl: entry, ts: now };
+  }
+  if (entry && typeof entry === "object") {
+    return {
+      dataUrl: entry.dataUrl || "",
+      url: entry.url || "",
+      ts: entry.ts || now,
+      hits: entry.hits || 0,
+    };
+  }
+  return { dataUrl: "", url: "", ts: now, hits: 0 };
+}
+
+/**
+ * 图标缓存 LRU 淘汰
+ * @param {Record<string, IconCacheEntry | string>} cache
+ * @param {number} maxEntries
+ * @returns {Record<string, IconCacheEntry>}
+ */
+export function evictIconCacheLRU(cache, maxEntries = MAX_ICON_CACHE_ENTRIES) {
+  const entries = Object.entries(cache).map(([key, value]) => [key, normalizeIconCacheEntry(value)]);
+  if (entries.length <= maxEntries) {
+    return Object.fromEntries(entries);
+  }
+  entries.sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0));
+  const kept = entries.slice(entries.length - maxEntries);
+  return Object.fromEntries(kept);
+}
+
+/**
+ * 加载图标缓存，并迁移旧格式 + 更新访问时间
+ * @returns {Promise<Record<string, IconCacheEntry>>}
+ */
 export async function loadIconCache() {
   if (_iconCacheMemory) return _iconCacheMemory;
-  const api = getChrome();
+  const api = sharedGetChromeApi();
   if (!api) return {};
   const local = storageArea(false);
-  _iconCacheMemory = (await storageGet(local, ICON_CACHE_KEY)) || {};
+  const raw = (await storageGet(local, ICON_CACHE_KEY)) || {};
+  const normalized = {};
+  const now = Date.now();
+  for (const [key, value] of Object.entries(raw)) {
+    normalized[key] = normalizeIconCacheEntry(value);
+    normalized[key].ts = now;
+  }
+  _iconCacheMemory = normalized;
   return _iconCacheMemory;
 }
 
+/**
+ * 保存图标缓存，写入前执行 LRU 淘汰
+ * @param {Record<string, IconCacheEntry | string>} cache
+ * @returns {Promise<void>}
+ */
 export async function saveIconCache(cache) {
-  _iconCacheMemory = cache;
-  const api = getChrome();
+  const trimmed = evictIconCacheLRU(cache || {}, MAX_ICON_CACHE_ENTRIES);
+  _iconCacheMemory = trimmed;
+  const api = sharedGetChromeApi();
   if (!api) return;
   const local = storageArea(false);
-  await storageSet(local, { [ICON_CACHE_KEY]: cache });
+  await storageSet(local, { [ICON_CACHE_KEY]: trimmed });
 }
 
 export async function loadBgCache() {
-  const api = getChrome();
+  const api = sharedGetChromeApi();
   if (!api) return {};
   const local = storageArea(false);
   return (await storageGet(local, BG_CACHE_KEY)) || {};
 }
 
 export async function saveBgCache(cache) {
-  const api = getChrome();
+  const api = sharedGetChromeApi();
   if (!api) return;
   const local = storageArea(false);
   await storageSet(local, { [BG_CACHE_KEY]: cache });
 }
 
 /**
- * 清理数据以适应同步存储配额
- * @param {Object} data - 原始数据
- * @returns {Object} - 清理后的数据副本
- */
-function sanitizeForSync(data) {
-  const clone = deepClone(data);
-  if (clone.settings) {
-    if (clone.settings.backgroundType === "custom") {
-      clone.settings.backgroundCustom = "";
-    }
-  }
-  clone.backups = [];
-  for (const node of Object.values(clone.nodes || {})) {
-    if (node.iconType === "upload" && node.iconData && node.iconData.length > ICON_DATA_MAX_LENGTH) {
-      node.iconData = "";
-      node.iconType = "auto";
-    }
-  }
-  return clone;
-}
-
-/**
  * 创建备份快照
- * @param {Object} data - 要备份的数据
- * @returns {Object} - 备份快照对象
+ * @param {HomepageData | object} data - 要备份的数据
+ * @returns {object} - 备份快照对象
  */
 export function createBackupSnapshot(data) {
   const snapshotData = deepClone(data || {});
@@ -471,7 +463,7 @@ export function createBackupSnapshot(data) {
 
 /**
  * 获取默认设置
- * @returns {Object}
+ * @returns {import('./types.js').Settings}
  */
 export function defaultSettings() {
   return { ...DEFAULT_SETTINGS };
@@ -479,7 +471,7 @@ export function defaultSettings() {
 
 /**
  * 获取默认数据结构
- * @returns {Object}
+ * @returns {HomepageData}
  */
 export function defaultData() {
   return createDefaultData();
@@ -498,5 +490,5 @@ export function getStorageKey() {
  * @returns {typeof chrome | typeof browser | null}
  */
 export function getChromeApi() {
-  return getChrome();
+  return sharedGetChromeApi();
 }

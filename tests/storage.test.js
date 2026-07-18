@@ -66,6 +66,7 @@ describe("storage", async () => {
     clearData,
     getStorageKey,
     migrateData,
+    evictIconCacheLRU,
   } = await import("../src/js/storage.js");
 
   it("normalizeLanguage handles zh-CN variants", () => {
@@ -175,5 +176,38 @@ describe("storage", async () => {
     assert.equal(migrateData(null), null);
     assert.equal(migrateData(undefined), undefined);
     assert.equal(migrateData("str"), "str");
+  });
+
+  it("evictIconCacheLRU keeps entries within limit", () => {
+    const cache = {
+      a: { dataUrl: "data:a", ts: 1000 },
+      b: { dataUrl: "data:b", ts: 2000 },
+    };
+    const result = evictIconCacheLRU(cache, 5);
+    assert.equal(Object.keys(result).length, 2);
+    assert.equal(result.a.dataUrl, "data:a");
+    assert.equal(result.b.dataUrl, "data:b");
+  });
+
+  it("evictIconCacheLRU evicts oldest entries", () => {
+    const cache = {
+      old: { dataUrl: "data:old", ts: 1000 },
+      mid: { dataUrl: "data:mid", ts: 2000 },
+      new: { dataUrl: "data:new", ts: 3000 },
+    };
+    const result = evictIconCacheLRU(cache, 2);
+    assert.equal(Object.keys(result).length, 2);
+    assert.equal(result.mid.dataUrl, "data:mid");
+    assert.equal(result.new.dataUrl, "data:new");
+    assert.equal(result.old, undefined);
+  });
+
+  it("evictIconCacheLRU normalizes string entries", () => {
+    const cache = {
+      a: "data:image/png;base64,legacy",
+    };
+    const result = evictIconCacheLRU(cache, 5);
+    assert.equal(result.a.dataUrl, "data:image/png;base64,legacy");
+    assert.ok(result.a.ts > 0);
   });
 });

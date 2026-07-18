@@ -34,7 +34,33 @@ const escapeHtml = (str) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
-const escapeAttr = escapeHtml;
+
+/**
+ * 标记一段已经安全的 HTML 字符串，避免被 html 模板标签二次转义。
+ * 仅用于由 html 模板标签自身生成的片段，禁止包裹用户输入。
+ */
+const rawHtml = (value) => ({ __rawHtml: true, value: String(value) });
+
+/**
+ * 安全的 HTML 模板标签：自动转义所有插值，避免 XSS。
+ * 静态模板中的 HTML 标记保留；只有 ${...} 中的值会被转义。
+ * 若插值为 rawHtml() 返回的对象，则直接拼接其 value，用于组合嵌套模板。
+ */
+const html = (strings, ...values) => {
+  let result = "";
+  for (let i = 0; i < strings.length; i++) {
+    result += strings[i];
+    if (i < values.length) {
+      const value = values[i];
+      if (value && typeof value === "object" && value.__rawHtml) {
+        result += value.value;
+      } else {
+        result += escapeHtml(value);
+      }
+    }
+  }
+  return result;
+};
 const rafThrottle = (fn) => {
   let scheduled = false;
   let lastArgs = null;
@@ -699,7 +725,7 @@ function ensureLanguageSetting() {
 function buildLanguageOptions(selectedLanguage) {
   const normalized = normalizeLanguage(selectedLanguage || "") || currentLang();
   return APP_SUPPORTED_LANGUAGES.map(
-    (item) => `<option value="${item.code}" ${item.code === normalized ? "selected" : ""}>${item.label}</option>`,
+    (item) => html`<option value="${item.code}" ${item.code === normalized ? "selected" : ""}>${item.label}</option>`,
   ).join("");
 }
 
@@ -2242,7 +2268,7 @@ function closeModal() {
 }
 
 function openAddModal() {
-  const html = `
+  const modalHtml = html`
     <h2>${t("modal.add.title")}</h2>
     <div class="section">
       <label>${t("field.url")}</label>
@@ -2270,7 +2296,7 @@ function openAddModal() {
       <button id="btnSave" class="icon-btn">${t("common.save")}</button>
     </div>
   `;
-  openModal(html);
+  openModal(modalHtml);
 
   const iconTypeEl = $("fieldIconType");
   const iconExtra = $("iconExtra");
@@ -2419,18 +2445,18 @@ function openAddModal() {
 }
 
 function openEditModal(node) {
-  const html = `
+  const modalHtml = html`
     <h2>${t("modal.edit.title")}</h2>
     <div class="section">
       <label>${t("field.title")}</label>
-      <input id="fieldTitle" type="text" value="${escapeAttr(node.title || "")}" />
+      <input id="fieldTitle" type="text" value="${node.title || ""}" />
     </div>
     ${
       node.type === "item"
-        ? `
+        ? html`
     <div class="section">
       <label>${t("field.url")}</label>
-      <input id="fieldUrl" type="url" value="${escapeAttr(node.url || "")}" />
+      <input id="fieldUrl" type="url" value="${node.url || ""}" />
     </div>
     <div class="section">
       <label>${t("field.iconSource")}</label>
@@ -2450,7 +2476,7 @@ function openEditModal(node) {
       <button id="btnSave" class="icon-btn">${t("common.save")}</button>
     </div>
   `;
-  openModal(html);
+  openModal(modalHtml);
 
   if (node.type === "item") {
     const iconTypeEl = $("fieldIconType");
@@ -2588,7 +2614,7 @@ async function openOpenModeMenu() {
 
 function openSettingsModal() {
   settingsOpen = true;
-  const html = `
+  const modalHtml = html`
     <div class="section settings-actions">
       <button id="btnExport" class="icon-btn">${t("settings.action.export")}</button>
       <button id="btnImport" class="icon-btn">${t("settings.action.import")}</button>
@@ -2601,7 +2627,7 @@ function openSettingsModal() {
     <div class="section settings-language-row">
       <div class="row-inline settings-language-wrap">
         <span class="settings-language-hint">中/臺/EN/JP/KR/DE/FR/ES</span>
-        <select id="settingLanguage" class="inline-select settings-language-select">${buildLanguageOptions(data.settings.language)}</select>
+        <select id="settingLanguage" class="inline-select settings-language-select">${rawHtml(buildLanguageOptions(data.settings.language))}</select>
       </div>
       <span id="settingsVersion" class="build-version"></span>
     </div>
@@ -2754,7 +2780,7 @@ function openSettingsModal() {
     </div>
 
   `;
-  openModal(html);
+  openModal(modalHtml);
 
   $("settingShowSearch").checked = data.settings.showSearch;
   $("settingSearchEngine").value = data.settings.searchEngineUrl;
@@ -3006,17 +3032,17 @@ async function exportJsonToClipboard() {
 
 function openManualExportModal() {
   const payload = JSON.stringify(data, null, 2);
-  const html = `
+  const modalHtml = html`
     <h2>导出设置</h2>
     <div class="section">
-      <textarea readonly>${escapeHtml(payload)}</textarea>
+      <textarea readonly>${payload}</textarea>
     </div>
     <div class="actions">
       <button id="btnCopy" class="icon-btn">复制</button>
       <button id="btnClose" class="icon-btn">关闭</button>
     </div>
   `;
-  openModal(html);
+  openModal(modalHtml);
   $("btnCopy").addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(payload);
@@ -3029,7 +3055,7 @@ function openManualExportModal() {
 }
 
 async function openImportModal() {
-  const html = `
+  const modalHtml = html`
     <h2>导入设置</h2>
     <div class="section">
       <label>导入策略</label>
@@ -3047,7 +3073,7 @@ async function openImportModal() {
       <button id="btnImportNow" class="icon-btn">导入</button>
     </div>
   `;
-  openModal(html);
+  openModal(modalHtml);
   $("btnCancel").addEventListener("click", closeModal);
   $("btnImportNow").addEventListener("click", async () => {
     try {
@@ -3143,11 +3169,13 @@ function openImportUrlModal() {
     toast(t("group.noneAvailable"));
     return;
   }
-  const options = [...data.groups]
-    .sort((a, b) => a.order - b.order)
-    .map((g) => `<option value="${escapeAttr(g.id)}">${escapeHtml(g.name)}</option>`)
-    .join("");
-  const html = `
+  const options = rawHtml(
+    [...data.groups]
+      .sort((a, b) => a.order - b.order)
+      .map((g) => html`<option value="${g.id}">${g.name}</option>`)
+      .join(""),
+  );
+  const modalHtml = html`
     <h2>导入网址</h2>
     <div class="section">
       <label>选择分组</label>
@@ -3164,7 +3192,7 @@ function openImportUrlModal() {
       <textarea id="importUrlText" placeholder="每行一个网址"></textarea>
     </div>
   `;
-  openModal(html);
+  openModal(modalHtml);
   const groupSelect = $("importUrlGroup");
   const defaultGroupId = activeGroupId && activeGroupId !== RECENT_GROUP_ID ? activeGroupId : data.groups[0].id;
   groupSelect.value = defaultGroupId;
@@ -3236,18 +3264,20 @@ function openImportUrlModal() {
 
 function openBackupModal() {
   settingsOpen = false;
-  const list = data.backups
-    .map(
-      (b) =>
-        `<div class="row" data-backup="${escapeAttr(b.id)}"><div>${escapeHtml(new Date(b.ts).toLocaleString())}</div><div class="row-actions"><button class="icon-btn backup-restore">恢复</button><button class="icon-btn backup-delete">删除</button></div></div>`,
-    )
-    .join("");
-  const html = `
+  const list = rawHtml(
+    data.backups
+      .map(
+        (b) =>
+          html`<div class="row" data-backup="${b.id}"><div>${new Date(b.ts).toLocaleString()}</div><div class="row-actions"><button class="icon-btn backup-restore">恢复</button><button class="icon-btn backup-delete">删除</button></div></div>`,
+      )
+      .join(""),
+  );
+  const modalHtml = html`
     <h2>备份管理</h2>
     <div class="section">${list || "暂无备份"}</div>
     <div class="actions"><button id="btnClose" class="icon-btn">关闭</button></div>
   `;
-  openModal(html);
+  openModal(modalHtml);
   qsa(".backup-restore", elements.modal).forEach((btn) => {
     btn.addEventListener("click", () => {
       const row = btn.closest("[data-backup]");
@@ -3561,11 +3591,13 @@ function openAddHistoryToGroup(node) {
     toast(t("group.noneAvailable"));
     return;
   }
-  const options = [...data.groups]
-    .sort((a, b) => a.order - b.order)
-    .map((g) => `<option value="${escapeAttr(g.id)}">${escapeHtml(g.name)}</option>`)
-    .join("");
-  const html = `
+  const options = rawHtml(
+    [...data.groups]
+      .sort((a, b) => a.order - b.order)
+      .map((g) => html`<option value="${g.id}">${g.name}</option>`)
+      .join(""),
+  );
+  const modalHtml = html`
     <h2>${t("context.addToShortcuts")}</h2>
     <div class="section">
       <label>${t("common.selectGroup")}</label>
@@ -3576,7 +3608,7 @@ function openAddHistoryToGroup(node) {
       <button id="btnAddHistorySave" class="icon-btn">${t("common.save")}</button>
     </div>
   `;
-  openModal(html);
+  openModal(modalHtml);
   const preferred = getPreferredGroupIdForNewItem();
   if (preferred) $("addHistoryGroup").value = preferred;
   $("btnAddHistoryCancel").addEventListener("click", closeModal);

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "我的首页",
-  "version": "16.2",
+  "version": "16.3",
   "description": "自定义新标签页",
   "action": {
     "default_title": "保存当前网页",
@@ -10,12 +10,24 @@
   "chrome_url_overrides": {
     "newtab": "newtab.html"
   },
-  "permissions": ["storage", "scripting", "tabs", "activeTab", "history"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "storage",
+    "scripting",
+    "tabs",
+    "activeTab",
+    "history"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["js/content-toast.js"]
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "js/content-toast.js"
+      ]
     }
   ],
   "content_security_policy": {

@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "我的首页",
-  "version": "16.5",
+  "version": "16.6",
   "description": "自定义新标签页",
   "browser_action": {
     "default_title": "保存当前网页",
@@ -10,14 +10,26 @@
   "chrome_url_overrides": {
     "newtab": "newtab.html"
   },
-  "permissions": ["storage", "tabs", "activeTab", "history", "<all_urls>"],
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "history",
+    "<all_urls>"
+  ],
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["js/content-toast.js"]
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "js/content-toast.js"
+      ]
     }
   ],
-  "web_accessible_resources": ["js/*.js"],
+  "web_accessible_resources": [
+    "js/*.js"
+  ],
   "content_security_policy": "script-src 'self'; object-src 'self'; img-src 'self' data: https: http:; connect-src * https: http:;",
   "browser_specific_settings": {
     "gecko": {

@@ -1,4 +1,4 @@
-import { getChromeApi, getStorageKey } from "./js/storage.js";
+import { deepClone, getChromeApi, getStorageKey } from "./js/storage.js";
 
 const ROOT_KEY = getStorageKey();
 const SYNC_ITEM_QUOTA_BYTES = 7500;
@@ -243,7 +243,7 @@ function estimateBytes(value) {
  * @returns {object}
  */
 function sanitizeForSync(data) {
-  const clone = JSON.parse(JSON.stringify(data));
+  const clone = deepClone(data);
   if (clone.settings) {
     if (clone.settings.backgroundType === "custom") {
       clone.settings.backgroundCustom = "";
@@ -392,7 +392,7 @@ function renderTab(tab) {
   }
   empty.classList.add("hidden");
   card.classList.remove("hidden");
-  card.innerHTML = "";
+  card.replaceChildren();
   const titleInput = document.createElement("input");
   titleInput.id = "tabTitleInput";
   titleInput.className = "tab-title-input";
@@ -413,7 +413,7 @@ function renderTab(tab) {
  */
 function renderGroups(data) {
   const select = document.getElementById("groupSelect");
-  select.innerHTML = "";
+  select.replaceChildren();
   const groups = (data?.groups || []).sort((a, b) => a.order - b.order);
   groups.forEach((g) => {
     const opt = document.createElement("option");

@@ -15,29 +15,34 @@ const TOAST_STYLE_PROPS = {
   fontFamily: FONT_STACK,
 };
 
-function showToast(message, fontSize) {
-  const existing = document.getElementById(TOAST_ID);
-  if (existing) existing.remove();
-  const el = document.createElement("div");
-  el.id = TOAST_ID;
-  el.textContent = message;
-  Object.assign(el.style, TOAST_STYLE_PROPS, { fontSize: `${Number(fontSize) || 14}px` });
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), 3000);
-}
+// content script 在 SPA 路由切换时可能被重复注入，避免重复注册监听器
+if (!window.__homepageToastInjected) {
+  window.__homepageToastInjected = true;
 
-function getRuntime() {
-  if (typeof chrome !== "undefined") return chrome;
-  if (typeof browser !== "undefined") return browser;
-  return null;
-}
-
-const api = getRuntime();
-api?.runtime?.onMessage?.addListener?.((message, _sender, sendResponse) => {
-  if (message?.type === "homepage_show_toast" && message?.text) {
-    showToast(message.text, message.fontSize);
-    sendResponse?.({ ok: true });
-    return true;
+  function showToast(message, fontSize) {
+    const existing = document.getElementById(TOAST_ID);
+    if (existing) existing.remove();
+    const el = document.createElement("div");
+    el.id = TOAST_ID;
+    el.textContent = message;
+    Object.assign(el.style, TOAST_STYLE_PROPS, { fontSize: `${Number(fontSize) || 14}px` });
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 3000);
   }
-  return false;
-});
+
+  function getRuntime() {
+    if (typeof chrome !== "undefined") return chrome;
+    if (typeof browser !== "undefined") return browser;
+    return null;
+  }
+
+  const api = getRuntime();
+  api?.runtime?.onMessage?.addListener?.((message, _sender, sendResponse) => {
+    if (message?.type === "homepage_show_toast" && message?.text) {
+      showToast(message.text, message.fontSize);
+      sendResponse?.({ ok: true });
+      return true;
+    }
+    return false;
+  });
+}

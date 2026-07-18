@@ -6,7 +6,7 @@
 
 这是一个浏览器扩展，用来替换浏览器新标签页，提供可维护的快捷入口面板，支持：
 
-- 新标签页接管（Chrome MV3 / Firefox MV2 / Safari Web Extension）
+- 新标签页接管（Chrome MV3 / Firefox MV3 / Safari Web Extension）
 - 分组与文件夹管理
 - 快捷卡片增删改查、拖拽排序
 - 最近历史页（读取浏览器历史）
@@ -72,6 +72,7 @@
 - 网格密度（紧凑/标准/宽松）
 - 背景类型（Bing/纯色/渐变/自定义图）
 - 背景遮罩强度
+- 语言（简体中文/繁體中文/English/日本語/한국어/Deutsch/Français/Español）
 - Tooltip、键盘导航
 - 主题（system/light/dark）
 - 字体大小
@@ -94,7 +95,7 @@
 - `src/js/app.js`
   - 主应用状态、渲染、交互、设置、导入导出、备份、拖拽、历史。
 - `src/js/storage.js`
-  - 存储读写封装、本地/同步切换、配额处理、默认数据、备份快照。
+  - 存储读写封装、本地/同步切换、配额处理、默认数据、备份快照、数据迁移。
 - `src/js/icons.js`
   - favicon 候选策略、图标缓存、头像生成、失败重试。
 - `src/js/bing-wallpaper.js`
@@ -103,6 +104,8 @@
   - 当前标签页保存逻辑、保存后 toast 注入。
 - `src/js/content-toast.js`
   - 普通网页中接收消息并显示 toast。
+- `src/js/error-bootstrap.js`
+  - 新标签页 JS 加载失败时的兜底错误提示（内联于 HTML 头部）。
 
 ## 3.3 构建模块
 
@@ -110,8 +113,8 @@
   - 复制 `src` 到 `dist/chrome`、`dist/firefox`、`dist/safari`，写入对应 manifest，打包 zip/xpi；
   - 在 macOS 上调用 `safari-web-extension-converter` 生成 `dist/safari-app` 宿主工程。
 - `scripts/bundle-firefox.mjs`
-  - 将 Firefox 的 `app.js` 依赖打包为内联脚本；
-  - 计算内联脚本 SHA-256（LF 归一化）并写入 `dist/firefox/manifest.json` 的 CSP。
+  - 将 Firefox 的 `app.js` 等多个 ESM 模块合并为单一外部脚本 `dist/firefox/js/app.ff.js`；
+  - 替换 `newtab.html` 的模块脚本标签为普通外部脚本标签，规避 Firefox CSP 对 ESM 的限制。
 - `scripts/bump-version.mjs`
   - 版本号自动 +0.1（满十进一）。
 
@@ -119,6 +122,7 @@
 
 ```text
 src/
+  assets/                图标资源（16/32/48/128）
   newtab.html            新标签页主界面
   styles.css             新标签页样式
   popup.html             Popup 页面
@@ -130,13 +134,15 @@ src/
     icons.js             图标策略与缓存
     bing-wallpaper.js    Bing 背景获取与缓存
     content-toast.js     页面内 toast
+    error-bootstrap.js   加载失败兜底提示
 
 manifest.chrome.json     Chrome Manifest V3 模板
-manifest.firefox.json    Firefox Manifest V2 模板
+manifest.firefox.json    Firefox Manifest V3 模板
 manifest.safari.json     Safari Manifest V3 模板
 scripts/
   build.sh               主构建脚本（bash）
-  bundle-firefox.mjs     Firefox 内联脚本 + CSP Hash
+  build-macos.command    macOS 一键构建入口（含 Safari App 签名与安装）
+  bundle-firefox.mjs     Firefox ESM 合并为外部脚本
   bump-version.mjs       自动版本号递增
 ```
 
@@ -195,6 +201,7 @@ scripts/
 
 ## 5.3 `settings` 字段说明
 
+- `language`: 界面语言（空 = 跟随系统）
 - `showSearch`: 显示顶部搜索框
 - `enableSearchEngine`: 保留字段（当前逻辑固定为 `true`）
 - `searchEngineUrl`: 搜索引擎前缀
@@ -365,8 +372,8 @@ scripts/
 
 - `storage`: 数据存储
 - `tabs` / `activeTab`: popup 获取当前页、后台取标题
-- `history`: 历史分组读取
-- `scripting`（Chrome / Safari manifest）: 注入 content toast
+- `history`: 历史分组读取（Chrome / Firefox 声明，Safari 不声明）
+- `scripting`: 注入 content toast（Chrome / Firefox MV3 / Safari 声明）
 - `<all_urls>`: favicon / toast 注入覆盖面
 
 ## 10.2 外部请求
@@ -410,8 +417,8 @@ NO_PAUSE=1 ./scripts/build-macos.command
 
 执行链：
 
-1. `prebuild` -> `scripts/bump-version.mjs` 自动版本 +0.1
-2. `build` -> `scripts/build.sh`
+1. `build` -> `scripts/build.sh`
+2. build.sh 开头自动调用 `scripts/bump-version.mjs` 自增版本号（可用 `SKIP_BUMP=1` 跳过，如 CI 场景）
 3. 产物输出：
    - `dist/chrome`
    - `dist/firefox`
@@ -424,9 +431,9 @@ NO_PAUSE=1 ./scripts/build-macos.command
 
 ## 11.3 Firefox 特别说明
 
-Firefox 新标签页若按钮点击无响应，通常是脚本未执行。当前实现已采用：
+Firefox 使用 Manifest V3。由于 Firefox 扩展 CSP 对 ESM 模块加载有限制，新标签页按钮点击无响应通常是脚本未执行。当前实现已采用：
 
-- `scripts/bundle-firefox.mjs` 把多个 ESM 模块合并为单一外部脚本 `dist/firefox/js/app.ff.js`
+- `scripts/bundle-firefox.mjs` 把多个 ESM 模块（`storage.js` / `icons.js` / `bing-wallpaper.js` / `app.js`）合并为单一外部脚本 `dist/firefox/js/app.ff.js`
 - 把 `newtab.html` 的模块脚本标签替换为普通 `<script src="js/app.ff.js">`
 - CSP 保持 `script-src 'self'`，无需内联脚本哈希
 
@@ -455,18 +462,26 @@ Firefox 新标签页若按钮点击无响应，通常是脚本未执行。当前
 
 ## 13. 调试入口
 
-- `window.homepageDebugLog()`：读取调试日志。
+调试接口仅在 `DEBUG` 全局变量为 `true` 的开发构建中暴露，生产构建不可用：
+
+- `window.homepageDebugLog()`：读取调试日志（localStorage 存储）。
 - `window.homepageDebugEnv()`：查看 runtime 信息与本地存储占用。
-- `localStorage.setItem("homepage_debug_persist", "1")`：开启持久化校验日志。
-- Popup 保存日志键：`homepage_save_log`。
+- `localStorage.setItem("homepage_debug_persist", "1")`：开启持久化校验日志（调试模式下 persist 后自动回读验证）。
+- Popup 保存日志键：`homepage_save_log`（`chrome.storage.local`）。
+
+如需临时启用调试接口，可在控制台执行：`DEBUG = true; location.reload()` 不生效（脚本加载时即判断），需自行在 `src/js/app.js` 顶部添加 `const DEBUG = true;` 后重新构建。
 
 ## 14. 已知限制（当前代码行为）
 
 - `enableSearchEngine`、`backgroundFade` 为保留字段，当前逻辑未单独使用。
-- 设置面板“隐藏分组”绑定的是 `sidebarHidden`，而顶部“收起”按钮操作的是 `sidebarCollapsed`，两者是不同状态。
-- “清空数据”先 `defaultData()` 再 `clearData(false)`，不会主动清理旧的 `storage.sync` 残留。
+- 设置面板"隐藏分组"绑定的是 `sidebarHidden`，而顶部"收起"按钮操作的是 `sidebarCollapsed`，两者是不同状态。
+- "清空数据"先 `defaultData()` 再 `clearData(syncEnabled)`，不会主动清理未开启同步时旧的 `storage.sync` 残留。
 - 导入 JSON 仅检查 `schemaVersion`，不做严格 schema 校验。
 - 搜索框回车/按钮始终新页搜索，不受 `openMode` 影响。
+- 调试接口（`homepageDebugLog` / `homepageDebugEnv`）在生产构建中不可用，需手动开启 `DEBUG`。
+- Firefox 版因 CSP 限制不能直接加载 ESM 模块，通过 `bundle-firefox.mjs` 合并为单文件外部脚本绕过。
+- Safari 版不声明 `history` 权限，"历史"分组为空列表。
+- 图标缓存存储为 dataURL 时体积较大，同步存储会触发裁剪（上传图标改为自动）。
 - 已有自动化测试：`tests/` 目录下 5 个测试文件、36 个用例，覆盖 storage/icons/bing-wallpaper/bump-version/bundle-firefox；通过 `npm test` 运行；GitHub Actions CI 自动执行 `npm run check` + `npm test`。
 
 ## 15. 版本策略
@@ -482,4 +497,4 @@ Firefox 新标签页若按钮点击无响应，通常是脚本未执行。当前
 - 存储与配额：`src/js/storage.js`
 - 图标系统：`src/js/icons.js`
 - Firefox 构建关键：`scripts/bundle-firefox.mjs`
-- Safari 构建关键：`manifest.safari.json`、`dist/build-macos.command`
+- Safari 构建关键：`manifest.safari.json`、`scripts/build-macos.command`

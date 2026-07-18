@@ -10,6 +10,45 @@
 
 import { deepClone } from "./storage.js";
 
+let _itemSeq = 0;
+
+/**
+ * 创建普通卡片节点
+ * @param {object} options
+ * @param {string} options.url
+ * @param {string} [options.title]
+ * @param {string} [options.iconType]
+ * @param {string} [options.iconData]
+ * @param {string} [options.color]
+ * @param {boolean} [options.titlePending]
+ * @param {boolean} [options.iconPending]
+ * @returns {import('./types.js').ItemNode}
+ */
+export function createItemNode({
+  url,
+  title = "",
+  iconType = "auto",
+  iconData = "",
+  color = "",
+  titlePending = false,
+  iconPending = false,
+} = {}) {
+  const now = Date.now();
+  return {
+    id: `itm_${now}_${(_itemSeq++).toString(36)}`,
+    type: "item",
+    title,
+    url,
+    iconType,
+    iconData,
+    color,
+    titlePending,
+    iconPending,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 /**
  * 构建设置快照（备份指纹用）
  * @param {Settings | object} settings

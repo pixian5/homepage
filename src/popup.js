@@ -1,4 +1,4 @@
-import { pickLatestData } from "./js/data-utils.js";
+import { createItemNode, pickLatestData } from "./js/data-utils.js";
 import {
   detectPreferredLanguage,
   estimateBytes,
@@ -311,21 +311,20 @@ async function saveToGroup(tab, selectedGroupId, customTitle = "") {
   }
   if (!Array.isArray(group.nodes)) group.nodes = [];
 
-  const id = `itm_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  let hostname = "";
+  try {
+    hostname = new URL(url).hostname;
+  } catch (_e) {
+    hostname = "";
+  }
   const trimmedTitle = String(customTitle || "").trim();
-  const fallbackTitle = tab.title || new URL(url).hostname;
-  data.nodes[id] = {
-    id,
-    type: "item",
-    title: trimmedTitle || fallbackTitle,
+  const node = createItemNode({
     url,
+    title: trimmedTitle || tab.title || hostname,
     iconType: "auto",
-    iconData: "",
-    color: "",
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  };
-  group.nodes.push(id);
+  });
+  data.nodes[node.id] = node;
+  group.nodes.push(node.id);
   data.settings.lastActiveGroupId = group.id;
   data.settings.lastSaveUrl = url;
   data.settings.lastSaveTs = Date.now();

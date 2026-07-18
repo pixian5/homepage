@@ -4,6 +4,7 @@ import {
   buildBackupFingerprint,
   buildBackupSettingsSnapshot,
   cloneDataSnapshot,
+  createItemNode,
   dedupeData,
   moveNodeInList,
   pickLatestData,
@@ -157,6 +158,47 @@ describe("data-utils", () => {
       clone.nodes.n1.title = "B";
       assert.strictEqual(data.settings.fontSize, 14);
       assert.strictEqual(data.nodes.n1.title, "A");
+    });
+  });
+
+  describe("createItemNode", () => {
+    it("creates item with defaults", () => {
+      const node = createItemNode({ url: "https://example.com" });
+      assert.strictEqual(node.type, "item");
+      assert.strictEqual(node.url, "https://example.com");
+      assert.strictEqual(node.iconType, "auto");
+      assert.strictEqual(node.title, "");
+      assert.strictEqual(node.iconData, "");
+      assert.strictEqual(node.color, "");
+      assert.strictEqual(node.titlePending, false);
+      assert.strictEqual(node.iconPending, false);
+      assert.ok(node.id.startsWith("itm_"));
+      assert.ok(node.createdAt > 0);
+      assert.strictEqual(node.createdAt, node.updatedAt);
+    });
+
+    it("uses provided values", () => {
+      const node = createItemNode({
+        url: "https://example.com",
+        title: "Example",
+        iconType: "color",
+        iconData: "data:image/png;base64,x",
+        color: "#ff0000",
+        titlePending: true,
+        iconPending: true,
+      });
+      assert.strictEqual(node.title, "Example");
+      assert.strictEqual(node.iconType, "color");
+      assert.strictEqual(node.iconData, "data:image/png;base64,x");
+      assert.strictEqual(node.color, "#ff0000");
+      assert.strictEqual(node.titlePending, true);
+      assert.strictEqual(node.iconPending, true);
+    });
+
+    it("generates unique ids", () => {
+      const a = createItemNode({ url: "https://a.com" });
+      const b = createItemNode({ url: "https://b.com" });
+      assert.notStrictEqual(a.id, b.id);
     });
   });
 

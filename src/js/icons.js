@@ -293,8 +293,31 @@ function buildFaviconUrl(url) {
 }
 
 /**
+ * 验证图片 dataURL 是否有效且尺寸达标
+ * @param {string} dataUrl
+ * @param {number} minSize
+ * @param {number} timeoutMs
+ * @returns {Promise<boolean>}
+ */
+function probeImage(dataUrl, minSize = 16, timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    img.onload = () => {
+      clearTimeout(timer);
+      resolve(img.naturalWidth >= minSize && img.naturalHeight >= minSize);
+    };
+    img.onerror = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    img.src = dataUrl;
+  });
+}
+
+/**
  * 将远程图片 URL 抓取为 dataURL，便于缓存后瞬显
- * 抓取失败时返回空字符串
+ * 抓取失败或图片无效（如 1x1 透明像素）时返回空字符串
  */
 export async function fetchAsDataUrl(url, timeoutMs = 8000) {
   try {
@@ -306,12 +329,15 @@ export async function fetchAsDataUrl(url, timeoutMs = 8000) {
     const blob = await res.blob();
     if (!blob || blob.size === 0 || blob.size > 512 * 1024) return "";
     const type = blob.type || "image/png";
-    return await new Promise((resolve) => {
+    const dataUrl = await new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result || "");
       reader.onerror = () => resolve("");
       reader.readAsDataURL(new Blob([blob], { type }));
     });
+    if (!dataUrl) return "";
+    if (await probeImage(dataUrl)) return dataUrl;
+    return "";
   } catch (_e) {
     return "";
   }

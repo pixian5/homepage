@@ -1,5 +1,5 @@
 import { getBingWallpaper } from "./bing-wallpaper.js";
-import { buildBackupFingerprint, cloneDataSnapshot, dedupeData, moveNodeInList } from "./data-utils.js";
+import { buildBackupFingerprint, cloneDataSnapshot, createItemNode, dedupeData, moveNodeInList } from "./data-utils.js";
 import {
   clearIconCacheForUrl,
   fetchAsDataUrl,
@@ -2300,33 +2300,29 @@ function openAddModal() {
     }
 
     pushBackup();
-    const id = `itm_${Date.now()}`;
-    data.nodes[id] = {
-      id,
-      type: "item",
-      title,
+    const node = createItemNode({
       url,
+      title,
       iconType,
       iconData,
       color,
       titlePending,
       iconPending,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
+    });
+    data.nodes[node.id] = node;
 
     if (openFolderId) {
-      data.nodes[openFolderId].children.push(id);
+      data.nodes[openFolderId].children.push(node.id);
     } else {
       const targetGroup = getActiveGroup();
-      targetGroup.nodes.push(id);
+      targetGroup.nodes.push(node.id);
       if (activeGroupId === RECENT_GROUP_ID) {
         activeGroupId = targetGroup.id;
       }
     }
     data.settings.lastActiveGroupId = getActiveGroup().id;
     debugLog("add_item", {
-      id,
+      id: node.id,
       url,
       groupId: openFolderId ? openFolderId : getActiveGroup().id,
       openFolderId: openFolderId || "",
@@ -3146,22 +3142,17 @@ function openImportUrlModal() {
     }
     if (!Array.isArray(group.nodes)) group.nodes = [];
     pushBackup();
-    const now = Date.now();
-    urls.forEach((url) => {
-      const id = `itm_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-      data.nodes[id] = {
-        id,
-        type: "item",
-        title: new URL(url).hostname,
-        url,
-        iconType: "auto",
-        iconData: "",
-        color: "",
-        createdAt: now,
-        updatedAt: now,
-      };
-      group.nodes.push(id);
-    });
+    for (const url of urls) {
+      let title = "";
+      try {
+        title = new URL(url).hostname;
+      } catch (_e) {
+        title = "";
+      }
+      const node = createItemNode({ url, title, iconType: "auto" });
+      data.nodes[node.id] = node;
+      group.nodes.push(node.id);
+    }
     data.settings.lastActiveGroupId = group.id;
     await persistData();
     closeModal();
@@ -3544,19 +3535,17 @@ async function addHistoryToShortcutsInGroup(node, groupId) {
     return;
   }
   pushBackup();
-  const id = `itm_${Date.now()}`;
-  data.nodes[id] = {
-    id,
-    type: "item",
-    title: node.title || new URL(safeUrl).hostname,
-    url: safeUrl,
-    iconType: "auto",
-    iconData: "",
-    color: "",
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  };
-  targetGroup.nodes.push(id);
+  let title = node.title || "";
+  if (!title) {
+    try {
+      title = new URL(safeUrl).hostname;
+    } catch (_e) {
+      title = "";
+    }
+  }
+  const item = createItemNode({ url: safeUrl, title, iconType: "auto" });
+  data.nodes[item.id] = item;
+  targetGroup.nodes.push(item.id);
   await persistData();
   render();
   toast(t("toast.addedToShortcuts"));

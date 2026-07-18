@@ -20,6 +20,7 @@ if (!window.__homepageToastInjected) {
   window.__homepageToastInjected = true;
 
   function showToast(message, fontSize) {
+    if (!document.body) return;
     const existing = document.getElementById(TOAST_ID);
     if (existing) existing.remove();
     const el = document.createElement("div");

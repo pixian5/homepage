@@ -22,6 +22,7 @@ if (!window.__homepageErrorBootstrapInjected) {
       "white-space:pre-wrap",
     ].join(";");
     panel.textContent = details ? `${message}\n${details}` : message;
+    if (!document.body) return;
     document.body.appendChild(panel);
   }
 

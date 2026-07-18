@@ -882,25 +882,28 @@ function attachStorageListener() {
   });
 }
 
-window.homepageDebugLog = () => {
-  try {
-    return JSON.parse(localStorage.getItem(DEBUG_LOG_KEY) || "[]");
-  } catch (e) {
-    console.warn("homepageDebugLog parse failed", e);
-    return [];
-  }
-};
+// 调试接口仅在开发构建中暴露，避免生产环境泄露运行时信息
+if (typeof DEBUG !== "undefined" && DEBUG) {
+  window.homepageDebugLog = () => {
+    try {
+      return JSON.parse(localStorage.getItem(DEBUG_LOG_KEY) || "[]");
+    } catch (e) {
+      console.warn("homepageDebugLog parse failed", e);
+      return [];
+    }
+  };
 
-window.homepageDebugEnv = async () => {
-  const api = getChromeApi();
-  const info = getRuntimeInfo();
-  return new Promise((resolve) => {
-    if (!api?.storage?.local?.getBytesInUse) return resolve(info);
-    api.storage.local.getBytesInUse("homepage_data", (bytes) => {
-      resolve({ ...info, bytes });
+  window.homepageDebugEnv = async () => {
+    const api = getChromeApi();
+    const info = getRuntimeInfo();
+    return new Promise((resolve) => {
+      if (!api?.storage?.local?.getBytesInUse) return resolve(info);
+      api.storage.local.getBytesInUse("homepage_data", (bytes) => {
+        resolve({ ...info, bytes });
+      });
     });
-  });
-};
+  };
+}
 
 function applyDensity() {
   const d = densityMap[data.settings.gridDensity] || densityMap.standard;
@@ -4018,7 +4021,7 @@ function bindEvents() {
     if (openFolderId) return;
     handleBoxSelectStart(e, elements.grid);
   });
-  document.addEventListener("mousemove", handleBoxSelectMove);
+  document.addEventListener("mousemove", rafThrottle(handleBoxSelectMove));
   document.addEventListener("mouseup", handleBoxSelectEnd);
 
   document.addEventListener("click", (e) => {

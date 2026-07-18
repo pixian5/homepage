@@ -296,10 +296,20 @@ async function getCurrentTab() {
   const result = api.tabs.query({ active: true, currentWindow: true });
   if (typeof result?.then === "function") {
     const tabs = await result;
+    if (api.runtime?.lastError) {
+      console.warn("getCurrentTab error:", api.runtime.lastError.message);
+      return null;
+    }
     return tabs?.[0] || null;
   }
   return new Promise((resolve) =>
-    api.tabs.query({ active: true, currentWindow: true }, (tabs) => resolve(tabs?.[0] || null)),
+    api.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (api.runtime?.lastError) {
+        console.warn("getCurrentTab error:", api.runtime.lastError.message);
+        return resolve(null);
+      }
+      resolve(tabs?.[0] || null);
+    }),
   );
 }
 

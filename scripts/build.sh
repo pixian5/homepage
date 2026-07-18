@@ -15,6 +15,14 @@ SAFARI_BUNDLE_ID="${SAFARI_BUNDLE_ID:-com.aeroluna.homepage.safari}"
 if [[ "${SKIP_BUMP:-0}" != "1" ]]; then
   echo "[build] Bumping version..."
   node "$ROOT_DIR/scripts/bump-version.mjs"
+  # bump-version 使用 JSON.stringify 会展开数组，需要重新格式化以保持 Biome 风格一致
+  if [[ -x "$ROOT_DIR/node_modules/.bin/biome" ]]; then
+    "$ROOT_DIR/node_modules/.bin/biome" format --write \
+      "$ROOT_DIR/manifest.chrome.json" \
+      "$ROOT_DIR/manifest.firefox.json" \
+      "$ROOT_DIR/manifest.safari.json" \
+      "$ROOT_DIR/package.json"
+  fi
 fi
 
 copy_target() {

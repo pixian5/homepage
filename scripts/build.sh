@@ -391,6 +391,11 @@ install_safari_app() {
 
   sleep 3
 
+  # Xcode 构建时会将 build-output 里的 .app 注册到 LaunchServices，
+  # 安装到 /Applications 后如果不注销源路径，Safari 扩展列表会出现重复条目。
+  echo "[install] Unregistering build-output app from LaunchServices..."
+  /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -u "$source_app" 2>/dev/null || true
+
   echo "[install] Install completed"
 }
 

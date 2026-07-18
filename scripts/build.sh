@@ -35,6 +35,22 @@ package_target_dir() {
   )
 }
 
+cleanup_stale_safari_plugins() {
+  # 旧版 bundle id 可能残留为独立插件条目，导致 Safari 中出现重复扩展，覆盖页失效
+  local old_bundle_id="com.homepage.newtab.safari.extension"
+  local old_debug_app="$SAFARI_PROJECT_DIR/build-output/Debug/$SAFARI_APP_NAME.app"
+
+  if [[ -d "$old_debug_app" ]]; then
+    echo "[build] Removing stale Safari Debug build: $old_debug_app"
+    rm -rf "$old_debug_app" 2>/dev/null || true
+  fi
+
+  if pluginkit -m -p com.apple.Safari.web-extension 2>/dev/null | grep -qF "$old_bundle_id"; then
+    echo "[build] Disabling stale Safari plugin: $old_bundle_id"
+    pluginkit -e ignore -i "$old_bundle_id" 2>/dev/null || true
+  fi
+}
+
 detect_apple_development_team() {
   if [[ -n "${SAFARI_DEVELOPMENT_TEAM:-}" ]]; then
     printf '%s\n' "$SAFARI_DEVELOPMENT_TEAM"
@@ -318,8 +334,6 @@ build_safari_project() {
   rm -rf "${SAFARI_PROJECT_DIR}/build-derived"
 }
 
-node "$ROOT_DIR/scripts/bump-version.mjs"
-
 rm -f "$DIST_DIR/chrome.zip" "$DIST_DIR/firefox.zip" "$DIST_DIR/firefox.xpi" "$DIST_DIR/safari.zip"
 
 copy_target "manifest.chrome.json" "$CHROME_DIR"
@@ -380,6 +394,7 @@ install_safari_app() {
   echo "[install] Install completed"
 }
 
+cleanup_stale_safari_plugins
 build_safari_project
 install_safari_app
 

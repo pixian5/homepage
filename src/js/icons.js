@@ -23,7 +23,13 @@ const SPECIAL_FAVICONS = {
   ],
   "gitcode.com": [
     "https://gitcode.com/favicon.ico",
+    "https://gitcode.com/favicon.svg",
     "https://www.gitcode.com/favicon.ico",
+  ],
+  "www.gitcode.com": [
+    "https://www.gitcode.com/favicon.ico",
+    "https://gitcode.com/favicon.ico",
+    "https://gitcode.com/favicon.svg",
   ],
   "chatgpt.com": [
     "https://chatgpt.com/favicon.ico",
@@ -38,12 +44,51 @@ const SPECIAL_FAVICONS = {
     "https://chatgpt.com/favicon.ico",
     "https://openai.com/favicon.ico",
   ],
+  "grok.com": [
+    "https://grok.com/favicon.ico",
+    "https://x.ai/favicon.ico",
+  ],
+  "x.ai": [
+    "https://x.ai/favicon.ico",
+    "https://grok.com/favicon.ico",
+  ],
+  "doubao.com": [
+    "https://doubao.com/favicon.ico",
+    "https://www.doubao.com/favicon.ico",
+  ],
+  "www.doubao.com": [
+    "https://www.doubao.com/favicon.ico",
+    "https://doubao.com/favicon.ico",
+  ],
+  "ip233.cn": [
+    "https://www.ip233.cn/favicon.ico",
+    "https://ip233.cn/favicon.ico",
+  ],
+  "www.ip233.cn": [
+    "https://www.ip233.cn/favicon.ico",
+    "https://ip233.cn/favicon.ico",
+  ],
+  "sharepoint.com": [
+    "https://www.sharepoint.com/favicon.ico",
+    "https://sharepoint.com/favicon.ico",
+    "https://login.microsoftonline.com/favicon.ico",
+  ],
 };
 const FIREFOX_EXTENSION_CORP_BLOCKLIST = new Set([
   "mail.google.com",
   "chatgpt.com",
   "openai.com",
 ]);
+
+function isBrowserExtension() {
+  try {
+    if (!isExtensionContext()) return false;
+    const ua = navigator?.userAgent || "";
+    return /firefox/i.test(ua) || /safari/i.test(ua) || /applewebkit/i.test(ua);
+  } catch (e) {
+    return false;
+  }
+}
 const FINAL_URL_CACHE = new Map();
 const FINAL_URL_CACHE_MAX = 200;
 const ICON_FAILURE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -107,17 +152,31 @@ export function getFaviconCandidates(pageUrl) {
     const siblingHostSpecial = getSiblingHostCandidates(host);
     const dynamicSpecial = getDynamicSpecialFaviconCandidates(host);
     const pathSpecific = getPathSpecificCandidates(host, pathname);
-    const rawCandidates = [
-      ...pathSpecific,
-      ...special,
-      ...siblingHostSpecial,
-      ...dynamicSpecial,
-      buildGoogleFaviconByPageUrl(pageUrl),
-      `https://${host}/favicon.ico`,
-      buildGoogleFaviconUrl(host),
-      buildGoogleDomainFaviconUrl(host),
-      `https://icons.duckduckgo.com/ip3/${host}.ico`,
-    ];
+    const duckduckgo = `https://icons.duckduckgo.com/ip3/${host}.ico`;
+    const rawCandidates = isBrowserExtension()
+      ? [
+          // Firefox/Safari 扩展：优先站点自身 favicon，DuckDuckGo 作为后备
+          ...pathSpecific,
+          ...special,
+          `https://${host}/favicon.ico`,
+          ...siblingHostSpecial,
+          ...dynamicSpecial,
+          buildGoogleFaviconByPageUrl(pageUrl),
+          buildGoogleFaviconUrl(host),
+          buildGoogleDomainFaviconUrl(host),
+          duckduckgo,
+        ]
+      : [
+          ...pathSpecific,
+          ...special,
+          ...siblingHostSpecial,
+          ...dynamicSpecial,
+          buildGoogleFaviconByPageUrl(pageUrl),
+          `https://${host}/favicon.ico`,
+          buildGoogleFaviconUrl(host),
+          buildGoogleDomainFaviconUrl(host),
+          duckduckgo,
+        ];
     const normalized = rawCandidates
       .map((candidate) => normalizeCandidateUrl(candidate))
       .filter(Boolean);
@@ -231,7 +290,7 @@ function isExtensionContext() {
   try {
     if (typeof window === "undefined" || !window.location?.protocol) return false;
     const protocol = window.location.protocol;
-    return protocol === "chrome-extension:" || protocol === "moz-extension:" || protocol === "edge-extension:";
+    return protocol === "chrome-extension:" || protocol === "moz-extension:" || protocol === "edge-extension:" || protocol === "safari-web-extension:";
   } catch (e) {
     // 环境检测失败是预期行为
     return false;

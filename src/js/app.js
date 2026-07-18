@@ -1389,15 +1389,22 @@ async function renderGrid() {
       if (node.url && data.settings.iconFetch && !iconSrc.startsWith("data:")) {
         const fallback = letterIconDataUrl(node.title || node.url || "?", node.color);
         const triedCandidates = new Set([iconSrc]);
-        img.onerror = async () => {
+        const tryNext = async () => {
           const nextIcon = await trySwitchToNextFavicon(node.url, triedCandidates);
           if (nextIcon) {
             img.src = nextIcon;
             return;
           }
           img.onerror = null;
+          img.onload = null;
           img.src = fallback;
           await markIconLoadFailed(node.url);
+        };
+        img.onerror = tryNext;
+        img.onload = () => {
+          if (img.naturalWidth < 16 && img.naturalHeight < 16) {
+            tryNext();
+          }
         };
         // 旧缓存只有远程 URL，后台异步抓取为 dataURL 更新缓存，成功后直接更新 img.src
         migrateIconCacheToDataUrl(node, img);
@@ -3336,7 +3343,13 @@ function probeImage(url, timeoutMs = ICON_PROBE_TIMEOUT_MS) {
       img.onerror = null;
       resolve(ok);
     };
-    img.onload = () => finish(true);
+    img.onload = () => {
+      if (img.naturalWidth < 16 && img.naturalHeight < 16) {
+        finish(false);
+      } else {
+        finish(true);
+      }
+    };
     img.onerror = () => finish(false);
     img.src = url;
   });

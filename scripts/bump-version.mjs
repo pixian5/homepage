@@ -1,10 +1,10 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = process.cwd();
 const files = ["package.json", "manifest.chrome.json", "manifest.firefox.json", "manifest.safari.json"];
 
-function bumpVersion(version) {
+export function bumpVersion(version) {
   const parts = version.split(".").map((n) => Number(n));
   if (parts.length < 2) return version;
   let major = parts[0] || 0;
@@ -14,7 +14,8 @@ function bumpVersion(version) {
   return [major, nextMinor % 10].join(".");
 }
 
-async function run() {
+export async function run() {
+  const root = process.cwd();
   for (const file of files) {
     const full = path.join(root, file);
     const text = await fs.readFile(full, "utf8");
@@ -26,4 +27,8 @@ async function run() {
   console.log("version bumped");
 }
 
-run();
+const modulePath = fileURLToPath(import.meta.url);
+const scriptPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
+if (scriptPath && modulePath === scriptPath) {
+  run();
+}

@@ -244,127 +244,182 @@ scripts/
 
 ## 6.1 初始化
 
-`init()` 流程：
+`init()` 流程（位于 [src/js/app.js](file:///Users/x/code/homepage/src/js/app.js#L3742-L3810)）：
 
 1. 绑定 runtime 消息与 storage 监听。
-2. 读取本地数据；若启用同步则比较 `lastUpdated` 选择更新者。
-3. 执行去重修复（分组节点/文件夹子节点）。
-4. 恢复上次分组、载入最近历史。
-5. 应用密度、主题、侧栏状态。
-6. 加载背景（Bing/本地设置）。
-7. 尝试图标定时重试。
-8. 首次渲染。
+2. 读取本地数据；若启用同步则比较 `lastUpdated` 选择更新者（`loadData()` 在 [src/js/storage.js](file:///Users/x/code/homepage/src/js/storage.js#L200-L276)）。
+3. 执行去重修复（分组节点/文件夹子节点）（`deduplicateAll()` 在 [src/js/app.js](file:///Users/x/code/homepage/src/js/app.js#L2098-L2148)）。
+4. 恢复上次分组、载入最近历史（`loadRecentHistory()` 在 [src/js/app.js](file:///Users/x/code/homepage/src/js/app.js#L3535-L3570)）。
+5. 应用密度、主题、侧栏状态（`applyDensity()` / `applyTheme()` / `applySidebarState()`）。
+6. 加载背景（Bing/本地设置）（`loadBackground()` 在 [src/js/app.js](file:///Users/x/code/homepage/src/js/app.js#L1099-L1130)）。
+7. 尝试图标定时重试（`retryFailedIconsIfDue()` 在 [src/js/icons.js](file:///Users/x/code/homepage/src/js/icons.js)）。
+8. 首次渲染（`render()` 在 [src/js/app.js](file:///Users/x/code/homepage/src/js/app.js#L927-L978)）。
 
 ## 6.2 持久化 `persistData()`
 
-- 保存前自动对比指纹，必要时先生成备份快照。
-- 根据 `syncEnabled` 写入 `sync` 或 `local`。
+实现位置：[src/js/app.js](file:///Users/x/code/homepage/src/js/app.js#L1228-L1300)
+
+- 保存前自动对比指纹（`computeDataFingerprint()`），必要时先生成备份快照（`pushBackup()`）。
+- 根据 `syncEnabled` 写入 `sync` 或 `local`（`saveData()` 在 [src/js/storage.js](file:///Users/x/code/homepage/src/js/storage.js#L382-L437)）。
 - 若同步开启，会额外写本地副本。
 - 写入后再次去重并二次保存（如有必要）。
-- 返回 `ok/warning/err`，由 UI 给出 toast。
+- 返回 `{ ok, warning, err }`，由 UI 给出 toast。
 
 ## 6.3 删除与撤销
 
-- 删除前会 `pushBackup()`。
+实现位置：[src/js/app.js](file:///Users/x/code/homepage/src/js/app.js)
+
+- 删除前会 `pushBackup()`（备份快照）。
 - 删除后保留 `pendingDeletion` 快照。
-- toast 显示“撤销”，可回滚。
+- toast 显示"撤销"，可回滚（`undoLastDelete()`）。
 - 撤销窗口：10 秒（`UNDO_TIMEOUT_MS = 10000`）。
 
 ## 6.4 拖拽与文件夹规则
 
-- 拖到卡片图标：
-  - 目标非文件夹 -> 创建新文件夹，包含目标与源。
-  - 目标是文件夹 -> 源卡片加入目标文件夹。
-- 拖到卡片非图标区域：按左右半区计算插入位置。
-- 支持鼠标拖拽与触摸长按拖拽。
+| 规则 | 实现位置 |
+|------|---------|
+| 鼠标拖拽开始/结束 | `handleCardDragStart` / `handleCardDrop`（[src/js/app.js](file:///Users/x/code/homepage/src/js/app.js)） |
+| 触摸长按拖拽 | `TOUCH_TILE_LONG_PRESS_MS`（3秒）+ touch 事件组（[src/js/app.js](file:///Users/x/code/homepage/src/js/app.js#L1685-L1740)） |
+| 拖到卡片图标创建/加入文件夹 | `createFolderFromTwoCards()`（[src/js/app.js](file:///Users/x/code/homepage/src/js/app.js)） |
+| 拖到卡片非图标区域插入 | 左右半区计算插入位置（`getDropInsertIndex()`） |
+| 文件夹解散 | `dissolveFolder()`（[src/js/app.js](file:///Users/x/code/homepage/src/js/app.js)） |
+| 文件夹覆盖层 | `openFolder()` / `closeFolder()`（[src/js/app.js](file:///Users/x/code/homepage/src/js/app.js)） |
+| 框选（鼠标拖拽选多个） | `handleBoxSelectStart` / `handleBoxSelectMove`（raf 节流） / `handleBoxSelectEnd` |
 
 ## 6.5 触摸交互
 
-- 卡片长按 3 秒进入拖拽。
-- 卡片触摸 1 秒弹上下文菜单。
-- 分组长按约 260ms 进入拖拽。
+| 交互 | 常量 / 函数 | 位置 |
+|------|------------|------|
+| 卡片长按 3 秒进入拖拽 | `TOUCH_TILE_LONG_PRESS_MS` | [src/js/app.js](file:///Users/x/code/homepage/src/js/app.js#L1700) |
+| 卡片触摸 1 秒弹上下文菜单 | `TOUCH_TILE_CONTEXT_MENU_MS` + `touchMenuState` | [src/js/app.js](file:///Users/x/code/homepage/src/js/app.js) |
+| 分组长按 260ms 进入拖拽 | `TOUCH_GROUP_LONG_PRESS_MS` | [src/js/app.js](file:///Users/x/code/homepage/src/js/app.js#L675-L695) |
 
 ## 6.6 popup 保存当前页
 
-`popup.js` 行为：
+实现位置：[src/popup.js](file:///Users/x/code/homepage/src/popup.js)
 
-- 若设置为固定分组，打开 popup 时直接保存并关闭窗口。
+- 若设置为固定分组（`defaultGroupMode === "fixed"`），打开 popup 时直接保存并关闭窗口（[src/popup.js](file:///Users/x/code/homepage/src/popup.js#L600-L620)）。
 - 否则展示当前标签页信息 + 分组选择，下发保存。
+- 获取当前标签页：`getCurrentTab()`（含 `chrome.runtime.lastError` 检查）。
 - 保存后优先向当前页面注入 toast（消息通信 + 内容脚本兜底）。
+- 内容脚本：[src/js/content-toast.js](file:///Users/x/code/homepage/src/js/content-toast.js)（含 `__homepageToastInjected` 注入守卫）。
 
 ## 7. 同步与配额策略
 
 ## 7.1 同步选择策略
 
+实现位置：`loadData()` 函数内的 `syncSelection` 分支（[src/js/storage.js](file:///Users/x/code/homepage/src/js/storage.js#L200-L276)）
+
 - 本地与同步同时存在时按 `lastUpdated` 选最新。
+- 只有一侧有数据时直接使用。
+- 数据加载后会执行一次去重修复。
 
 ## 7.2 同步数据清洗（`sanitizeForSync`）
 
-写 `storage.sync` 前会去除高体积字段：
+实现位置：[src/js/storage.js](file:///Users/x/code/homepage/src/js/storage.js#L330-L380)
+
+写 `storage.sync` 前会去除高体积字段（`SYNC_ITEM_QUOTA = 7500` 字节阈值）：
 
 - `backups` 清空
 - `backgroundCustom` 清空（自定义背景）
-- 过长上传图标改为自动
+- 过长上传图标改为自动（`ICON_DATA_MAX_LENGTH` 阈值）
 
 ## 7.3 配额与降级处理
 
-- 同步目标大小阈值：`7500` bytes。
-- 超限：自动关闭同步，回退本地存储。
-- 本地写入遇到 quota 错误时，依次尝试：
-  - 清理备份
-  - 清理上传图标
-  - 清理自定义背景
+| 场景 | 处理函数 | 位置 |
+|------|---------|------|
+| 同步超限自动降级 | `saveData()` 内的 quota 检查 | [src/js/storage.js](file:///Users/x/code/homepage/src/js/storage.js#L382-L437) |
+| 本地写入 quota 错误逐级清理 | `handleQuotaError()` | [src/js/storage.js](file:///Users/x/code/homepage/src/js/storage.js#L439-L506) |
+
+清理顺序：
+
+1. 清理备份（`backups` 数组清空）
+2. 清理上传图标（`iconType: upload` 改为 `auto`）
+3. 清理自定义背景（`backgroundCustom` 清空）
+
+同步目标大小阈值：`7500` bytes（Chrome sync 单条限制约 8KB）。
+超限：自动关闭同步（`syncEnabled = false`），回退本地存储。
 
 ## 8. 图标与背景
 
 ## 8.1 favicon 候选顺序
 
-`icons.js` 会根据域名生成候选：
+实现位置：`getFaviconCandidates()`（[src/js/icons.js](file:///Users/x/code/homepage/src/js/icons.js#L101-L200)）
 
-- 特殊站点预设（如 Gmail/Google/OpenAI/ChatGPT）
-- `origin/favicon.ico`
-- Google S2 favicon API
+根据域名生成候选（优先级从高到低）：
+
+- 特殊站点预设（如 Gmail/Google/OpenAI/ChatGPT，硬编码在 `SPECIAL_SITES`）
+- 站点自身 `origin/favicon.ico`
+- Google S2 favicon API（多种尺寸变体）
 - DuckDuckGo 图标源
+
+注意：Chrome 和 Safari/Firefox 的候选顺序略有不同（Safari/Firefox 优先站点自身 favicon.ico）。
 
 ## 8.2 图标缓存
 
-- URL 维度缓存 + `site:根域` 维度缓存。
-- 非 http(s) URL 会回退字母头像并清理 URL 缓存。
-- `refreshAllIcons()` 支持并发刷新。
+实现位置：[src/js/icons.js](file:///Users/x/code/homepage/src/js/icons.js)
+
+- **内存缓存**：`_iconCacheMemory`（首次 `loadIconCache()` 后常驻内存，避免渲染循环多次 IO）
+- **持久化存储 key**：`homepage_icon_cache`（`chrome.storage.local`）
+- **缓存维度**：URL 维度缓存 + `site:根域` 维度缓存（两套 key）
+- **缓存格式**：dataURL（非远程 URL，确保离线秒开）
+- **非 http(s) URL**：回退字母头像，并清理 URL 缓存
+- **尺寸校验**：`probeImage()` 加载后验证 `naturalWidth/naturalHeight ≥ 16`，小于 16 像素的图标丢弃
+- **批量刷新**：`refreshAllIcons()` 6 并发
+- **预加载优化**：`preloadAllIcons()` 单次读取全部缓存，渲染时传 `preloadedCache` 参数
 
 ## 8.3 背景缓存
 
-- Bing 壁纸缓存 key 为当日日期。
-- 新鲜度：同日优先，其次 6 小时 TTL。
-- 获取失败回退缓存，仍失败则回退纯色背景。
+实现位置：[src/js/bing-wallpaper.js](file:///Users/x/code/homepage/src/js/bing-wallpaper.js)
+
+- **存储 key**：`homepage_bg_cache`（`chrome.storage.local`）
+- **缓存 key**：当日日期字符串（同日只请求一次）
+- **TTL**：6 小时（`MAX_CACHE_AGE`）
+- **三级降级**：Bing API 请求 → 读缓存 → 纯色背景
+- **应用入口**：`loadBackground()`（[src/js/app.js](file:///Users/x/code/homepage/src/js/app.js#L1099-L1130)）
 
 ## 9. 设置、导入导出与备份
 
 ## 9.1 导出设置
 
-- 优先写剪贴板。
-- 失败时弹文本框手工复制。
+实现位置：`openExportModal()`（[src/js/app.js](file:///Users/x/code/homepage/src/js/app.js)）
+
+- 优先写剪贴板（`navigator.clipboard.writeText()`）。
+- 失败时弹文本框手工复制（`showToast` 提示）。
 
 ## 9.2 导入设置
 
+实现位置：`openImportModal()` + `importData()`（[src/js/app.js](file:///Users/x/code/homepage/src/js/app.js#L3088-L3160)）
+
 支持三种策略：
 
-- 覆盖所有：直接替换数据对象。
-- 合并现有：
+- **覆盖所有（replace）**：直接替换数据对象。
+- **合并现有（merge）**：
   - 节点按 ID 补缺。
-  - 分组同 ID 同名 -> 合并节点列表；同 ID 异名 -> 自动改 ID 新建分组。
-- 仅新增：已有 ID 跳过，不覆盖。
+  - 分组同 ID 同名 → 合并节点列表；同 ID 异名 → 自动改 ID 新建分组。
+- **仅新增（add）**：已有 ID 跳过，不覆盖。
+
+导入 JSON 仅检查 `schemaVersion`，不做严格 schema 校验。
 
 ## 9.3 批量导入网址
 
-- 每行一个网址（取每行首 token）。
+实现位置：`openBulkImportModal()`（[src/js/app.js](file:///Users/x/code/homepage/src/js/app.js)）
+
+- 每行一个网址（取每行首 token，自动跳过空行和注释）。
 - 可选择按 `http://` 或 `https://` 规范化导入。
 - 统计并提示无效条目数。
+- 导入后自动刷新图标。
 
 ## 9.4 备份管理
 
-- 可查看备份列表、恢复某条备份、删除备份。
-- 自动备份由 `persistData` 指纹比较触发。
+| 功能 | 实现位置 |
+|------|---------|
+| 打开备份面板 | `openBackupModal()`（[src/js/app.js](file:///Users/x/code/homepage/src/js/app.js)） |
+| 创建备份快照 | `createBackupSnapshot()`（[src/js/storage.js](file:///Users/x/code/homepage/src/js/storage.js#L330-L360)） |
+| 自动备份触发 | `persistData()` 内的指纹比较 |
+| 恢复备份 | `restoreBackup()`（[src/js/app.js](file:///Users/x/code/homepage/src/js/app.js)） |
+| 删除备份 | `deleteBackup()` |
+| 最大备份数 | `maxBackups` 设置（0 = 不自动备份） |
 
 ## 10. 权限与外部请求
 

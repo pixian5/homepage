@@ -24,7 +24,7 @@ const TOAST_STYLE_PROPS = {
   top: "20px",
   right: "20px",
   zIndex: "2147483647",
-  background: "rgba(15, 20, 28, 0.88)",
+  background: "rgba(22, 128, 72, 0.92)",
   color: "#ffffff",
   padding: "10px 14px",
   borderRadius: "10px",

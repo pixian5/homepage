@@ -880,7 +880,7 @@ async function reloadFromStorage() {
   // 提示用户另一台设备更新了更新的数据，本地未保存的改动可能已被覆盖。
   const newTs = Number(data?.lastUpdated || 0);
   if (newTs > prevLocalTs && prevLocalTs > 0 && !prevPending) {
-    toast(t("toast.syncOverwritten"));
+    toast(t("toast.syncOverwritten"), "warning");
   }
   if (prevActive === RECENT_GROUP_ID) {
     activeGroupId = RECENT_GROUP_ID;
@@ -1012,14 +1012,51 @@ function syncSidebarTabLabels() {
   });
 }
 
-function toast(message, actionLabel, action) {
+/**
+ * 显示 Toast。
+ * 用法：
+ * - toast(msg) / toast(msg, "success"|"error"|"warning")
+ * - toast(msg, actionLabel, actionFn)
+ * - toast(msg, actionLabel, actionFn, "warning")
+ * 默认 success（绿色）；error 红；warning 黄。
+ * @param {string} message
+ * @param {string | (() => void)} [actionLabelOrType]
+ * @param {(() => void) | string} [actionOrType]
+ * @param {"success"|"error"|"warning"} [type]
+ */
+function toast(message, actionLabelOrType, actionOrType, type) {
+  let actionLabel = null;
+  let action = null;
+  let kind = "success";
+
+  if (typeof actionLabelOrType === "function") {
+    action = actionLabelOrType;
+  } else if (actionLabelOrType === "success" || actionLabelOrType === "error" || actionLabelOrType === "warning") {
+    kind = actionLabelOrType;
+  } else if (typeof actionLabelOrType === "string") {
+    actionLabel = actionLabelOrType;
+  }
+
+  if (typeof actionOrType === "function") {
+    action = actionOrType;
+  } else if (actionOrType === "success" || actionOrType === "error" || actionOrType === "warning") {
+    kind = actionOrType;
+  }
+
+  if (type === "success" || type === "error" || type === "warning") {
+    kind = type;
+  }
+
   const el = document.createElement("div");
-  el.className = "toast";
+  el.className = `toast toast-${kind}`;
+  el.setAttribute("role", "status");
+  el.setAttribute("aria-live", kind === "error" ? "assertive" : "polite");
   const span = document.createElement("span");
   span.textContent = message;
   el.appendChild(span);
   if (actionLabel && action) {
     const btn = document.createElement("button");
+    btn.type = "button";
     btn.textContent = actionLabel;
     btn.addEventListener("click", () => {
       action();
@@ -1027,7 +1064,7 @@ function toast(message, actionLabel, action) {
     });
     el.appendChild(btn);
   }
-  elements.toastContainer.appendChild(el);
+  elements.toastContainer?.appendChild(el);
   setTimeout(() => el.remove(), TOAST_DURATION_MS);
 }
 
@@ -1150,11 +1187,11 @@ async function loadBackground() {
     const info = await getBingWallpaper(settings.language);
     if (info.dataUrl) {
       setBackground(info.dataUrl);
-      if (info.failed) toast(t("background.fetchFailedCache"));
+      if (info.failed) toast(t("background.fetchFailedCache"), "warning");
       else if (!info.fromCache) toast(t("background.updatedToday"));
     } else {
       setSolidBackgroundColor(settings.backgroundColor);
-      toast(t("background.failedDefault"));
+      toast(t("background.failedDefault"), "error");
     }
   } else if (settings.backgroundType === "color") {
     setSolidBackgroundColor(settings.backgroundColor);
@@ -1512,7 +1549,7 @@ async function renderGrid() {
       } else {
         const url = normalizeUrl(node.url);
         if (!url) {
-          toast(t("error.invalidUrlSimple"));
+          toast(t("error.invalidUrlSimple"), "error");
           return;
         }
         openUrl(url);
@@ -1533,7 +1570,7 @@ async function renderGrid() {
       }
       const url = normalizeUrl(node.url);
       if (!url) {
-        toast(t("error.invalidUrlSimple"));
+        toast(t("error.invalidUrlSimple"), "error");
         return;
       }
       openUrl(url);
@@ -2142,7 +2179,7 @@ function renameGroup(group) {
 
 function deleteGroup(group) {
   if (data.groups.length <= 1) {
-    toast(t("group.keepOne"));
+    toast(t("group.keepOne"), "warning");
     return;
   }
   if (!confirm(t("group.deleteConfirm", { name: group.name }))) return;
@@ -2399,7 +2436,7 @@ function openAddModal() {
     if (!api?.tabs) return;
     api.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (api.runtime?.lastError) {
-        toast(t("error.invalidUrl"));
+        toast(t("error.invalidUrl"), "error");
         return;
       }
       const tab = tabs?.[0];
@@ -2414,7 +2451,7 @@ function openAddModal() {
     const snapshot = deepClone(data);
     const url = normalizeUrl($("fieldUrl").value.trim());
     if (!url) {
-      toast(t("error.invalidUrl"));
+      toast(t("error.invalidUrl"), "error");
       return;
     }
     let title = $("fieldTitle").value.trim();
@@ -2472,7 +2509,7 @@ function openAddModal() {
     if (!result.ok) {
       data = snapshot;
       render();
-      toast(t("error.saveQuota"));
+      toast(t("error.saveQuota"), "error");
       return;
     }
     render();
@@ -2480,15 +2517,15 @@ function openAddModal() {
     if (titlePending) fetchTitleInBackground(node.id, url);
     if (iconPending) fetchFaviconInBackground(node.id, url);
     if (result.warning === "local_trimmed_backups") {
-      toast(t("toast.add.trimBackup"));
+      toast(t("toast.add.trimBackup"), "warning");
     } else if (result.warning === "local_trimmed_icons") {
-      toast(t("toast.add.trimIcons"));
+      toast(t("toast.add.trimIcons"), "warning");
     } else if (result.warning === "local_trimmed_background") {
-      toast(t("toast.add.trimBackground"));
+      toast(t("toast.add.trimBackground"), "warning");
     } else if (result.warning === "sync_quota_exceeded") {
-      toast(t("toast.add.syncFallback"));
+      toast(t("toast.add.syncFallback"), "warning");
     } else if (result.warning === "sync_write_failed") {
-      toast(t("toast.add.syncWriteFailed"));
+      toast(t("toast.add.syncWriteFailed"), "warning");
     } else {
       toast(t("toast.add.success"));
     }
@@ -2581,7 +2618,7 @@ function openEditModal(node) {
     if (node.type === "item") {
       const url = normalizeUrl($("fieldUrl").value.trim());
       if (!url) {
-        toast(t("error.invalidUrl"));
+        toast(t("error.invalidUrl"), "error");
         return;
       }
       node.url = url;
@@ -2618,7 +2655,7 @@ function openEditModal(node) {
     if (!result.ok) {
       data = snapshot;
       render();
-      toast(t("error.saveQuota"));
+      toast(t("error.saveQuota"), "error");
       return;
     }
     render();
@@ -2630,15 +2667,15 @@ function openEditModal(node) {
     }
 
     if (result.warning === "local_trimmed_backups") {
-      toast(t("toast.save.trimBackup"));
+      toast(t("toast.save.trimBackup"), "warning");
     } else if (result.warning === "local_trimmed_icons") {
-      toast(t("toast.save.trimIcons"));
+      toast(t("toast.save.trimIcons"), "warning");
     } else if (result.warning === "local_trimmed_background") {
-      toast(t("toast.save.trimBackground"));
+      toast(t("toast.save.trimBackground"), "warning");
     } else if (result.warning === "sync_quota_exceeded") {
-      toast(t("toast.save.syncFallback"));
+      toast(t("toast.save.syncFallback"), "warning");
     } else if (result.warning === "sync_write_failed") {
-      toast(t("toast.save.syncWriteFailed"));
+      toast(t("toast.save.syncWriteFailed"), "warning");
     } else {
       toast(t("toast.save.success"));
     }
@@ -2661,7 +2698,7 @@ async function openOpenModeMenu() {
   if (!result?.ok) {
     data.settings.openMode = prevMode;
     updateOpenModeButton();
-    toast(t("openMode.saveFailed"));
+    toast(t("openMode.saveFailed"), "error");
   }
 }
 
@@ -2962,7 +2999,7 @@ function openSettingsModal() {
       toast(t("toast.iconsRefreshed"));
     } catch (e) {
       console.warn("refreshAllIcons failed", e);
-      toast(t("toast.iconsRefreshed"));
+      toast(t("toast.iconsRefreshed"), "warning");
     } finally {
       // 设置面板可能仍开着；若按钮还在 DOM 上则恢复文案
       const live = $("btnRefreshIcons");
@@ -3097,9 +3134,9 @@ async function exportJsonToClipboard() {
   try {
     const payload = JSON.stringify(data, null, 2);
     await navigator.clipboard.writeText(payload);
-    toast("设置、卡片、分组数据都已复制到剪切板");
+    toast("设置、卡片、分组数据都已复制到剪切板", "success");
   } catch (err) {
-    toast(`导出设置失败：${err.message || "无法写入剪切板"}`);
+    toast(`导出设置失败：${err.message || "无法写入剪切板"}`, "error");
     openManualExportModal();
   }
 }
@@ -3120,9 +3157,9 @@ function openManualExportModal() {
   $("btnCopy").addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(payload);
-      toast("已复制到剪切板");
+      toast("已复制到剪切板", "success");
     } catch (err) {
-      toast(`复制失败：${err.message || "无法写入剪切板"}`);
+      toast(`复制失败：${err.message || "无法写入剪切板"}`, "error");
     }
   });
   $("btnClose").addEventListener("click", closeModal);
@@ -3222,9 +3259,9 @@ async function openImportModal() {
       await persistData();
       closeModal();
       render();
-      toast("导入设置成功");
+      toast("导入设置成功", "success");
     } catch (err) {
-      toast(`导入设置失败，你检查一下你的设置对了嘛，先去你其它浏览器导出设置才能导入设置：${err.message}`);
+      toast(`导入设置失败，你检查一下你的设置对了嘛，先去你其它浏览器导出设置才能导入设置：${err.message}`, "error");
     }
   });
 
@@ -3232,18 +3269,18 @@ async function openImportModal() {
     const text = await navigator.clipboard.readText();
     if (text) {
       $("importText").value = text;
-      toast("已从剪切板读取");
+      toast("已从剪切板读取", "success");
     } else {
-      toast("剪切板为空");
+      toast("剪切板为空", "warning");
     }
   } catch (err) {
-    toast(`读取剪切板失败：${err.message || "权限受限"}`);
+    toast(`读取剪切板失败：${err.message || "权限受限"}`, "error");
   }
 }
 
 function openImportUrlModal() {
   if (!data.groups?.length) {
-    toast(t("group.noneAvailable"));
+    toast(t("group.noneAvailable"), "warning");
     return;
   }
   const options = rawHtml(
@@ -3287,7 +3324,7 @@ function openImportUrlModal() {
     const groupId = groupSelect.value;
     const group = data.groups.find((g) => g.id === groupId);
     if (!group) {
-      toast(t("group.notFound"));
+      toast(t("group.notFound"), "error");
       return;
     }
     const rawText = $("importUrlText").value || "";
@@ -3306,7 +3343,7 @@ function openImportUrlModal() {
       urls.push(normalized);
     }
     if (!urls.length) {
-      toast(t("import.noUrls"));
+      toast(t("import.noUrls"), "warning");
       return;
     }
     if (!Array.isArray(group.nodes)) group.nodes = [];
@@ -3326,7 +3363,10 @@ function openImportUrlModal() {
     await persistData();
     closeModal();
     render();
-    toast(invalid ? `已导入 ${urls.length} 条，忽略 ${invalid} 条` : `已导入 ${urls.length} 条`);
+    toast(
+      invalid ? `已导入 ${urls.length} 条，忽略 ${invalid} 条` : `已导入 ${urls.length} 条`,
+      invalid ? "warning" : "success",
+    );
   };
 
   $("btnImportUrlCancel").addEventListener("click", closeWithCleanup);
@@ -3380,7 +3420,7 @@ function openBackupModal() {
       persistData();
       closeModal();
       render();
-      toast("已恢复备份");
+      toast("已恢复备份", "success");
     });
   });
   qsa(".backup-delete", elements.modal).forEach((btn) => {
@@ -3392,7 +3432,7 @@ function openBackupModal() {
       data.backups = (data.backups || []).filter((b) => b.id !== id);
       persistData();
       openBackupModal();
-      toast("已删除备份");
+      toast("已删除备份", "success");
     });
   });
   $("btnClose").addEventListener("click", closeModal);
@@ -3610,7 +3650,7 @@ async function _addHistoryToShortcuts(node) {
   if (!node?.url) return;
   const targetGroupId = getPreferredGroupIdForNewItem();
   if (!targetGroupId) {
-    toast(t("group.noneAvailable"));
+    toast(t("group.noneAvailable"), "warning");
     return;
   }
   return addHistoryToShortcutsInGroup(node, targetGroupId);
@@ -3631,7 +3671,7 @@ function getPreferredGroupIdForNewItem() {
 function openAddHistoryToGroup(node) {
   if (!node?.url) return;
   if (!data.groups?.length) {
-    toast(t("group.noneAvailable"));
+    toast(t("group.noneAvailable"), "warning");
     return;
   }
   const options = rawHtml(
@@ -3666,12 +3706,12 @@ async function addHistoryToShortcutsInGroup(node, groupId) {
   if (!node?.url) return;
   const safeUrl = normalizeUrl(node.url);
   if (!safeUrl) {
-    toast(t("error.invalidUrlSimple"));
+    toast(t("error.invalidUrlSimple"), "error");
     return;
   }
   const targetGroup = data.groups.find((g) => g.id === groupId);
   if (!targetGroup) {
-    toast(t("group.notFound"));
+    toast(t("group.notFound"), "error");
     return;
   }
   pushBackup();
@@ -3887,7 +3927,7 @@ function bindEvents() {
 
   elements.btnBatchDelete.addEventListener("click", () => {
     if (activeGroupId === RECENT_GROUP_ID) {
-      toast(t("history.batchDeleteDisabled"));
+      toast(t("history.batchDeleteDisabled"), "warning");
       return;
     }
     if (!selectionMode) {
@@ -3910,7 +3950,7 @@ function bindEvents() {
 
   elements.btnFolderBatchDelete.addEventListener("click", () => {
     if (activeGroupId === RECENT_GROUP_ID) {
-      toast(t("history.batchDeleteDisabled"));
+      toast(t("history.batchDeleteDisabled"), "warning");
       return;
     }
     if (!selectionMode) {

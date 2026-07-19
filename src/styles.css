@@ -653,6 +653,12 @@ body {
   margin-top: 18px;
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+}
+.modal .actions .actions-start {
+  margin-right: auto;
+  display: inline-flex;
   gap: 10px;
 }
 .modal .row-actions {

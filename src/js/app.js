@@ -346,6 +346,10 @@ const I18N = {
     "field.icon.upload": "上传图标",
     "field.icon.color": "颜色头像",
     "field.icon.remote": "远程图标 URL",
+    "field.icon.fetchNow": "立即抓取图标",
+    "field.icon.fetching": "抓取中…",
+    "field.icon.fetchOk": "图标已更新",
+    "field.icon.fetchFail": "图标抓取失败",
     "field.fromTab": "从当前标签页添加",
     "common.cancel": "取消",
     "common.save": "保存",
@@ -570,6 +574,10 @@ const I18N = {
     "field.icon.upload": "Upload icon",
     "field.icon.color": "Color avatar",
     "field.icon.remote": "Remote icon URL",
+    "field.icon.fetchNow": "Fetch icon now",
+    "field.icon.fetching": "Fetching…",
+    "field.icon.fetchOk": "Icon updated",
+    "field.icon.fetchFail": "Failed to fetch icon",
     "field.fromTab": "Use Current Tab",
     "common.cancel": "Cancel",
     "common.save": "Save",
@@ -2612,6 +2620,14 @@ function openEditModal(node) {
           <div id="iconExtra" class="section"></div>
         `)
       : "";
+  const fetchIconBtn =
+    node.type === "item"
+      ? rawHtml(html`
+          <div class="actions-start">
+            <button id="btnFetchIcon" type="button" class="icon-btn">${t("field.icon.fetchNow")}</button>
+          </div>
+        `)
+      : "";
   const modalHtml = html`
     <h2>${t("modal.edit.title")}</h2>
     <div class="section">
@@ -2620,6 +2636,7 @@ function openEditModal(node) {
     </div>
     ${itemFields}
     <div class="actions">
+      ${fetchIconBtn}
       <button id="btnCancel" class="icon-btn">${t("common.cancel")}</button>
       <button id="btnSave" class="icon-btn">${t("common.save")}</button>
     </div>
@@ -2668,6 +2685,47 @@ function openEditModal(node) {
     }
     renderIconExtra(iconTypeEl.value);
     iconTypeEl.addEventListener("change", () => renderIconExtra(iconTypeEl.value));
+
+    const btnFetchIcon = $("btnFetchIcon");
+    btnFetchIcon?.addEventListener("click", async () => {
+      if (!btnFetchIcon || btnFetchIcon.disabled) return;
+      const url = normalizeUrl(($("fieldUrl")?.value || "").trim() || node.url || "");
+      if (!url) {
+        toast(t("error.invalidUrl"), "error");
+        return;
+      }
+      const original = t("field.icon.fetchNow");
+      btnFetchIcon.disabled = true;
+      btnFetchIcon.textContent = t("field.icon.fetching");
+      try {
+        // 先清失败/旧缓存，再强制走自动抓取
+        await clearIconCacheForUrl(node.url, url);
+        const ok = await fetchFaviconNow(node.id, url);
+        if (ok) {
+          // 同步到表单状态：抓取成功后视为 auto
+          if (iconTypeEl) iconTypeEl.value = "auto";
+          renderIconExtra("auto");
+          node.url = url;
+          node.iconType = "auto";
+          node.iconData = "";
+          node.iconPending = false;
+          toast(t("field.icon.fetchOk"));
+          // 不关弹窗，仅刷新网格图标
+          render();
+        } else {
+          toast(t("field.icon.fetchFail"), "warning");
+        }
+      } catch (e) {
+        console.warn("btnFetchIcon failed", e);
+        toast(t("field.icon.fetchFail"), "error");
+      } finally {
+        const live = $("btnFetchIcon");
+        if (live) {
+          live.disabled = false;
+          live.textContent = original;
+        }
+      }
+    });
   }
 
   $("btnCancel")?.addEventListener("click", closeModal);
@@ -3565,6 +3623,36 @@ async function fetchTitleInBackground(nodeId, url) {
   target.titlePending = false;
   await persistData();
   render();
+}
+
+async function fetchFaviconNow(nodeId, url) {
+  const candidates = getFaviconCandidates(url);
+  if (!candidates.length) return false;
+  return withIconFetchConcurrency(async () => {
+    const cache = await loadIconCache();
+    const siteKey = getSiteKey(url);
+    for (const candidate of candidates) {
+      const dataUrl = await fetchAsDataUrl(candidate);
+      if (!dataUrl) continue;
+      cache[url] = { dataUrl, ts: Date.now() };
+      if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
+      await saveIconCache(cache);
+      const target = data?.nodes?.[nodeId];
+      if (target) {
+        target.iconType = "auto";
+        target.iconData = "";
+        target.iconPending = false;
+        target.url = url;
+        target.updatedAt = Date.now();
+      }
+      await persistData();
+      return true;
+    }
+    applyFailureToCache(cache, url, cache[url]);
+    if (siteKey) applyFailureToCache(cache, siteKey, cache[siteKey]);
+    await saveIconCache(cache);
+    return false;
+  });
 }
 
 async function fetchFaviconInBackground(nodeId, url) {

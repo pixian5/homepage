@@ -6,9 +6,19 @@ const srcDir = path.join(root, "src", "js");
 const firefoxDir = path.join(root, "dist", "firefox");
 const outDir = path.join(firefoxDir, "js");
 const outFile = path.join(outDir, "app.ff.js");
+const bgOutFile = path.join(outDir, "background.ff.js");
 const htmlPath = path.join(firefoxDir, "newtab.html");
 
-const files = ["shared-utils.js", "data-utils.js", "storage.js", "icons.js", "bing-wallpaper.js", "app.js"];
+const files = [
+  "shared-utils.js",
+  "data-utils.js",
+  "storage.js",
+  "icons.js",
+  "bing-wallpaper.js",
+  "visit-history.js",
+  "app.js",
+];
+const backgroundFiles = ["shared-utils.js", "visit-history.js", "background.js"];
 
 export function stripImports(code) {
   return code.replace(/^\s*import[\s\S]*?;\s*/gm, "");
@@ -86,8 +96,13 @@ export async function patchHtml(htmlPathArg = htmlPath) {
 async function main() {
   // 真实模块图必须能作为经典脚本 parse，否则 Firefox 新标签页整页失效
   await bundle({ validate: true });
+  await bundle({
+    target: bgOutFile,
+    list: backgroundFiles,
+    validate: true,
+  });
   await patchHtml();
-  console.log("Firefox bundle generated");
+  console.log("Firefox bundle generated (app.ff.js + background.ff.js)");
 }
 
 const isMain = (() => {

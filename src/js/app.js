@@ -40,6 +40,7 @@ import {
   saveData,
   saveIconCache,
 } from "./storage.js";
+import { attachVisitTracking, getVisitHistoryItems, recordVisit } from "./visit-history.js";
 
 const $ = (id) => document.getElementById(id);
 const qs = (sel, root = document) => root.querySelector(sel);
@@ -251,6 +252,8 @@ const I18N = {
     "empty.hideHint": "不再提示",
     "history.empty.title": "暂无最近历史",
     "history.empty.desc": "最近 7 天内没有可显示的访问记录，或浏览器未返回历史数据。",
+    "history.fallback.desc":
+      "Safari 无法读取系统浏览历史。已启用扩展内「最近访问」记录：请先用 Safari 打开一些网页，再回到此页查看。",
     "history.unavailable.title": "无法读取浏览器历史",
     "history.unavailable.desc":
       "当前浏览器未提供可用的 history API，或扩展未获得历史权限。Safari 需在扩展设置中允许相关权限后重试。",
@@ -394,6 +397,8 @@ const I18N = {
     "empty.hideHint": "不再提示",
     "history.empty.title": "暫無最近歷史",
     "history.empty.desc": "最近 7 天內沒有可顯示的造訪記錄，或瀏覽器未回傳歷史資料。",
+    "history.fallback.desc":
+      "Safari 無法讀取系統瀏覽歷史。已啟用擴充功能內「最近造訪」記錄：請先用 Safari 開啟一些網頁，再回到此頁查看。",
     "history.unavailable.title": "無法讀取瀏覽器歷史",
     "history.unavailable.desc":
       "目前瀏覽器未提供可用的 history API，或擴充功能未取得歷史權限。Safari 需在擴充功能設定中允許相關權限後重試。",
@@ -471,6 +476,8 @@ const I18N = {
     "empty.hideHint": "Do not show again",
     "history.empty.title": "No recent history",
     "history.empty.desc": "No visits in the last 7 days, or the browser returned no history data.",
+    "history.fallback.desc":
+      "Safari cannot read system browsing history. Extension-local recent visits are enabled: open some pages in Safari, then return here.",
     "history.unavailable.title": "History unavailable",
     "history.unavailable.desc":
       "This browser has no usable history API, or the extension lacks history permission. On Safari, allow the permission in extension settings and retry.",
@@ -1153,6 +1160,12 @@ function normalizeUrlWithScheme(input, scheme) {
 async function openUrl(url, mode) {
   const api = getChromeApi();
   const openMode = mode || data.settings.openMode;
+  // 用户从本扩展打开的链接也记入「最近访问」（Safari 无系统历史时的数据来源）
+  try {
+    recordVisit({ url, title: "" });
+  } catch (_e) {
+    // ignore
+  }
   if (api?.tabs && (openMode === "new" || openMode === "background")) {
     api.tabs.create({ url, active: openMode !== "background" });
     return;
@@ -1659,12 +1672,17 @@ function updateEmptyState() {
       return;
     }
     if (emptyCheck) emptyCheck.classList.add("hidden");
-    if (historyApiStatus === "missing" || historyApiStatus === "error") {
+    if (historyApiStatus === "error") {
       if (emptyTitle) emptyTitle.textContent = t("history.unavailable.title");
       if (emptyDesc) emptyDesc.textContent = t("history.unavailable.desc");
+    } else if (historyApiStatus === "missing") {
+      // 理论上会被 fallback 覆盖；仍给出明确说明
+      if (emptyTitle) emptyTitle.textContent = t("history.unavailable.title");
+      if (emptyDesc) emptyDesc.textContent = t("history.fallback.desc");
     } else {
       if (emptyTitle) emptyTitle.textContent = t("history.empty.title");
-      if (emptyDesc) emptyDesc.textContent = t("history.empty.desc");
+      if (emptyDesc)
+        emptyDesc.textContent = historyApiStatus === "fallback" ? t("history.fallback.desc") : t("history.empty.desc");
     }
     elements.emptyState.classList.remove("hidden");
     return;
@@ -3648,6 +3666,9 @@ async function fetchTitleViaTab(url) {
 
 async function loadRecentHistory() {
   const api = getChromeApi();
+  const browserItems = [];
+  let browserOk = false;
+
   if (!api?.history?.search) {
     historyApiStatus = "missing";
     debugLog("history_api_missing", {
@@ -3655,69 +3676,116 @@ async function loadRecentHistory() {
       hasBrowser: typeof browser !== "undefined",
       keys: api ? Object.keys(api).slice(0, 30) : [],
     });
-    return [];
-  }
-  const startTime = Date.now() - HISTORY_DAYS * 24 * 60 * 60 * 1000;
-  try {
-    const items = await new Promise((resolve) => {
-      let done = false;
-      const settle = (res) => {
-        if (!done) {
-          done = true;
-          resolve(res || []);
-        }
-      };
-      try {
-        const result = api.history.search({ text: "", startTime, maxResults: RECENT_LIMIT }, (res) => {
-          const err = api.runtime?.lastError;
-          if (err) {
-            historyApiStatus = "error";
-            console.warn("loadRecentHistory lastError:", err.message || err);
-            return settle([]);
+  } else {
+    const startTime = Date.now() - HISTORY_DAYS * 24 * 60 * 60 * 1000;
+    try {
+      const items = await new Promise((resolve) => {
+        let done = false;
+        const settle = (res) => {
+          if (!done) {
+            done = true;
+            resolve(res || []);
           }
-          settle(res || []);
-        });
-        if (result && typeof result.then === "function") {
-          result.then(settle).catch((e) => {
-            historyApiStatus = "error";
-            console.warn("loadRecentHistory rejected", e);
-            settle([]);
+        };
+        try {
+          const result = api.history.search({ text: "", startTime, maxResults: RECENT_LIMIT }, (res) => {
+            const err = api.runtime?.lastError;
+            if (err) {
+              historyApiStatus = "error";
+              console.warn("loadRecentHistory lastError:", err.message || err);
+              return settle([]);
+            }
+            settle(res || []);
           });
+          if (result && typeof result.then === "function") {
+            result.then(settle).catch((e) => {
+              historyApiStatus = "error";
+              console.warn("loadRecentHistory rejected", e);
+              settle([]);
+            });
+          }
+        } catch (e) {
+          historyApiStatus = "error";
+          console.warn("loadRecentHistory threw", e);
+          settle([]);
         }
-      } catch (e) {
-        historyApiStatus = "error";
-        console.warn("loadRecentHistory threw", e);
-        settle([]);
-      }
-    });
-    const seen = new Set();
-    const mapped = (items || [])
-      .filter((item) => item.url)
-      .filter((item) => {
+      });
+      const seen = new Set();
+      for (const item of items || []) {
+        if (!item?.url) continue;
         let norm = item.url;
         try {
           norm = new URL(item.url).href;
         } catch (e) {
           console.warn("loadRecentHistory: invalid URL", item.url, e);
         }
-        if (seen.has(norm)) return false;
+        if (seen.has(norm)) continue;
         seen.add(norm);
-        return true;
-      })
-      .map((item, idx) => ({
-        id: `recent_${idx}`,
-        type: "history",
-        title: item.title || item.url,
-        url: item.url,
-      }));
-    // search 调用成功（即使 0 条）视为 API 可用
-    if (historyApiStatus !== "error") historyApiStatus = "ok";
-    debugLog("history_loaded", { count: mapped.length, status: historyApiStatus });
-    return mapped;
-  } catch (_err) {
-    historyApiStatus = "error";
-    return [];
+        browserItems.push({
+          id: `recent_${browserItems.length}`,
+          type: "history",
+          title: item.title || item.url,
+          url: item.url,
+          ts: Number(item.lastVisitTime) || 0,
+        });
+      }
+      if (historyApiStatus !== "error") {
+        historyApiStatus = "ok";
+        browserOk = true;
+      }
+    } catch (_err) {
+      historyApiStatus = "error";
+    }
   }
+
+  // Safari 等无 history API：用扩展自建的最近访问回退
+  let visitItems = [];
+  try {
+    visitItems = await getVisitHistoryItems(RECENT_LIMIT);
+  } catch (e) {
+    console.warn("getVisitHistoryItems failed", e);
+  }
+
+  const merged = [];
+  const seenUrl = new Set();
+  const pushUnique = (entry) => {
+    if (!entry?.url) return;
+    let key = entry.url;
+    try {
+      key = new URL(entry.url).href;
+    } catch (_e) {
+      // keep raw
+    }
+    if (seenUrl.has(key)) return;
+    seenUrl.add(key);
+    merged.push(entry);
+  };
+
+  for (const e of browserItems) pushUnique(e);
+  for (const e of visitItems) pushUnique(e);
+
+  merged.sort((a, b) => (Number(b.ts) || 0) - (Number(a.ts) || 0));
+  const finalItems = merged.slice(0, RECENT_LIMIT).map((e, idx) => ({
+    id: `recent_${idx}`,
+    type: "history",
+    title: e.title || e.url,
+    url: e.url,
+  }));
+
+  if (finalItems.length > 0) {
+    historyApiStatus = browserOk ? "ok" : "fallback";
+  } else if (historyApiStatus === "missing") {
+    // 自建回退管道可用，空列表用 empty 文案而非 unavailable
+    historyApiStatus = "fallback";
+  }
+
+  debugLog("history_loaded", {
+    browser: browserItems.length,
+    visits: visitItems.length,
+    final: finalItems.length,
+    status: historyApiStatus,
+  });
+  return finalItems;
 }
 
 async function _addHistoryToShortcuts(node) {
@@ -3884,6 +3952,12 @@ function getDropIndex(grid, x, y) {
 
 async function init() {
   debugLog("init_start", getRuntimeInfo());
+  // Safari 无系统 history：在新标签页也挂 tabs 监听作为兜底
+  try {
+    attachVisitTracking();
+  } catch (e) {
+    console.warn("attachVisitTracking failed", e);
+  }
   listenForExternalToast();
   attachStorageListener();
   // loadData 和 loadRecentHistory 并行，减少首屏等待

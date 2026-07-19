@@ -76,7 +76,15 @@ describe("bundle-firefox", () => {
       src: srcDir,
       out: outDir,
       target,
-      list: ["shared-utils.js", "data-utils.js", "storage.js", "icons.js", "bing-wallpaper.js", "app.js"],
+      list: [
+        "shared-utils.js",
+        "data-utils.js",
+        "storage.js",
+        "icons.js",
+        "bing-wallpaper.js",
+        "visit-history.js",
+        "app.js",
+      ],
       validate: true,
     });
     assertClassicScript(output, vm);

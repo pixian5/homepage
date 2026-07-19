@@ -95,6 +95,8 @@
  * @property {string} [url]
  * @property {number} ts
  * @property {number} [hits]
+ * @property {boolean} [failed]
+ * @property {number} [attempts]
  */
 
 /**

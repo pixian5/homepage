@@ -6,6 +6,7 @@
  * @typedef {import('./types.js').IconCacheEntry} IconCacheEntry
  */
 
+import { repairHomepageData } from "./data-utils.js";
 import {
   detectPreferredLanguage,
   estimateBytes,
@@ -306,6 +307,7 @@ export async function loadDataFromArea(useSync = false) {
   if (!data) return base;
   data = migrateData(data) || base;
   data.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
+  data = repairHomepageData(data, DEFAULT_SETTINGS);
   return data;
 }
 
@@ -345,8 +347,11 @@ export async function saveData(data, useSync = false) {
     }
   }
   if (err && useSync) {
+    // 远端同步写入失败：回退本地存储并把同步开关关闭，返回 sentinel 让 UI 给出准确提示。
+    // 注意：err 可能是 quota（上面已处理）之外的任意字符串错误，UI 需区分对待。
     data.settings.syncEnabled = false;
     await storageSet(storageArea(false), { [ROOT_KEY]: data });
+    return "sync_write_failed";
   }
   return err;
 }
@@ -361,13 +366,16 @@ export async function clearData(useSync = false) {
 let _iconCacheMemory = null;
 
 /**
- * 规范化图标缓存条目，兼容旧版字符串格式
+ * 规范化图标缓存条目，兼容旧版字符串格式。
+ * 保留磁盘上的 ts（上次访问/失败时间），不要在此覆写成 now，
+ * 否则跨会话 LRU 信息在加载瞬间全部丢失。
  * @param {IconCacheEntry | string} entry
  * @returns {IconCacheEntry}
  */
 function normalizeIconCacheEntry(entry) {
   const now = Date.now();
   if (typeof entry === "string") {
+    // 旧字符串格式没有 ts，只能用 now 兜底
     return { dataUrl: entry, ts: now };
   }
   if (entry && typeof entry === "object") {
@@ -376,6 +384,7 @@ function normalizeIconCacheEntry(entry) {
       url: entry.url || "",
       ts: entry.ts || now,
       hits: entry.hits || 0,
+      failed: entry.failed ? true : undefined,
     };
   }
   return { dataUrl: "", url: "", ts: now, hits: 0 };
@@ -398,7 +407,10 @@ export function evictIconCacheLRU(cache, maxEntries = MAX_ICON_CACHE_ENTRIES) {
 }
 
 /**
- * 加载图标缓存，并迁移旧格式 + 更新访问时间
+ * 加载图标缓存，并迁移旧格式。
+ * 不再在加载时把所有 ts 刷成 now：保留磁盘上的真实访问/失败时间，
+ * 让 evictIconCacheLRU 跨会话仍能按真实热度淘汰（以前一加载全部 ts 相同，
+ * 首次保存只能按插入顺序任意淘汰，等于丢失了 LRU 语义）。
  * @returns {Promise<Record<string, IconCacheEntry>>}
  */
 export async function loadIconCache() {
@@ -408,27 +420,68 @@ export async function loadIconCache() {
   const local = storageArea(false);
   const raw = (await storageGet(local, ICON_CACHE_KEY)) || {};
   const normalized = {};
-  const now = Date.now();
   for (const [key, value] of Object.entries(raw)) {
     normalized[key] = normalizeIconCacheEntry(value);
-    normalized[key].ts = now;
   }
   _iconCacheMemory = normalized;
   return _iconCacheMemory;
 }
 
 /**
- * 保存图标缓存，写入前执行 LRU 淘汰
+ * 图标缓存刷盘：把并发的多次 saveIconCache 合并成尽量少的 storageSet。
+ * 多个 resolveIcon 在一次渲染批次里并发调用 saveIconCache 时，共享同一个
+ * _iconCacheMemory，这里只在「上一次写盘未结束时」排队再刷一次最新值，
+ * 避免每个 tile 各写一次盘。await 语义保留：调用方 await 后能保证其值已落盘
+ * （若期间有更新的并发写入，则以最新值为准）。
+ */
+let _iconCacheSaveInFlight = false;
+let _iconCacheSaveQueued = false;
+let _iconCacheSavePromise = null;
+let _iconCacheSaveResolve = null;
+
+async function flushIconCacheOnce() {
+  try {
+    while (true) {
+      const api = sharedGetChromeApi();
+      if (!api) break;
+      const local = storageArea(false);
+      await storageSet(local, { [ICON_CACHE_KEY]: _iconCacheMemory });
+      if (!_iconCacheSaveQueued) break;
+      _iconCacheSaveQueued = false;
+    }
+  } finally {
+    const resolve = _iconCacheSaveResolve;
+    _iconCacheSaveInFlight = false;
+    _iconCacheSaveQueued = false;
+    _iconCacheSavePromise = null;
+    _iconCacheSaveResolve = null;
+    if (resolve) resolve();
+  }
+}
+
+function scheduleIconCacheFlush() {
+  if (_iconCacheSaveInFlight) {
+    _iconCacheSaveQueued = true;
+    return _iconCacheSavePromise;
+  }
+  _iconCacheSaveInFlight = true;
+  _iconCacheSaveQueued = false;
+  _iconCacheSavePromise = new Promise((resolve) => {
+    _iconCacheSaveResolve = resolve;
+  });
+  void flushIconCacheOnce();
+  return _iconCacheSavePromise;
+}
+
+/**
+ * 保存图标缓存，写入前执行 LRU 淘汰；并发调用会合并写盘。
  * @param {Record<string, IconCacheEntry | string>} cache
  * @returns {Promise<void>}
  */
 export async function saveIconCache(cache) {
   const trimmed = evictIconCacheLRU(cache || {}, MAX_ICON_CACHE_ENTRIES);
   _iconCacheMemory = trimmed;
-  const api = sharedGetChromeApi();
-  if (!api) return;
-  const local = storageArea(false);
-  await storageSet(local, { [ICON_CACHE_KEY]: trimmed });
+  await scheduleIconCacheFlush();
 }
 
 export async function loadBgCache() {

@@ -50,8 +50,62 @@ function isBrowserExtension() {
 const FINAL_URL_CACHE = new Map();
 const FINAL_URL_CACHE_MAX = 200;
 const ICON_FAILURE_TTL_MS = 24 * 60 * 60 * 1000;
+// 失败退避表：失败次数越多下次重试等待越久，封顶 7 天，避免持续打挂的站点被反复请求。
+const ICON_FAILURE_BACKOFF_STEPS = [
+  15 * 60 * 1000, // 1 次：15 分钟
+  60 * 60 * 1000, // 2 次：1 小时
+  6 * 60 * 60 * 1000, // 3 次：6 小时
+  ICON_FAILURE_TTL_MS, // 4 次：24 小时
+  7 * 24 * 60 * 60 * 1000, // 5+ 次：7 天
+];
 
-function hashColor(str) {
+/**
+ * 全局抓取并发上限：tile fallback / 后台抓取共享此信号量，
+ * 避免一次渲染 N 个 tile 全部并发触发请求风暴。
+ */
+const ICON_FETCH_CONCURRENCY = 6;
+let _iconFetchActive = 0;
+const _iconFetchQueue = [];
+
+function acquireIconFetchSlot() {
+  if (_iconFetchActive < ICON_FETCH_CONCURRENCY) {
+    _iconFetchActive += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    _iconFetchQueue.push(resolve);
+  });
+}
+
+function releaseIconFetchSlot() {
+  _iconFetchActive = Math.max(0, _iconFetchActive - 1);
+  const next = _iconFetchQueue.shift();
+  if (next) {
+    _iconFetchActive += 1;
+    next();
+  }
+}
+
+async function runWithIconFetchConcurrency(task) {
+  await acquireIconFetchSlot();
+  try {
+    return await task();
+  } finally {
+    releaseIconFetchSlot();
+  }
+}
+
+/**
+ * 在全局抓取并发上限内执行 task。供 app.js 的 tile fallback / 后台抓取共用，
+ * 避免一次渲染 N 个 tile 全部并发触发请求风暴。
+ * @param {() => Promise<any>} task
+ * @returns {Promise<any>}
+ */
+export async function withIconFetchConcurrency(task) {
+  return runWithIconFetchConcurrency(task);
+}
+
+export function hashColor(str) {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     hash = str.charCodeAt(i) + ((hash << 5) - hash);
@@ -60,7 +114,13 @@ function hashColor(str) {
   return `#${"00000".substring(0, 6 - c.length)}${c}`;
 }
 
-function avatarDataUrl(text, color) {
+/**
+ * 字母头像：128x128 canvas + 首字母大写。被 icons.js 与 app.js 共用。
+ * @param {string} text
+ * @param {string} [color]
+ * @returns {string} dataURL
+ */
+export function avatarDataUrl(text, color) {
   const canvas = document.createElement("canvas");
   canvas.width = 128;
   canvas.height = 128;
@@ -239,7 +299,27 @@ function sanitizeCachedIconUrl(cache, key) {
 function isFailedCacheEntry(entry) {
   if (!entry?.failed) return false;
   if (!entry.ts) return true;
-  return Date.now() - entry.ts < ICON_FAILURE_TTL_MS;
+  return Date.now() - entry.ts < failureTtlMs(entry);
+}
+
+/**
+ * 按失败次数返回退避 TTL：次数越多等待越久，封顶 7 天。
+ * 兼容旧的 { failed: true }（无 attempts 字段）→ 视为 1 次，沿用 24h。
+ */
+function failureTtlMs(entry) {
+  const attempts = Number(entry?.attempts) || 1;
+  const idx = Math.min(attempts, ICON_FAILURE_BACKOFF_STEPS.length) - 1;
+  return ICON_FAILURE_BACKOFF_STEPS[Math.max(0, idx)];
+}
+
+/**
+ * 记录一次失败到缓存：累加 attempts 并按退避表设置失败时刻 ts。
+ * isFailedCacheEntry 用 (now - ts < failureTtlMs) 判断仍在退避期。
+ * 导出供 app.js 在 tile fallback / 后台抓取失败时统一写入。
+ */
+export function applyFailureToCache(cache, key, prevEntry) {
+  const attempts = (Number(prevEntry?.attempts) || 0) + 1;
+  cache[key] = { failed: true, attempts, ts: Date.now() };
 }
 
 function isExtensionContext() {
@@ -293,25 +373,28 @@ function buildFaviconUrl(url) {
 }
 
 /**
- * 验证图片 dataURL 是否有效且尺寸达标
- * @param {string} dataUrl
+ * 验证图片 URL/dataURL 是否可加载且尺寸达标
+ * @param {string} url
  * @param {number} minSize
  * @param {number} timeoutMs
  * @returns {Promise<boolean>}
  */
-function probeImage(dataUrl, minSize = 16, timeoutMs = 4000) {
+export function probeImage(url, minSize = 16, timeoutMs = 4000) {
   return new Promise((resolve) => {
     const img = new Image();
-    const timer = setTimeout(() => resolve(false), timeoutMs);
-    img.onload = () => {
+    let done = false;
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
       clearTimeout(timer);
-      resolve(img.naturalWidth >= minSize && img.naturalHeight >= minSize);
+      img.onload = null;
+      img.onerror = null;
+      resolve(ok);
     };
-    img.onerror = () => {
-      clearTimeout(timer);
-      resolve(false);
-    };
-    img.src = dataUrl;
+    img.onload = () => finish(img.naturalWidth >= minSize && img.naturalHeight >= minSize);
+    img.onerror = () => finish(false);
+    img.src = url;
   });
 }
 
@@ -493,7 +576,8 @@ export async function retryFailedIconsIfDue(settings) {
       if (dataUrl) {
         cache[key] = { dataUrl, ts: Date.now() };
       } else {
-        cache[key] = { url: candidate, ts: Date.now() };
+        // 重试仍失败：累加 attempts 走退避表，而非写回 { url } 让条目立刻可用
+        applyFailureToCache(cache, key, cache[key]);
       }
       changed = true;
     }

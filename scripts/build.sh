@@ -308,6 +308,13 @@ build_safari_project() {
     return 0
   fi
 
+  # SAFARI_SKIP_APP_BUILD=1：仅生成工程与 safari.zip，跳过 Release 构建。
+  # 由 build-macos.command 接管宿主 App 的构建/签名/安装，避免重复 xcodebuild。
+  if [[ "${SAFARI_SKIP_APP_BUILD:-0}" == "1" ]]; then
+    echo "[build] SAFARI_SKIP_APP_BUILD=1, skip Safari app xcodebuild (deferred to caller)"
+    return 0
+  fi
+
   local build_dir="${SAFARI_PROJECT_DIR}/build-output"
   local dev_team safari_scheme
   dev_team="$(detect_apple_development_team)"
@@ -415,6 +422,10 @@ install_safari_app() {
 
 cleanup_stale_safari_plugins
 build_safari_project
-install_safari_app
+# SAFARI_SKIP_APP_BUILD=1：宿主 App 构建与安装由调用方（build-macos.command）接管，
+# 跳过 install_safari_app，避免重复 xcodebuild 与 LaunchServices 重复注册。
+if [[ "${SAFARI_SKIP_APP_BUILD:-0}" != "1" ]]; then
+  install_safari_app
+fi
 
 echo "Build done: chrome/firefox/safari"

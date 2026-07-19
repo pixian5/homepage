@@ -52,8 +52,10 @@ if [[ -f "${ROOT_DIR}/logo.png" ]]; then
   done
 fi
 
-node "${ROOT_DIR}/scripts/bump-version.mjs"
-bash "${ROOT_DIR}/scripts/build.sh"
+# 版本号自增与三端 zip 打包统一交给 build.sh：避免本脚本再 bump 一次导致版本连升两档。
+# SAFARI_SKIP_APP_BUILD=1 让 build.sh 只生成 Safari Xcode 工程与 safari.zip，
+# 宿主 App 的 Release 构建 / 开发签名 / 安装由本脚本接管，避免 Safari 被构建两次。
+SAFARI_SKIP_APP_BUILD=1 bash "${ROOT_DIR}/scripts/build.sh"
 
 PROJECT_FILE="$(find "${SAFARI_PROJECT_DIR}" -maxdepth 3 -name '*.xcodeproj' -print -quit)"
 if [[ -n "${PROJECT_FILE}" ]]; then
@@ -96,6 +98,11 @@ if [[ -n "${PROJECT_FILE}" ]]; then
     echo "[build] Copying to ${APPS_DIR_APP}..."
     rm -rf "${APPS_DIR_APP}"
     cp -R "${APP_PATH}" "${APPS_DIR_APP}"
+
+    # Xcode 构建时会将 build-output 里的 .app 注册到 LaunchServices，
+    # 安装到 /Applications 后如果不注销源路径，Safari 扩展列表会出现重复条目。
+    echo "[build] Unregistering build-output app from LaunchServices..."
+    /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -u "${APP_PATH}" 2>/dev/null || true
 
     open "${APPS_DIR_APP}"
     echo "[build] launched: ${APPS_DIR_APP}"

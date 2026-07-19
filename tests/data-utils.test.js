@@ -8,6 +8,7 @@ import {
   dedupeData,
   moveNodeInList,
   pickLatestData,
+  repairHomepageData,
 } from "../src/js/data-utils.js";
 
 describe("data-utils", () => {
@@ -218,6 +219,76 @@ describe("data-utils", () => {
       const sync = { lastUpdated: 200 };
       assert.strictEqual(pickLatestData(local, sync), sync);
       assert.strictEqual(pickLatestData(sync, local), sync);
+    });
+  });
+
+  describe("repairHomepageData", () => {
+    const defaults = { showSearch: true, syncEnabled: false };
+
+    it("coerces missing top-level fields to expected types", () => {
+      const repaired = repairHomepageData({}, defaults);
+      assert.strictEqual(repaired.schemaVersion, 1);
+      assert.deepStrictEqual(repaired.groups, []);
+      assert.deepStrictEqual(repaired.nodes, {});
+      assert.deepStrictEqual(repaired.backups, []);
+      assert.strictEqual(repaired.settings.showSearch, true);
+    });
+
+    it("removes non-object / typeless nodes", () => {
+      const data = {
+        schemaVersion: 1,
+        groups: [{ id: "g1", nodes: ["n1", "bad", "notype"] }],
+        nodes: {
+          n1: { type: "item", url: "https://a.com" },
+          bad: null,
+          notype: { id: "notype" },
+        },
+        settings: {},
+      };
+      const repaired = repairHomepageData(data, defaults);
+      assert.deepStrictEqual(Object.keys(repaired.nodes), ["n1"]);
+      assert.deepStrictEqual(repaired.groups[0].nodes, ["n1"]);
+    });
+
+    it("coerces folder children to array", () => {
+      const data = {
+        schemaVersion: 1,
+        groups: [],
+        nodes: { f1: { type: "folder", children: "nope" } },
+        settings: {},
+      };
+      const repaired = repairHomepageData(data, defaults);
+      assert.deepStrictEqual(repaired.nodes.f1.children, []);
+    });
+
+    it("drops group node references pointing to missing nodes", () => {
+      const data = {
+        schemaVersion: 1,
+        groups: [{ id: "g1", nodes: ["n1", "ghost"] }],
+        nodes: { n1: { type: "item" } },
+        settings: {},
+      };
+      const repaired = repairHomepageData(data, defaults);
+      assert.deepStrictEqual(repaired.groups[0].nodes, ["n1"]);
+    });
+
+    it("merges defaults under user settings without clobbering", () => {
+      const data = {
+        schemaVersion: 1,
+        groups: [],
+        nodes: {},
+        settings: { syncEnabled: true, fontSize: 16 },
+      };
+      const repaired = repairHomepageData(data, defaults);
+      assert.strictEqual(repaired.settings.syncEnabled, true);
+      assert.strictEqual(repaired.settings.showSearch, true);
+      assert.strictEqual(repaired.settings.fontSize, 16);
+    });
+
+    it("does not throw on garbage input", () => {
+      assert.doesNotThrow(() => repairHomepageData("garbage", defaults));
+      assert.doesNotThrow(() => repairHomepageData(null, defaults));
+      assert.doesNotThrow(() => repairHomepageData({ nodes: [], groups: "x" }, defaults));
     });
   });
 });

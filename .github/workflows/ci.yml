@@ -27,3 +27,16 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Build extensions
+        run: SKIP_BUMP=1 npm run build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-artifacts
+          path: |
+            dist/chrome.zip
+            dist/firefox.zip
+            dist/safari.zip
+          if-no-files-found: error

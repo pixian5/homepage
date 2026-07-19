@@ -1,19 +1,32 @@
 import { getBingWallpaper } from "./bing-wallpaper.js";
-import { buildBackupFingerprint, cloneDataSnapshot, createItemNode, dedupeData, moveNodeInList } from "./data-utils.js";
 import {
+  buildBackupFingerprint,
+  cloneDataSnapshot,
+  createItemNode,
+  dedupeData,
+  moveNodeInList,
+  repairHomepageData,
+} from "./data-utils.js";
+import {
+  applyFailureToCache,
+  avatarDataUrl,
   clearIconCacheForUrl,
   fetchAsDataUrl,
   getFaviconCandidates,
   getSiteKey,
+  hashColor,
+  probeImage,
   refreshAllIcons,
   resolveIcon,
   retryFailedIconsIfDue,
+  withIconFetchConcurrency,
 } from "./icons.js";
 import {
   clearData,
   createBackupSnapshot,
   deepClone,
   defaultData,
+  defaultSettings,
   detectPreferredLanguage,
   getChromeApi,
   getStorageKey,
@@ -333,11 +346,14 @@ const I18N = {
     "toast.add.trimIcons": "新增成功（已重置上传图标以释放空间）",
     "toast.add.trimBackground": "新增成功（已清理自定义背景以释放空间）",
     "toast.add.syncFallback": "新增成功（同步空间不足，已保存到本地）",
+    "toast.add.syncWriteFailed": "新增成功（同步写入失败，已关闭同步并保存到本地）",
     "toast.save.success": "保存成功",
     "toast.save.trimBackup": "保存成功（已清理备份以释放空间）",
     "toast.save.trimIcons": "保存成功（已重置上传图标以释放空间）",
     "toast.save.trimBackground": "保存成功（已清理自定义背景以释放空间）",
     "toast.save.syncFallback": "保存成功（同步空间不足，已保存到本地）",
+    "toast.save.syncWriteFailed": "保存成功（同步写入失败，已关闭同步并保存到本地）",
+    "toast.syncOverwritten": "检测到另一设备更新了更新的数据，本地未保存的改动可能已被覆盖",
     "tile.folderSuffix": "（文件夹）",
     "folder.newTitle": "新建文件夹",
     "folder.created": "已创建文件夹",
@@ -538,11 +554,14 @@ const I18N = {
     "toast.add.trimIcons": "Added (uploaded icons reset)",
     "toast.add.trimBackground": "Added (custom background cleared)",
     "toast.add.syncFallback": "Added (sync quota exceeded, saved locally)",
+    "toast.add.syncWriteFailed": "Added (sync write failed, sync disabled and saved locally)",
     "toast.save.success": "Saved",
     "toast.save.trimBackup": "Saved (backups trimmed)",
     "toast.save.trimIcons": "Saved (uploaded icons reset)",
     "toast.save.trimBackground": "Saved (custom background cleared)",
     "toast.save.syncFallback": "Saved (sync quota exceeded, saved locally)",
+    "toast.save.syncWriteFailed": "Saved (sync write failed, sync disabled and saved locally)",
+    "toast.syncOverwritten": "Another device had newer data; your unsaved local changes may have been overwritten",
     "tile.folderSuffix": " (Folder)",
     "folder.newTitle": "New Folder",
     "folder.created": "Folder created",
@@ -837,7 +856,15 @@ async function reloadFromStorage() {
   const prevActive = activeGroupId;
   const prevOpenFolder = openFolderId;
   const prevSelected = new Set(selectedIds);
+  const prevLocalTs = Number(data?.lastUpdated || 0);
+  const prevPending = persistInFlight > 0;
   data = await loadLatestDataForApp();
+  // 多设备 LWW 静默丢数据补提示：若刚被远端更新的数据覆盖（且本地没有正在进行的保存），
+  // 提示用户另一台设备更新了更新的数据，本地未保存的改动可能已被覆盖。
+  const newTs = Number(data?.lastUpdated || 0);
+  if (newTs > prevLocalTs && prevLocalTs > 0 && !prevPending) {
+    toast(t("toast.syncOverwritten"));
+  }
   if (prevActive === RECENT_GROUP_ID) {
     activeGroupId = RECENT_GROUP_ID;
   } else if (prevActive && data.groups.find((g) => g.id === prevActive)) {
@@ -1201,7 +1228,11 @@ async function persistData() {
     let err = null;
     const err1 = await saveData(data, useSync);
     if (err1) {
-      if (err1 === "sync_quota_exceeded" || (typeof err1 === "string" && err1.startsWith("local_trimmed_"))) {
+      if (
+        err1 === "sync_quota_exceeded" ||
+        err1 === "sync_write_failed" ||
+        (typeof err1 === "string" && err1.startsWith("local_trimmed_"))
+      ) {
         warning = err1;
       } else {
         err = err1;
@@ -2346,6 +2377,8 @@ function openAddModal() {
       toast(t("toast.add.trimBackground"));
     } else if (result.warning === "sync_quota_exceeded") {
       toast(t("toast.add.syncFallback"));
+    } else if (result.warning === "sync_write_failed") {
+      toast(t("toast.add.syncWriteFailed"));
     } else {
       toast(t("toast.add.success"));
     }
@@ -2494,6 +2527,8 @@ function openEditModal(node) {
       toast(t("toast.save.trimBackground"));
     } else if (result.warning === "sync_quota_exceeded") {
       toast(t("toast.save.syncFallback"));
+    } else if (result.warning === "sync_write_failed") {
+      toast(t("toast.save.syncWriteFailed"));
     } else {
       toast(t("toast.save.success"));
     }
@@ -2987,12 +3022,15 @@ async function openImportModal() {
     try {
       const incoming = JSON.parse($("importText").value.trim());
       const mode = $("importMode").value;
-      if (!incoming.schemaVersion) throw new Error("无 schemaVersion");
+      if (!incoming || typeof incoming !== "object") throw new Error("数据格式不合法");
+      // 运行时 schema 校验：修复非法字段、清理悬空引用、合并默认 settings
+      const repairedIncoming = repairHomepageData(incoming, defaultSettings());
+      if (!repairedIncoming.schemaVersion) throw new Error("无 schemaVersion");
       pushBackup();
       if (mode === "replace") {
-        data = incoming;
+        data = repairedIncoming;
       } else if (mode === "merge") {
-        const incomingNodes = incoming.nodes || {};
+        const incomingNodes = repairedIncoming.nodes || {};
         for (const [id, node] of Object.entries(incomingNodes)) {
           if (!data.nodes[id]) data.nodes[id] = node;
         }
@@ -3006,7 +3044,7 @@ async function openImportModal() {
           existingIds.add(id);
           return id;
         };
-        for (const group of incoming.groups || []) {
+        for (const group of repairedIncoming.groups || []) {
           const target = existingGroups.get(group.id);
           if (!target) {
             data.groups.push(group);
@@ -3023,12 +3061,12 @@ async function openImportModal() {
           target.nodes = Array.from(mergedNodes).filter((id) => data.nodes[id] || incomingNodes[id]);
         }
       } else if (mode === "add") {
-        const incomingNodes = incoming.nodes || {};
+        const incomingNodes = repairedIncoming.nodes || {};
         for (const [id, node] of Object.entries(incomingNodes)) {
           if (!data.nodes[id]) data.nodes[id] = node;
         }
         const existingIds = new Set(data.groups.map((g) => g.id));
-        for (const group of incoming.groups || []) {
+        for (const group of repairedIncoming.groups || []) {
           if (existingIds.has(group.id)) continue;
           data.groups.push(group);
           existingIds.add(group.id);
@@ -3187,7 +3225,8 @@ function openBackupModal() {
       const backup = data.backups.find((b) => b.id === row.dataset.backup);
       if (!backup) return;
       const backupsBeforeRestore = Array.isArray(data.backups) ? cloneDataSnapshot(data.backups) : [];
-      const restoredData = cloneDataSnapshot(backup.data);
+      // 恢复前先做运行时 schema 校验，避免损坏的备份快照原样进入运行态
+      const restoredData = repairHomepageData(cloneDataSnapshot(backup.data), defaultSettings());
       restoredData.backups = backupsBeforeRestore;
       // 恢复后对所有节点 URL 做协议白名单校验，丢弃危险协议
       if (restoredData?.nodes) {
@@ -3238,33 +3277,16 @@ function readFileAsDataUrl(file) {
 }
 
 function letterIconDataUrl(text, color) {
-  const base = text || "?";
-  let hash = 0;
-  for (let i = 0; i < base.length; i++) {
-    hash = base.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const c = (hash & 0x00ffffff).toString(16).toUpperCase();
-  const bg = color || `#${"00000".substring(0, 6 - c.length)}${c}`;
-  const canvas = document.createElement("canvas");
-  canvas.width = 128;
-  canvas.height = 128;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, 128, 128);
-  ctx.fillStyle = "rgba(255,255,255,0.9)";
-  ctx.font = "bold 64px sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(base.slice(0, 1).toUpperCase(), 64, 72);
-  return canvas.toDataURL("image/png");
+  // 复用 icons.js 的 avatarDataUrl + hashColor，避免在 app.js 重复实现字母头像逻辑
+  return avatarDataUrl(text || "?", color || hashColor(text || "?"));
 }
 
 async function markIconLoadFailed(url) {
   if (!url) return;
   const cache = await loadIconCache();
-  cache[url] = { failed: true, ts: Date.now() };
+  applyFailureToCache(cache, url, cache[url]);
   const siteKey = getSiteKey(url);
-  if (siteKey) cache[siteKey] = { failed: true, ts: Date.now() };
+  if (siteKey) applyFailureToCache(cache, siteKey, cache[siteKey]);
   await saveIconCache(cache);
 }
 
@@ -3272,53 +3294,36 @@ async function trySwitchToNextFavicon(url, triedCandidates) {
   if (!url) return "";
   const candidates = getFaviconCandidates(url);
   if (!candidates.length) return "";
-  const cache = await loadIconCache();
-  const siteKey = getSiteKey(url);
-  for (const candidate of candidates) {
-    if (triedCandidates.has(candidate)) continue;
-    triedCandidates.add(candidate);
-    const ok = await probeImage(candidate);
-    if (!ok) continue;
-    // 抓取为 dataURL 后缓存，下次打开页面可瞬显
-    const dataUrl = await fetchAsDataUrl(candidate);
-    if (dataUrl) {
-      cache[url] = { dataUrl, ts: Date.now() };
-      if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
+  // 在全局并发信号量内串行尝试候选，避免一次渲染 N 个 tile 全部并发触发请求风暴
+  return withIconFetchConcurrency(async () => {
+    const cache = await loadIconCache();
+    const siteKey = getSiteKey(url);
+    for (const candidate of candidates) {
+      if (triedCandidates.has(candidate)) continue;
+      triedCandidates.add(candidate);
+      const ok = await probeImageWithIconTimeout(candidate);
+      if (!ok) continue;
+      // 抓取为 dataURL 后缓存，下次打开页面可瞬显
+      const dataUrl = await fetchAsDataUrl(candidate);
+      if (dataUrl) {
+        cache[url] = { dataUrl, ts: Date.now() };
+        if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
+        await saveIconCache(cache);
+        return dataUrl;
+      }
+      // dataURL 化失败时退回远程 URL
+      cache[url] = { url: candidate, ts: Date.now() };
+      if (siteKey) cache[siteKey] = { url: candidate, ts: Date.now() };
       await saveIconCache(cache);
-      return dataUrl;
+      return candidate;
     }
-    // dataURL 化失败时退回远程 URL
-    cache[url] = { url: candidate, ts: Date.now() };
-    if (siteKey) cache[siteKey] = { url: candidate, ts: Date.now() };
-    await saveIconCache(cache);
-    return candidate;
-  }
-  return "";
+    return "";
+  });
 }
 
-function probeImage(url, timeoutMs = ICON_PROBE_TIMEOUT_MS) {
-  return new Promise((resolve) => {
-    let done = false;
-    const img = new Image();
-    const timer = setTimeout(() => finish(false), timeoutMs);
-    const finish = (ok) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      img.onload = null;
-      img.onerror = null;
-      resolve(ok);
-    };
-    img.onload = () => {
-      if (img.naturalWidth < 16 && img.naturalHeight < 16) {
-        finish(false);
-      } else {
-        finish(true);
-      }
-    };
-    img.onerror = () => finish(false);
-    img.src = url;
-  });
+function probeImageWithIconTimeout(url) {
+  // 复用 icons.js 的 probeImage（带 done 守卫与超时），仅注入本模块的超时常量
+  return probeImage(url, 16, ICON_PROBE_TIMEOUT_MS);
 }
 
 async function fetchTitleInBackground(nodeId, url) {
@@ -3336,16 +3341,28 @@ async function fetchFaviconInBackground(nodeId, url) {
   if (!data?.settings?.iconFetch) return;
   const candidates = getFaviconCandidates(url);
   if (!candidates.length) return;
-  const cache = await loadIconCache();
-  const siteKey = getSiteKey(url);
-  for (const candidate of candidates) {
-    const ok = await probeImage(candidate);
-    if (!ok) continue;
-    // 抓取为 dataURL 后缓存，下次打开页面可瞬显
-    const dataUrl = await fetchAsDataUrl(candidate);
-    if (dataUrl) {
-      cache[url] = { dataUrl, ts: Date.now() };
-      if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
+  // 在全局并发信号量内串行尝试候选，避免多节点并发抓取触发请求风暴
+  await withIconFetchConcurrency(async () => {
+    const cache = await loadIconCache();
+    const siteKey = getSiteKey(url);
+    for (const candidate of candidates) {
+      const ok = await probeImageWithIconTimeout(candidate);
+      if (!ok) continue;
+      // 抓取为 dataURL 后缓存，下次打开页面可瞬显
+      const dataUrl = await fetchAsDataUrl(candidate);
+      if (dataUrl) {
+        cache[url] = { dataUrl, ts: Date.now() };
+        if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
+        await saveIconCache(cache);
+        const target = data?.nodes?.[nodeId];
+        if (target) target.iconPending = false;
+        await persistData();
+        render();
+        return;
+      }
+      // dataURL 化失败时退回远程 URL
+      cache[url] = { url: candidate, ts: Date.now() };
+      if (siteKey) cache[siteKey] = { url: candidate, ts: Date.now() };
       await saveIconCache(cache);
       const target = data?.nodes?.[nodeId];
       if (target) target.iconPending = false;
@@ -3353,25 +3370,17 @@ async function fetchFaviconInBackground(nodeId, url) {
       render();
       return;
     }
-    // dataURL 化失败时退回远程 URL
-    cache[url] = { url: candidate, ts: Date.now() };
-    if (siteKey) cache[siteKey] = { url: candidate, ts: Date.now() };
-    await saveIconCache(cache);
     const target = data?.nodes?.[nodeId];
-    if (target) target.iconPending = false;
-    await persistData();
-    render();
-    return;
-  }
-  const target = data?.nodes?.[nodeId];
-  if (target) {
-    target.iconPending = false;
-    cache[url] = { failed: true, ts: Date.now() };
-    if (siteKey) cache[siteKey] = { failed: true, ts: Date.now() };
-    await saveIconCache(cache);
-    await persistData();
-    render();
-  }
+    if (target) {
+      target.iconPending = false;
+      // 全部候选失败：按失败次数退避（首次 15min，递增封顶 7 天）
+      applyFailureToCache(cache, url, cache[url]);
+      if (siteKey) applyFailureToCache(cache, siteKey, cache[siteKey]);
+      await saveIconCache(cache);
+      await persistData();
+      render();
+    }
+  });
 }
 
 const _migratingIcons = new Set();

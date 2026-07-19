@@ -195,3 +195,74 @@ export function pickLatestData(localData, syncData) {
   const syncTs = Number(syncData.lastUpdated || 0);
   return syncTs >= localTs ? syncData : localData;
 }
+
+/**
+ * 运行时 schema 校验与修复：导入 / 同步 / 恢复入口共用。
+ *
+ * 之前三个入口几乎不做结构校验，损坏数据（带合法 schemaVersion）会原样进入运行态。
+ * 这里在不破坏现有数据的前提下做防御性归一化：
+ * - 确保 schema/groups/nodes/backups/settings 是期望类型
+ * - 丢弃不是对象的 node；node 必须有 type（item/folder）
+ * - groups 必须是数组且元素有 id；过滤不存在节点的 node 引用
+ * - 合并 DEFAULT_SETTINGS（与 loadData 一致），避免缺字段导致渲染崩溃
+ * - 不抛错：任何不合法字段静默修复，保证入口可用
+ *
+ * @param {object} input - 待校验数据（可能来自导入/同步/恢复）
+ * @param {object} defaultSettings - 默认 settings 模板（由调用方传入，避免循环依赖 storage.js）
+ * @returns {object} 校验后的数据
+ */
+export function repairHomepageData(input, defaultSettings = {}) {
+  const data = input && typeof input === "object" ? input : {};
+  if (typeof data.schemaVersion !== "number" || !Number.isFinite(data.schemaVersion)) {
+    data.schemaVersion = 1;
+  }
+  if (!Array.isArray(data.groups)) data.groups = [];
+  if (!data.nodes || typeof data.nodes !== "object" || Array.isArray(data.nodes)) {
+    data.nodes = {};
+  }
+  if (!Array.isArray(data.backups)) data.backups = [];
+  if (!data.settings || typeof data.settings !== "object" || Array.isArray(data.settings)) {
+    data.settings = { ...defaultSettings };
+  } else {
+    data.settings = { ...defaultSettings, ...data.settings };
+  }
+
+  // 清理非法 node：必须是非空对象且有 type 字段；文件夹需 children 为数组
+  const validNodeIds = new Set();
+  for (const [id, node] of Object.entries(data.nodes)) {
+    if (!node || typeof node !== "object" || Array.isArray(node)) {
+      delete data.nodes[id];
+      continue;
+    }
+    if (typeof node.type !== "string" || !node.type) {
+      delete data.nodes[id];
+      continue;
+    }
+    if (node.type === "folder") {
+      node.children = Array.isArray(node.children) ? node.children : [];
+    }
+    validNodeIds.add(id);
+  }
+
+  // 清理 groups：元素必须有 id；nodes 引用指向存在的节点
+  const seenGroupIds = new Set();
+  const validGroups = [];
+  for (const group of data.groups) {
+    if (!group || typeof group !== "object" || Array.isArray(group)) continue;
+    const id =
+      typeof group.id === "string" && group.id
+        ? group.id
+        : `grp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    if (seenGroupIds.has(id)) continue;
+    seenGroupIds.add(id);
+    const nodes = Array.isArray(group.nodes) ? group.nodes.filter((nid) => validNodeIds.has(nid)) : [];
+    validGroups.push({ ...group, id, nodes });
+  }
+  data.groups = validGroups;
+
+  if (typeof data.lastUpdated !== "number" || !Number.isFinite(data.lastUpdated)) {
+    data.lastUpdated = Number(data.lastUpdated) || 0;
+  }
+
+  return data;
+}

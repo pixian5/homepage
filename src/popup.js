@@ -2,6 +2,7 @@ import { createItemNode, pickLatestData } from "./js/data-utils.js";
 import {
   detectPreferredLanguage,
   estimateBytes,
+  getChromeApi,
   normalizeLanguage,
   normalizeUrl,
   sanitizeForSync,

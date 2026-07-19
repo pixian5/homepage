@@ -134,6 +134,8 @@ let tooltipTimer = null;
 let dragState = null;
 let lastSelectedIndex = null;
 let recentItems = [];
+/** @type {"unknown"|"ok"|"missing"|"error"} */
+let historyApiStatus = "unknown";
 let draggingGroupId = null;
 let boxSelecting = false;
 let selectionBox = null;
@@ -247,6 +249,11 @@ const I18N = {
     "empty.title": "还没有快捷按钮",
     "empty.desc": "点击右上角【新增】来添加卡片。如果有备份，可以去【设置】恢复备份",
     "empty.hideHint": "不再提示",
+    "history.empty.title": "暂无最近历史",
+    "history.empty.desc": "最近 7 天内没有可显示的访问记录，或浏览器未返回历史数据。",
+    "history.unavailable.title": "无法读取浏览器历史",
+    "history.unavailable.desc":
+      "当前浏览器未提供可用的 history API，或扩展未获得历史权限。Safari 需在扩展设置中允许相关权限后重试。",
     "folder.defaultTitle": "文件夹",
     "folder.back": "返回",
     "folder.add": "新增",
@@ -385,6 +392,11 @@ const I18N = {
     "empty.title": "還沒有快捷按鈕",
     "empty.desc": "點擊右上角【新增】新增卡片。如有備份可在【設定】還原",
     "empty.hideHint": "不再提示",
+    "history.empty.title": "暫無最近歷史",
+    "history.empty.desc": "最近 7 天內沒有可顯示的造訪記錄，或瀏覽器未回傳歷史資料。",
+    "history.unavailable.title": "無法讀取瀏覽器歷史",
+    "history.unavailable.desc":
+      "目前瀏覽器未提供可用的 history API，或擴充功能未取得歷史權限。Safari 需在擴充功能設定中允許相關權限後重試。",
     "folder.defaultTitle": "資料夾",
     "folder.back": "返回",
     "folder.add": "新增",
@@ -457,6 +469,11 @@ const I18N = {
     "empty.title": "No shortcuts yet",
     "empty.desc": "Click Add on the top right to create cards. Restore backups in Settings if needed.",
     "empty.hideHint": "Do not show again",
+    "history.empty.title": "No recent history",
+    "history.empty.desc": "No visits in the last 7 days, or the browser returned no history data.",
+    "history.unavailable.title": "History unavailable",
+    "history.unavailable.desc":
+      "This browser has no usable history API, or the extension lacks history permission. On Safari, allow the permission in extension settings and retry.",
     "folder.defaultTitle": "Folder",
     "folder.back": "Back",
     "folder.add": "Add",
@@ -801,9 +818,12 @@ function applyStaticI18n() {
   if (elements.btnFolderBatchDelete) elements.btnFolderBatchDelete.textContent = t("folder.batchDelete");
   if (elements.btnFolderDissolve) elements.btnFolderDissolve.textContent = t("folder.dissolve");
   const emptyTitle = qs(".empty-title", elements.emptyState);
-  if (emptyTitle) emptyTitle.textContent = t("empty.title");
   const emptyDesc = qs(".empty-desc", elements.emptyState);
-  if (emptyDesc) emptyDesc.textContent = t("empty.desc");
+  // 历史分组的空态文案由 updateEmptyState 负责，避免这里盖掉
+  if (activeGroupId !== RECENT_GROUP_ID) {
+    if (emptyTitle) emptyTitle.textContent = t("empty.title");
+    if (emptyDesc) emptyDesc.textContent = t("empty.desc");
+  }
   const emptyCheckLabel = qs(".empty-check", elements.emptyState);
   if (emptyCheckLabel) {
     const textNode = Array.from(emptyCheckLabel.childNodes).find((node) => node.nodeType === Node.TEXT_NODE);
@@ -1628,10 +1648,31 @@ async function renderGrid() {
 }
 
 function updateEmptyState() {
+  const emptyTitle = qs(".empty-title", elements.emptyState);
+  const emptyDesc = qs(".empty-desc", elements.emptyState);
+  const emptyCheck = qs(".empty-check", elements.emptyState);
+
   if (activeGroupId === RECENT_GROUP_ID) {
-    elements.emptyState.classList.add("hidden");
+    // 历史分组：API 不可用或暂无数据时给出明确说明（不再整块隐藏）
+    if (recentItems.length > 0) {
+      elements.emptyState.classList.add("hidden");
+      return;
+    }
+    if (emptyCheck) emptyCheck.classList.add("hidden");
+    if (historyApiStatus === "missing" || historyApiStatus === "error") {
+      if (emptyTitle) emptyTitle.textContent = t("history.unavailable.title");
+      if (emptyDesc) emptyDesc.textContent = t("history.unavailable.desc");
+    } else {
+      if (emptyTitle) emptyTitle.textContent = t("history.empty.title");
+      if (emptyDesc) emptyDesc.textContent = t("history.empty.desc");
+    }
+    elements.emptyState.classList.remove("hidden");
     return;
   }
+
+  if (emptyCheck) emptyCheck.classList.remove("hidden");
+  if (emptyTitle) emptyTitle.textContent = t("empty.title");
+  if (emptyDesc) emptyDesc.textContent = t("empty.desc");
   const nodes = getCurrentNodes();
   if (nodes.length === 0 && !data.settings.emptyHintDisabled) {
     elements.emptyState.classList.remove("hidden");
@@ -3607,7 +3648,15 @@ async function fetchTitleViaTab(url) {
 
 async function loadRecentHistory() {
   const api = getChromeApi();
-  if (!api?.history?.search) return [];
+  if (!api?.history?.search) {
+    historyApiStatus = "missing";
+    debugLog("history_api_missing", {
+      hasChrome: typeof chrome !== "undefined",
+      hasBrowser: typeof browser !== "undefined",
+      keys: api ? Object.keys(api).slice(0, 30) : [],
+    });
+    return [];
+  }
   const startTime = Date.now() - HISTORY_DAYS * 24 * 60 * 60 * 1000;
   try {
     const items = await new Promise((resolve) => {
@@ -3618,11 +3667,31 @@ async function loadRecentHistory() {
           resolve(res || []);
         }
       };
-      const result = api.history.search({ text: "", startTime, maxResults: RECENT_LIMIT }, settle);
-      if (result && typeof result.then === "function") result.then(settle).catch(() => settle([]));
+      try {
+        const result = api.history.search({ text: "", startTime, maxResults: RECENT_LIMIT }, (res) => {
+          const err = api.runtime?.lastError;
+          if (err) {
+            historyApiStatus = "error";
+            console.warn("loadRecentHistory lastError:", err.message || err);
+            return settle([]);
+          }
+          settle(res || []);
+        });
+        if (result && typeof result.then === "function") {
+          result.then(settle).catch((e) => {
+            historyApiStatus = "error";
+            console.warn("loadRecentHistory rejected", e);
+            settle([]);
+          });
+        }
+      } catch (e) {
+        historyApiStatus = "error";
+        console.warn("loadRecentHistory threw", e);
+        settle([]);
+      }
     });
     const seen = new Set();
-    return (items || [])
+    const mapped = (items || [])
       .filter((item) => item.url)
       .filter((item) => {
         let norm = item.url;
@@ -3641,7 +3710,12 @@ async function loadRecentHistory() {
         title: item.title || item.url,
         url: item.url,
       }));
+    // search 调用成功（即使 0 条）视为 API 可用
+    if (historyApiStatus !== "error") historyApiStatus = "ok";
+    debugLog("history_loaded", { count: mapped.length, status: historyApiStatus });
+    return mapped;
   } catch (_err) {
+    historyApiStatus = "error";
     return [];
   }
 }
@@ -3878,6 +3952,8 @@ function render() {
   applySidebarState();
   renderGroups();
   renderGrid();
+  // 网格渲染后统一刷新空态（含历史分组的不可用/无数据提示）
+  updateEmptyState();
   elements.topSearchWrap.classList.toggle("hidden", !data.settings.showSearch);
   elements.emptyHintToggle.checked = data.settings.emptyHintDisabled;
   elements.btnSelectAll.classList.toggle("hidden", !selectionMode);

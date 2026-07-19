@@ -158,6 +158,16 @@ export function getSiteKey(pageUrl) {
   }
 }
 
+/** 路径深度 >=1 的站点：失败缓存可能来自错误的根路径 favicon，应允许重试 */
+function shouldBypassIconFailureCache(pageUrl) {
+  try {
+    const path = new URL(pageUrl).pathname || "/";
+    return path.split("/").filter(Boolean).length >= 1 && path !== "/";
+  } catch (_e) {
+    return false;
+  }
+}
+
 export function getFaviconCandidates(pageUrl) {
   try {
     if (!isHttpUrl(pageUrl)) return [];
@@ -238,6 +248,26 @@ function getPathSpecificCandidates(host, pathname) {
   if (host === "gitcode.com" || host === "www.gitcode.com") {
     candidates.push("https://gitcode.com/favicon.svg");
     candidates.push("https://gitcode.com/favicon.ico");
+  }
+
+  // SPA 部署在子路径时（如 /list/），favicon 常在该路径下而非站点根
+  // 例：https://new.sharedchat.cc/list/... → /list/logo.svg、/list/favicon.ico
+  if (normalizedPath && normalizedPath !== "/") {
+    const segments = normalizedPath.split("/").filter(Boolean);
+    if (segments.length >= 1) {
+      const base = `https://${host}/${segments[0]}`;
+      candidates.push(`${base}/logo.svg`);
+      candidates.push(`${base}/favicon.svg`);
+      candidates.push(`${base}/favicon.ico`);
+      candidates.push(`${base}/apple-touch-icon.png`);
+    }
+    // 若路径更深，也尝试去掉末段后的目录
+    if (segments.length >= 2) {
+      const dir = `https://${host}/${segments.slice(0, -1).join("/")}`;
+      candidates.push(`${dir}/logo.svg`);
+      candidates.push(`${dir}/favicon.svg`);
+      candidates.push(`${dir}/favicon.ico`);
+    }
   }
 
   return candidates;
@@ -381,7 +411,11 @@ function buildFaviconUrl(url) {
  * @param {number} timeoutMs
  * @returns {Promise<boolean>}
  */
-export function probeImage(url, minSize = 16, timeoutMs = 4000) {
+export async function probeImage(url, minSize = 16, timeoutMs = 4000) {
+  // SVG 在 Image 探测上各浏览器表现不一；扩展里 dataURL/svg 直接视为可用
+  if (typeof url === "string" && (/^data:image\/svg\+xml/i.test(url) || /\.svg(\?|#|$)/i.test(url))) {
+    return true;
+  }
   return new Promise((resolve) => {
     const img = new Image();
     let done = false;
@@ -401,31 +435,114 @@ export function probeImage(url, minSize = 16, timeoutMs = 4000) {
 }
 
 /**
- * 将远程图片 URL 抓取为 dataURL，便于缓存后瞬显
- * 抓取失败或图片无效（如 1x1 透明像素）时返回空字符串
+ * 将远程图片 URL 抓取为 dataURL，便于缓存后瞬显。
+ * 拒绝非图片 Content-Type（例如站点把 /favicon.ico 指到 JSON 网关）。
+ * 抓取失败或图片无效（如 1x1 透明像素）时返回空字符串。
  */
 export async function fetchAsDataUrl(url, timeoutMs = 8000) {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const res = await fetch(url, { signal: controller.signal, credentials: "omit", cache: "force-cache" });
+    const res = await fetch(url, { signal: controller.signal, credentials: "omit", cache: "no-cache" });
     clearTimeout(timer);
     if (!res.ok) return "";
+    const headerType = (res.headers.get("content-type") || "").toLowerCase();
+    // 明显非图片（json/html/text）直接丢弃，避免把网关错误页当图标缓存
+    if (headerType && !headerType.startsWith("image/") && !headerType.includes("svg")) {
+      return "";
+    }
     const blob = await res.blob();
     if (!blob || blob.size === 0 || blob.size > 512 * 1024) return "";
-    const type = blob.type || "image/png";
-    const dataUrl = await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result || "");
-      reader.onerror = () => resolve("");
-      reader.readAsDataURL(new Blob([blob], { type }));
-    });
+    // 再看 blob.type；有些环境 header 为空但 blob 能识别
+    const blobType = (blob.type || "").toLowerCase();
+    if (blobType && !blobType.startsWith("image/") && !blobType.includes("svg")) {
+      return "";
+    }
+    // 魔数校验：JSON/HTML 伪装成 ico 时 blob.type 可能被误标
+    const head = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+    if (!looksLikeImageBytes(head, blobType || headerType)) {
+      return "";
+    }
+    const type = blobType || headerType || "image/png";
+    const safeType = type.startsWith("image/") || type.includes("svg") ? type : "image/png";
+    const buffer = await blob.arrayBuffer();
+    const dataUrl = bytesToDataUrl(new Uint8Array(buffer), safeType.includes("svg") ? "image/svg+xml" : safeType);
     if (!dataUrl) return "";
-    if (await probeImage(dataUrl)) return dataUrl;
+    // SVG 在部分环境 probeImage 不可靠，对 svg 放宽：只要 dataURL 生成成功即接受
+    if (safeType.includes("svg") || String(url).toLowerCase().includes(".svg")) {
+      return dataUrl;
+    }
+    if (typeof Image !== "undefined" && (await probeImage(dataUrl))) return dataUrl;
+    // 无 Image（如部分测试环境）时，魔数已通过则接受位图
+    if (typeof Image === "undefined") return dataUrl;
     return "";
   } catch (_e) {
     return "";
   }
+}
+
+function bytesToDataUrl(bytes, mime) {
+  try {
+    if (typeof Buffer !== "undefined") {
+      return `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`;
+    }
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    const b64 = btoa(binary);
+    return `data:${mime};base64,${b64}`;
+  } catch (_e) {
+    return "";
+  }
+}
+
+/**
+ * 粗检字节是否像图片（防 JSON/HTML 假 ico）
+ * @param {Uint8Array} bytes
+ * @param {string} mimeHint
+ */
+function looksLikeImageBytes(bytes, mimeHint = "") {
+  if (!bytes || bytes.length < 4) return false;
+  const hint = String(mimeHint || "").toLowerCase();
+  if (hint.includes("svg") || hint.includes("image/svg")) {
+    // svg 常以 < 或空白开头
+    const text = String.fromCharCode(...bytes.slice(0, 16));
+    return /<svg|<\?xml|<!doctype\s+svg/i.test(text) || text.trimStart().startsWith("<");
+  }
+  // PNG
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return true;
+  // GIF
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return true;
+  // JPEG
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return true;
+  // WEBP: RIFF....WEBP
+  if (
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes.length >= 12 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return true;
+  }
+  // ICO / CUR
+  if (bytes[0] === 0x00 && bytes[1] === 0x00 && (bytes[2] === 0x01 || bytes[2] === 0x02) && bytes[3] === 0x00) {
+    return true;
+  }
+  // BMP
+  if (bytes[0] === 0x42 && bytes[1] === 0x4d) return true;
+  // 若声明 image/* 但魔数不认识，仍尝试（部分冷门格式）
+  if (hint.startsWith("image/")) return true;
+  // 明确像 JSON / HTML 则拒绝
+  const headText = String.fromCharCode(...bytes.slice(0, 8)).trimStart();
+  if (headText.startsWith("{") || headText.startsWith("[") || headText.startsWith("<!")) return false;
+  return false;
 }
 
 export async function resolveIcon(node, _settings, preloadedCache = null) {
@@ -473,6 +590,18 @@ export async function resolveIcon(node, _settings, preloadedCache = null) {
   }
 
   let cacheChanged = false;
+
+  // 子路径站点（如 /list/ SPA）若此前把错误的 /favicon.ico 标 failed，清除失败标记以便新候选生效
+  if (node.url && shouldBypassIconFailureCache(node.url)) {
+    if (siteKey && isFailedCacheEntry(cache[siteKey])) {
+      delete cache[siteKey];
+      cacheChanged = true;
+    }
+    if (cache[cacheKey] && isFailedCacheEntry(cache[cacheKey])) {
+      delete cache[cacheKey];
+      cacheChanged = true;
+    }
+  }
 
   if (siteKey && cache[siteKey]) {
     if (isFailedCacheEntry(cache[siteKey])) {

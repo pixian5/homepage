@@ -129,4 +129,10 @@ describe("icons", async () => {
     assert.equal(stored.homepage_icon_cache["https://example.com"], undefined);
     assert.equal(stored.homepage_icon_cache["site:example.com"], undefined);
   });
+
+  it("getFaviconCandidates includes subpath logo/favicon for SPA hosts", () => {
+    const list = getFaviconCandidates("https://new.sharedchat.cc/list/#/vibe-code/dashboard");
+    assert.ok(list.some((u) => u.includes("/list/logo.svg")));
+    assert.ok(list.some((u) => u.includes("/list/favicon.ico")));
+  });
 });

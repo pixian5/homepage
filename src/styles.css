@@ -668,6 +668,9 @@ body {
   border-radius: 12px;
   padding: 8px;
   border: 1px solid var(--control-border, rgba(255, 255, 255, 0.12));
+  /* 跟随设置里的字体大小（--base-font） */
+  font-size: var(--base-font);
+  font-family: inherit;
 }
 .context-menu.hidden {
   display: none;
@@ -681,6 +684,8 @@ body {
   padding: 8px 10px;
   cursor: pointer;
   border-radius: 8px;
+  /* 覆盖 UA 默认 button 字号，继承菜单字号 */
+  font: inherit;
 }
 .context-menu button:hover {
   background: rgba(255, 255, 255, 0.08);
@@ -708,6 +713,9 @@ body {
   justify-content: space-between;
   align-items: center;
   gap: 10px;
+  /* 跟随设置字体大小；撤销等操作按钮一并继承 */
+  font-size: var(--base-font);
+  font-family: inherit;
 }
 .toast.toast-success {
   background: rgba(22, 128, 72, 0.92);
@@ -733,6 +741,7 @@ body {
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 2px;
+  font: inherit;
 }
 
 .tooltip {
@@ -743,7 +752,8 @@ body {
   color: #fff;
   padding: 6px 10px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: var(--base-font);
+  font-family: inherit;
   max-width: 360px;
   pointer-events: none;
   line-height: 1.3;

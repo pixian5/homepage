@@ -35,30 +35,40 @@ export async function saveVisitHistory(list) {
 
 /**
  * 记录一次访问（按 URL 去重，最新的排前面）
+ * 串行化写入，避免多标签页并发 RMW 丢记录（Safari 依赖此数据源）。
  * @param {{ url?: string, title?: string }} tab
  * @returns {Promise<VisitEntry[]>}
  */
+let _recordVisitChain = Promise.resolve();
+
 export async function recordVisit(tab) {
-  const url = normalizeUrl(tab?.url || "");
-  if (!url) return loadVisitHistory();
-  // 跳过扩展页 / 浏览器内部页（normalizeUrl 已过滤非 http(s)/ftp）
-  let title = String(tab?.title || "").trim();
-  if (!title) {
-    try {
-      title = new URL(url).hostname;
-    } catch (_e) {
-      title = url;
+  const run = async () => {
+    const url = normalizeUrl(tab?.url || "");
+    if (!url) return loadVisitHistory();
+    let title = String(tab?.title || "").trim();
+    if (!title) {
+      try {
+        title = new URL(url).hostname;
+      } catch (_e) {
+        title = url;
+      }
     }
-  }
-  const now = Date.now();
-  const cutoff = now - VISIT_HISTORY_DAYS * 24 * 60 * 60 * 1000;
-  const prev = await loadVisitHistory();
-  const next = [{ url, title, ts: now }, ...prev.filter((e) => e && e.url !== url && Number(e.ts) >= cutoff)].slice(
-    0,
-    VISIT_HISTORY_LIMIT,
+    const now = Date.now();
+    const cutoff = now - VISIT_HISTORY_DAYS * 24 * 60 * 60 * 1000;
+    const prev = await loadVisitHistory();
+    const next = [{ url, title, ts: now }, ...prev.filter((e) => e && e.url !== url && Number(e.ts) >= cutoff)].slice(
+      0,
+      VISIT_HISTORY_LIMIT,
+    );
+    await saveVisitHistory(next);
+    return next;
+  };
+  const result = _recordVisitChain.then(run, run);
+  _recordVisitChain = result.then(
+    () => undefined,
+    () => undefined,
   );
-  await saveVisitHistory(next);
-  return next;
+  return result;
 }
 
 /**

@@ -114,6 +114,30 @@ describe("bundle-firefox", () => {
     assert.equal(updated, already);
   });
 
+  it("real bundle does not reference missing import aliases", async () => {
+    const outDir = path.join(workdir, "alias-out");
+    const target = path.join(outDir, "app.ff.js");
+    const srcDir = path.join(process.cwd(), "src", "js");
+    const output = await bundle({
+      src: srcDir,
+      out: outDir,
+      target,
+      list: [
+        "shared-utils.js",
+        "data-utils.js",
+        "storage.js",
+        "icons.js",
+        "bing-wallpaper.js",
+        "visit-history.js",
+        "app.js",
+      ],
+      validate: true,
+    });
+    assert.ok(!output.includes("sharedNormalizeUrl"), "import alias must not survive classic bundle");
+    // normalizeUrl must exist as a function from shared-utils
+    assert.match(output, /function normalizeUrl\s*\(/);
+  });
+
   it("patchHtml throws when script tag missing", async () => {
     const htmlPath = path.join(workdir, "newtab.html");
     await writeFile(htmlPath, `<!DOCTYPE html><html><head></head><body></body></html>`, "utf8");

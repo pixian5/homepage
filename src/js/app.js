@@ -23,7 +23,7 @@ import {
   retryFailedIconsIfDue,
   withIconFetchConcurrency,
 } from "./icons.js";
-import { SAFE_URL_PROTOCOLS, normalizeUrl as sharedNormalizeUrl } from "./shared-utils.js";
+import { normalizeUrl, SAFE_URL_PROTOCOLS } from "./shared-utils.js";
 import {
   clearData,
   createBackupSnapshot,
@@ -1144,10 +1144,7 @@ function hideTooltip() {
   elements.tooltip.classList.add("hidden");
 }
 
-/** 统一走 shared-utils，避免 Firefox bundle 全局重名 */
-function normalizeUrl(input) {
-  return sharedNormalizeUrl(input);
-}
+// normalizeUrl 直接从 shared-utils 导入（Firefox bundle 不可使用 import alias）
 
 function normalizeUrlWithScheme(input, scheme) {
   if (!input) return "";
@@ -1190,9 +1187,8 @@ async function openUrl(url, mode) {
 function setBackground(style) {
   if (!style) return;
   if (style.startsWith("data:") || style.startsWith("http")) {
-    // 用 CSS.escape 处理 URL 中的特殊字符，避免引号逃逸注入
-    const safe = CSS.escape(style);
-    elements.background.style.backgroundImage = `url("${safe}")`;
+    // JSON.stringify 给 URL 加引号并转义，比 CSS.escape(标识符) 更适合 url() 值
+    elements.background.style.backgroundImage = `url(${JSON.stringify(style)})`;
   } else if (/^[a-zA-Z-]+\([^)]*\)$/.test(style)) {
     // 仅允许形如 linear-gradient(...) / radial-gradient(...) 的 CSS 函数
     elements.background.style.backgroundImage = style;
@@ -1298,6 +1294,17 @@ function ensureAutoBackupBeforePersist() {
 
 /** 串行化 persist，避免多路 fire-and-forget 互相覆盖 */
 let _persistChain = Promise.resolve();
+
+/**
+ * 不需要等待结果的保存入口：吞掉异常，避免 unhandledrejection 触发全页红条。
+ * 需要根据 ok/warning 提示用户时仍应 await persistData()。
+ */
+function queuePersist() {
+  return persistData().catch((e) => {
+    console.warn("queuePersist failed", e);
+    return { ok: false, warning: null, err: e?.message || String(e) };
+  });
+}
 
 async function persistData() {
   const run = async () => {
@@ -1410,7 +1417,7 @@ function renderGroups() {
         activeGroupId = group.id;
         openFolderId = null;
         data.settings.lastActiveGroupId = activeGroupId;
-        persistData();
+        queuePersist();
         render();
       });
       btn.addEventListener("contextmenu", (e) => {
@@ -1968,7 +1975,7 @@ function finishTouchDrag() {
       if (next !== list) {
         if (inFolder) container.children = next;
         else container.nodes = next;
-        persistData();
+        queuePersist();
         render();
       }
     }
@@ -2121,7 +2128,7 @@ function handleDropOnTile(targetId, x, y) {
     } else {
       container.nodes = next;
     }
-    persistData();
+    queuePersist();
     render();
     return;
   }
@@ -2156,7 +2163,7 @@ function handleDropOnTile(targetId, x, y) {
       next.splice(Math.max(0, Math.min(insertIndex, next.length)), 0, folderId);
       container.nodes = next;
     }
-    persistData();
+    queuePersist();
     render();
     toast(t("folder.created"));
     return;
@@ -2166,7 +2173,7 @@ function handleDropOnTile(targetId, x, y) {
   removeNodeFromLocation(sourceId);
   targetNode.children = targetNode.children || [];
   targetNode.children.push(sourceId);
-  persistData();
+  queuePersist();
   render();
   toast(t("folder.added"));
 }
@@ -2199,7 +2206,7 @@ function dissolveFolder(folderId) {
     group.nodes.push(...children);
   }
   delete data.nodes[folderId];
-  persistData();
+  queuePersist();
   render();
   toast(t("folder.dissolved"));
 }
@@ -2232,7 +2239,7 @@ function moveGroupToIndex(sourceId, index) {
     const group = data.groups.find((g) => g.id === id);
     if (group) group.order = idx;
   });
-  persistData();
+  queuePersist();
   render();
 }
 
@@ -2240,7 +2247,7 @@ function renameGroup(group) {
   const name = prompt(t("group.promptName"), group.name);
   if (!name) return;
   group.name = name.trim();
-  persistData();
+  queuePersist();
   render();
 }
 
@@ -2263,7 +2270,7 @@ function deleteGroup(group) {
   data.groups = data.groups.filter((g) => g.id !== group.id);
   if (activeGroupId === group.id) activeGroupId = data.groups[0].id;
   dedupeData(data);
-  persistData();
+  queuePersist();
   render();
 }
 
@@ -2303,7 +2310,7 @@ function deleteNodes(ids) {
   dedupeData(data);
 
   pendingDeletion = { deletedNodes, placements, ids: [...expanded], timer: null };
-  persistData();
+  queuePersist();
   render();
 
   toast(t("delete.deletedCount", { count: expanded.size }), t("delete.undo"), () => undoDelete());
@@ -2344,7 +2351,7 @@ function undoDelete() {
     }
   }
   dedupeData(data);
-  persistData();
+  queuePersist();
   render();
   toast(t("delete.restored"));
 }
@@ -2457,6 +2464,10 @@ function openAddModal() {
 
   const iconTypeEl = $("fieldIconType");
   const iconExtra = $("iconExtra");
+  if (!iconTypeEl || !iconExtra) {
+    console.warn("openAddModal: required fields missing after render");
+    return;
+  }
 
   function renderIconExtra(type) {
     iconExtra.replaceChildren();
@@ -2498,7 +2509,7 @@ function openAddModal() {
     if (urlInput.select) urlInput.select();
   }
 
-  $("btnFromTab").addEventListener("click", async () => {
+  $("btnFromTab")?.addEventListener("click", async () => {
     const api = getChromeApi();
     if (!api?.tabs) return;
     api.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -2508,20 +2519,22 @@ function openAddModal() {
       }
       const tab = tabs?.[0];
       if (!tab) return;
-      $("fieldUrl").value = tab.url || "";
-      $("fieldTitle").value = tab.title || "";
+      const fieldUrl = $("fieldUrl");
+      const fieldTitle = $("fieldTitle");
+      if (fieldUrl) fieldUrl.value = tab.url || "";
+      if (fieldTitle) fieldTitle.value = tab.title || "";
     });
   });
 
-  $("btnCancel").addEventListener("click", closeModal);
-  $("btnSave").addEventListener("click", async () => {
+  $("btnCancel")?.addEventListener("click", closeModal);
+  $("btnSave")?.addEventListener("click", async () => {
     const snapshot = deepClone(data);
-    const url = normalizeUrl($("fieldUrl").value.trim());
+    const url = normalizeUrl(($("fieldUrl")?.value || "").trim());
     if (!url) {
       toast(t("error.invalidUrl"), "error");
       return;
     }
-    let title = $("fieldTitle").value.trim();
+    let title = ($("fieldTitle")?.value || "").trim();
     const titlePending = !title;
     if (!title) title = new URL(url).hostname;
     let iconType = iconTypeEl.value;
@@ -2534,9 +2547,9 @@ function openAddModal() {
         iconData = await readFileAsDataUrl(file);
       }
     } else if (iconType === "color") {
-      color = $("fieldColor").value;
+      color = $("fieldColor")?.value || "#4dd6a8";
     } else if (iconType === "remote") {
-      iconData = $("fieldRemote").value.trim();
+      iconData = ($("fieldRemote")?.value || "").trim();
     }
 
     const iconPending = iconType === "auto";
@@ -2698,20 +2711,21 @@ function openEditModal(node) {
       btnFetchIcon.disabled = true;
       btnFetchIcon.textContent = t("field.icon.fetching");
       try {
-        // 先清失败/旧缓存，再强制走自动抓取
-        await clearIconCacheForUrl(node.url, url);
+        // 只刷新图标缓存；节点字段等用户点「保存」再提交
+        await clearIconCacheForUrl(url === node.url ? node.url : "", url);
         const ok = await fetchFaviconNow(node.id, url);
         if (ok) {
-          // 同步到表单状态：抓取成功后视为 auto
           if (iconTypeEl) iconTypeEl.value = "auto";
           renderIconExtra("auto");
-          node.url = url;
-          node.iconType = "auto";
-          node.iconData = "";
-          node.iconPending = false;
+          // 表单层面切到 auto，不改 node、不 persist
           toast(t("field.icon.fetchOk"));
-          // 不关弹窗，仅刷新网格图标
-          render();
+          // 若抓取的是当前已保存 URL，刷新网格以显示新图标；URL 有改动时等保存后再显示
+          if (url === node.url) {
+            node.iconType = "auto";
+            node.iconData = "";
+            node.iconPending = false;
+            render();
+          }
         } else {
           toast(t("field.icon.fetchFail"), "warning");
         }
@@ -3132,6 +3146,10 @@ function openSettingsModal() {
       settingsSaveQueued = true;
       return;
     }
+    // 设置表单不在 DOM（已进入导入/导出等子面板）时不要读 null
+    if (!$("settingShowSearch")) {
+      return;
+    }
     settingsSaving = true;
     qsa(".group-name", elements.modal).forEach((input) => {
       const row = input.closest("[data-group]");
@@ -3259,6 +3277,8 @@ async function exportJsonToClipboard() {
 }
 
 function openManualExportModal() {
+  settingsOpen = false;
+  _settingsSaveNow = null;
   const payload = JSON.stringify(data, null, 2);
   const modalHtml = html`
     <h2>导出设置</h2>
@@ -3283,6 +3303,9 @@ function openManualExportModal() {
 }
 
 async function openImportModal() {
+  settingsOpen = false;
+  _settingsSaveNow = null;
+
   const modalHtml = html`
     <h2>导入设置</h2>
     <div class="section">
@@ -3376,6 +3399,7 @@ async function openImportModal() {
       await persistData();
       closeModal();
       render();
+      processPendingIconFetches();
       toast("导入设置成功", "success");
     } catch (err) {
       toast(`导入设置失败，你检查一下你的设置对了嘛，先去你其它浏览器导出设置才能导入设置：${err.message}`, "error");
@@ -3396,6 +3420,9 @@ async function openImportModal() {
 }
 
 function openImportUrlModal() {
+  settingsOpen = false;
+  _settingsSaveNow = null;
+
   if (!data.groups?.length) {
     toast(t("group.noneAvailable"), "warning");
     return;
@@ -3472,7 +3499,7 @@ function openImportUrlModal() {
       } catch (_e) {
         title = "";
       }
-      const node = createItemNode({ url, title, iconType: "auto" });
+      const node = createItemNode({ url, title, iconType: "auto", iconPending: true });
       data.nodes[node.id] = node;
       group.nodes.push(node.id);
     }
@@ -3480,6 +3507,7 @@ function openImportUrlModal() {
     await persistData();
     closeModal();
     render();
+    processPendingIconFetches();
     toast(
       invalid ? `已导入 ${urls.length} 条，忽略 ${invalid} 条` : `已导入 ${urls.length} 条`,
       invalid ? "warning" : "success",
@@ -3534,7 +3562,7 @@ function openBackupModal() {
       }
       data = restoredData;
       skipAutoBackupOnce = true;
-      persistData();
+      queuePersist();
       closeModal();
       render();
       toast("已恢复备份", "success");
@@ -3547,7 +3575,7 @@ function openBackupModal() {
       const id = row.dataset.backup;
       if (!id) return;
       data.backups = (data.backups || []).filter((b) => b.id !== id);
-      persistData();
+      queuePersist();
       openBackupModal();
       toast("已删除备份", "success");
     });
@@ -3634,18 +3662,15 @@ async function fetchFaviconNow(nodeId, url) {
     for (const candidate of candidates) {
       const dataUrl = await fetchAsDataUrl(candidate);
       if (!dataUrl) continue;
+      // 只写图标缓存，不改 node、不 persist——避免「取消」后仍落盘
       cache[url] = { dataUrl, ts: Date.now() };
       if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
       await saveIconCache(cache);
       const target = data?.nodes?.[nodeId];
-      if (target) {
-        target.iconType = "auto";
-        target.iconData = "";
+      // 仅当抓取的就是当前已保存 URL 时，清 pending 标记（仍不 persist，由调用方决定）
+      if (target && target.url === url) {
         target.iconPending = false;
-        target.url = url;
-        target.updatedAt = Date.now();
       }
-      await persistData();
       return true;
     }
     applyFailureToCache(cache, url, cache[url]);
@@ -3653,6 +3678,15 @@ async function fetchFaviconNow(nodeId, url) {
     await saveIconCache(cache);
     return false;
   });
+}
+
+function processPendingIconFetches() {
+  if (!data?.settings?.iconFetch || !data?.nodes) return;
+  for (const node of Object.values(data.nodes)) {
+    if (node?.type === "item" && node.iconPending && node.url) {
+      fetchFaviconInBackground(node.id, node.url);
+    }
+  }
 }
 
 async function fetchFaviconInBackground(nodeId, url) {
@@ -3953,11 +3987,12 @@ async function addHistoryToShortcutsInGroup(node, groupId) {
       title = "";
     }
   }
-  const item = createItemNode({ url: safeUrl, title, iconType: "auto" });
+  const item = createItemNode({ url: safeUrl, title, iconType: "auto", iconPending: true });
   data.nodes[item.id] = item;
   targetGroup.nodes.push(item.id);
   await persistData();
   render();
+  processPendingIconFetches();
   toast(t("toast.addedToShortcuts"));
 }
 
@@ -4144,13 +4179,13 @@ function bindEvents() {
   elements.btnToggleSidebar?.addEventListener("click", () => {
     data.settings.sidebarCollapsed = !data.settings.sidebarCollapsed;
     applySidebarState();
-    persistData();
+    queuePersist();
   });
   elements.recentTab.addEventListener("click", async () => {
     activeGroupId = RECENT_GROUP_ID;
     openFolderId = null;
     data.settings.lastActiveGroupId = activeGroupId;
-    persistData();
+    queuePersist();
     recentItems = await loadRecentHistory();
     render();
   });
@@ -4159,7 +4194,7 @@ function bindEvents() {
     data.groups.push({ id: groupId, name: t("group.new"), order: data.groups.length, nodes: [] });
     activeGroupId = groupId;
     data.settings.lastActiveGroupId = activeGroupId;
-    persistData();
+    queuePersist();
     render();
   });
 
@@ -4491,7 +4526,7 @@ function bindEvents() {
       return;
     }
     group.nodes = next;
-    persistData();
+    queuePersist();
     render();
     dragState = null;
   });
@@ -4510,7 +4545,7 @@ function bindEvents() {
       return;
     }
     folder.children = next;
-    persistData();
+    queuePersist();
     render();
     dragState = null;
   });

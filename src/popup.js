@@ -343,6 +343,7 @@ async function saveToGroup(tab, selectedGroupId, customTitle = "") {
     url,
     title: trimmedTitle || tab.title || hostname,
     iconType: "auto",
+    iconPending: true,
   });
   data.nodes[node.id] = node;
   group.nodes.push(node.id);

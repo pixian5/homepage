@@ -2592,32 +2592,33 @@ function openAddModal() {
 }
 
 function openEditModal(node) {
+  // 嵌套 html 片段必须 rawHtml，否则会被外层 html 转义成纯文本（编辑弹窗炸裂）
+  const itemFields =
+    node.type === "item"
+      ? rawHtml(html`
+          <div class="section">
+            <label>${t("field.url")}</label>
+            <input id="fieldUrl" type="url" value="${node.url || ""}" />
+          </div>
+          <div class="section">
+            <label>${t("field.iconSource")}</label>
+            <select id="fieldIconType">
+              <option value="auto">${t("field.icon.auto")}</option>
+              <option value="upload">${t("field.icon.upload")}</option>
+              <option value="color">${t("field.icon.color")}</option>
+              <option value="remote">${t("field.icon.remote")}</option>
+            </select>
+          </div>
+          <div id="iconExtra" class="section"></div>
+        `)
+      : "";
   const modalHtml = html`
     <h2>${t("modal.edit.title")}</h2>
     <div class="section">
       <label>${t("field.title")}</label>
       <input id="fieldTitle" type="text" value="${node.title || ""}" />
     </div>
-    ${
-      node.type === "item"
-        ? html`
-    <div class="section">
-      <label>${t("field.url")}</label>
-      <input id="fieldUrl" type="url" value="${node.url || ""}" />
-    </div>
-    <div class="section">
-      <label>${t("field.iconSource")}</label>
-      <select id="fieldIconType">
-        <option value="auto">${t("field.icon.auto")}</option>
-        <option value="upload">${t("field.icon.upload")}</option>
-        <option value="color">${t("field.icon.color")}</option>
-        <option value="remote">${t("field.icon.remote")}</option>
-      </select>
-    </div>
-    <div id="iconExtra" class="section"></div>
-    `
-        : ""
-    }
+    ${itemFields}
     <div class="actions">
       <button id="btnCancel" class="icon-btn">${t("common.cancel")}</button>
       <button id="btnSave" class="icon-btn">${t("common.save")}</button>
@@ -2627,9 +2628,14 @@ function openEditModal(node) {
 
   if (node.type === "item") {
     const iconTypeEl = $("fieldIconType");
+    if (!iconTypeEl) {
+      console.warn("openEditModal: fieldIconType missing after render");
+      return;
+    }
     iconTypeEl.value = node.iconType === "letter" ? "auto" : node.iconType || "auto";
     const iconExtra = $("iconExtra");
     function renderIconExtra(type) {
+      if (!iconExtra) return;
       iconExtra.replaceChildren();
       if (type === "upload") {
         const label = document.createElement("label");
@@ -2664,46 +2670,43 @@ function openEditModal(node) {
     iconTypeEl.addEventListener("change", () => renderIconExtra(iconTypeEl.value));
   }
 
-  $("btnCancel").addEventListener("click", closeModal);
-  $("btnSave").addEventListener("click", async () => {
+  $("btnCancel")?.addEventListener("click", closeModal);
+  $("btnSave")?.addEventListener("click", async () => {
     const snapshot = deepClone(data);
     pushBackup();
 
-    // 记录原始值以检测变化
     const oldUrl = node.url;
     const oldIconType = node.iconType;
 
-    node.title = $("fieldTitle").value.trim() || node.title;
+    const titleEl = $("fieldTitle");
+    node.title = titleEl?.value?.trim() || node.title;
     if (node.type === "item") {
-      const url = normalizeUrl($("fieldUrl").value.trim());
+      const url = normalizeUrl(($("fieldUrl")?.value || "").trim());
       if (!url) {
         toast(t("error.invalidUrl"), "error");
         return;
       }
       node.url = url;
-      const iconType = $("fieldIconType").value;
+      const iconType = $("fieldIconType")?.value || "auto";
       node.iconType = iconType;
       if (iconType === "upload") {
         const file = $("fieldUpload")?.files?.[0];
         if (file) node.iconData = await readFileAsDataUrl(file);
       } else if (iconType === "color") {
-        node.color = $("fieldColor").value;
+        node.color = $("fieldColor")?.value || node.color;
         node.iconData = "";
       } else if (iconType === "remote") {
-        node.iconData = $("fieldRemote").value.trim();
+        node.iconData = ($("fieldRemote")?.value || "").trim();
       } else {
         node.iconData = "";
       }
 
-      // 检查是否需要清除缓存并重新获取图标
       const urlChanged = oldUrl !== url;
       const iconTypeChanged = oldIconType !== iconType;
       const shouldRefetchIcon = urlChanged || (iconTypeChanged && iconType === "auto");
 
       if (shouldRefetchIcon) {
-        // 清除旧缓存
         await clearIconCacheForUrl(oldUrl, url);
-        // 标记需要重新获取图标
         if (iconType === "auto") {
           node.iconPending = true;
         }
@@ -2719,12 +2722,9 @@ function openEditModal(node) {
     }
     render();
     closeModal();
-
-    // 如果需要，在后台重新获取图标
-    if (node.type === "item" && node.iconPending && node.iconType === "auto") {
+    if (node.type === "item" && node.iconPending) {
       fetchFaviconInBackground(node.id, node.url);
     }
-
     if (result.warning === "local_trimmed_backups") {
       toast(t("toast.save.trimBackup"), "warning");
     } else if (result.warning === "local_trimmed_icons") {

@@ -2396,6 +2396,72 @@ function openModal(html) {
   elements.modalOverlay.removeAttribute("inert");
   elements.modalOverlay.classList.remove("hidden");
   elements.modalOverlay.setAttribute("aria-hidden", "false");
+  // 所有面板：回车默认触发主操作（保存/导入等）；搜索框除外（由搜索自己处理）
+  bindModalEnterToDefaultAction();
+}
+
+/**
+ * 弹窗内 Enter → 点击默认主按钮。
+ * 优先级：btnSave > btnImportNow > btnAddHistorySave > btnImportUrlHttps > btnCopy > btnClose
+ * 排除：顶部搜索、textarea（多行编辑用 Enter 换行）、已禁用的按钮。
+ */
+function bindModalEnterToDefaultAction() {
+  const modal = elements.modal;
+  if (!modal) return;
+  // 去掉旧监听（每次 openModal 重绑）
+  if (modal._enterHandler) {
+    modal.removeEventListener("keydown", modal._enterHandler);
+  }
+  const handler = (e) => {
+    if (e.key !== "Enter") return;
+    if (e.isComposing || e.keyCode === 229) return; // IME 组字中不触发
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+
+    // 搜索框：保持原搜索行为，不在这里处理
+    if (target.id === "topSearch" || target.closest?.("#topSearchWrap")) return;
+
+    // 多行文本：Enter 换行
+    const tag = (target.tagName || "").toLowerCase();
+    if (tag === "textarea") return;
+
+    // contenteditable
+    if (target.isContentEditable) return;
+
+    // 已在可点击主按钮上：让浏览器默认/既有 click 走
+    // 对 button 也统一走「找主按钮 click」，避免 type=button 时 Enter 无效果
+    const defaultBtn = findModalDefaultActionButton(modal);
+    if (!defaultBtn || defaultBtn.disabled) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    defaultBtn.click();
+  };
+  modal._enterHandler = handler;
+  modal.addEventListener("keydown", handler);
+}
+
+/**
+ * @param {HTMLElement} modal
+ * @returns {HTMLButtonElement | null}
+ */
+function findModalDefaultActionButton(modal) {
+  const preferredIds = ["btnSave", "btnImportNow", "btnAddHistorySave", "btnImportUrlHttps", "btnCopy", "btnClose"];
+  for (const id of preferredIds) {
+    const btn = modal.querySelector?.(`#${id}`);
+    if (btn && !btn.disabled && btn.offsetParent !== null) return btn;
+  }
+  // 设置等无明确 save id 的面板：actions 区最后一个非 danger 按钮，否则最后一个按钮
+  const actions = modal.querySelector?.(".actions, .settings-actions");
+  if (actions) {
+    const buttons = [...actions.querySelectorAll("button.icon-btn, button")].filter(
+      (b) => !b.disabled && !b.classList.contains("danger"),
+    );
+    if (buttons.length) return buttons[buttons.length - 1];
+  }
+  return null;
 }
 
 async function closeModal() {
@@ -4403,6 +4469,13 @@ function bindEvents() {
   });
 
   document.addEventListener("keydown", (e) => {
+    // 弹窗打开时：Enter 交给 modal 内逻辑；不跑网格键盘导航
+    const modalOpen = elements.modalOverlay && !elements.modalOverlay.classList.contains("hidden");
+    if (modalOpen && e.key === "Enter") {
+      // 搜索仍允许（不在 modal 内）
+      return;
+    }
+
     if (!data?.settings?.keyboardNav) return;
     // 输入框内不劫持方向键
     const tag = (e.target?.tagName || "").toLowerCase();
@@ -4415,12 +4488,15 @@ function bindEvents() {
       return;
     }
     if (e.key === "/") {
+      // 弹窗打开时不要抢焦点到搜索
+      if (modalOpen) return;
       elements.topSearch.focus();
       e.preventDefault();
       return;
     }
     // 方向键在网格卡片间移动焦点
     if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+      if (modalOpen) return;
       const grid = openFolderId ? elements.folderGrid : elements.grid;
       const tiles = qsa(".tile", grid);
       if (!tiles.length) return;

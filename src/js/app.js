@@ -275,6 +275,7 @@ const I18N = {
     "settings.action.clearData": "清空数据",
     "settings.action.clearCards": "删除所有分组、卡片",
     "settings.action.refreshIcons": "刷新所有图标",
+    "settings.action.refreshingIcons": "刷新中",
     "settings.showSearch": "显示顶部搜索框",
     "settings.searchEngine": "搜索引擎",
     "settings.searchEngine.custom": "自定义",
@@ -401,6 +402,7 @@ const I18N = {
     "settings.action.clearData": "清空資料",
     "settings.action.clearCards": "刪除所有分組、卡片",
     "settings.action.refreshIcons": "重新整理所有圖示",
+    "settings.action.refreshingIcons": "重新整理中",
     "settings.showSearch": "顯示頂部搜尋框",
     "settings.searchEngine": "搜尋引擎",
     "settings.searchEngine.custom": "自訂",
@@ -483,6 +485,7 @@ const I18N = {
     "settings.action.clearData": "Clear Data",
     "settings.action.clearCards": "Delete All Groups/Cards",
     "settings.action.refreshIcons": "Refresh All Icons",
+    "settings.action.refreshingIcons": "Refreshing…",
     "settings.showSearch": "Show Top Search",
     "settings.searchEngine": "Search Engine",
     "settings.searchEngine.custom": "Custom",
@@ -2948,9 +2951,26 @@ function openSettingsModal() {
     toast(t("toast.cardsCleared"));
   });
   $("btnRefreshIcons").addEventListener("click", async () => {
-    await refreshAllIcons(Object.values(data.nodes));
-    render();
-    toast(t("toast.iconsRefreshed"));
+    const btn = $("btnRefreshIcons");
+    if (!btn || btn.disabled) return;
+    const originalLabel = t("settings.action.refreshIcons");
+    btn.disabled = true;
+    btn.textContent = t("settings.action.refreshingIcons");
+    try {
+      await refreshAllIcons(Object.values(data.nodes || {}));
+      render();
+      toast(t("toast.iconsRefreshed"));
+    } catch (e) {
+      console.warn("refreshAllIcons failed", e);
+      toast(t("toast.iconsRefreshed"));
+    } finally {
+      // 设置面板可能仍开着；若按钮还在 DOM 上则恢复文案
+      const live = $("btnRefreshIcons");
+      if (live) {
+        live.disabled = false;
+        live.textContent = originalLabel;
+      }
+    }
   });
 
   const saveSettings = async ({ close = false, toastOnSave = false } = {}) => {

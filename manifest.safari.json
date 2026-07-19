@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "我的首页",
-  "version": "17.8",
+  "version": "17.9",
   "description": "自定义新标签页",
   "action": {
     "default_title": "保存当前网页",
@@ -10,7 +10,7 @@
   "chrome_url_overrides": {
     "newtab": "newtab.html"
   },
-  "permissions": ["storage", "scripting", "tabs", "activeTab"],
+  "permissions": ["storage", "unlimitedStorage", "scripting", "tabs", "activeTab"],
   "host_permissions": ["<all_urls>"],
   "content_scripts": [
     {

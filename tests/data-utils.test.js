@@ -7,6 +7,7 @@ import {
   collectNodeSubtreeIds,
   createItemNode,
   dedupeData,
+  isSafeCssColor,
   moveNodeInList,
   pickLatestData,
   repairHomepageData,
@@ -337,6 +338,42 @@ describe("data-utils", () => {
       assert.doesNotThrow(() => repairHomepageData("garbage", defaults));
       assert.doesNotThrow(() => repairHomepageData(null, defaults));
       assert.doesNotThrow(() => repairHomepageData({ nodes: [], groups: "x" }, defaults));
+    });
+
+    it("sanitizes unsafe search engine and background color", () => {
+      const data = {
+        schemaVersion: 1,
+        groups: [],
+        nodes: {
+          n1: { type: "item", iconType: "upload", iconData: "javascript:alert(1)" },
+        },
+        settings: {
+          searchEngineUrl: "javascript:alert(1)",
+          backgroundColor: "red; background-image: url(//evil)",
+        },
+      };
+      const repaired = repairHomepageData(data, {
+        searchEngineUrl: "https://www.bing.com/search?q=",
+        backgroundColor: "#0b0f14",
+      });
+      assert.equal(repaired.settings.searchEngineUrl, "https://www.bing.com/search?q=");
+      assert.equal(repaired.settings.backgroundColor, "#0b0f14");
+      assert.equal(repaired.nodes.n1.iconType, "auto");
+      assert.equal(repaired.nodes.n1.iconData, "");
+    });
+  });
+
+  describe("isSafeCssColor", () => {
+    it("accepts hex and named colors", () => {
+      assert.equal(isSafeCssColor("#fff"), true);
+      assert.equal(isSafeCssColor("#0b0f14"), true);
+      assert.equal(isSafeCssColor("red"), true);
+      assert.equal(isSafeCssColor("rgb(1,2,3)"), true);
+    });
+    it("rejects injection-like strings", () => {
+      assert.equal(isSafeCssColor("red; background-image:url(x)"), false);
+      assert.equal(isSafeCssColor("url(https://x)"), false);
+      assert.equal(isSafeCssColor(""), false);
     });
   });
 });

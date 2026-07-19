@@ -5,6 +5,7 @@ import {
   collectNodeSubtreeIds,
   createItemNode,
   dedupeData,
+  isSafeCssColor,
   moveNodeInList,
   repairHomepageData,
 } from "./data-utils.js";
@@ -298,7 +299,7 @@ const I18N = {
     "settings.fontSize": "字体大小",
     "settings.defaultGroup": "浏览网页时插件保存网页到分组",
     "settings.lastAddedGroup": "上次添加的分组",
-    "settings.hideSidebar": "隐藏分组",
+    "settings.hideSidebar": "完全隐藏侧边栏",
     "settings.sync": "启用同步",
     "settings.openMode": "网页打开方式",
     "settings.maxBackups": "最大备份数量（0 表示不备份）",
@@ -424,7 +425,7 @@ const I18N = {
     "settings.fontSize": "字體大小",
     "settings.defaultGroup": "瀏覽網頁時插件保存網頁到分組",
     "settings.lastAddedGroup": "上次新增的分組",
-    "settings.hideSidebar": "隱藏分組",
+    "settings.hideSidebar": "完全隱藏側邊欄",
     "settings.sync": "啟用同步",
     "settings.openMode": "網頁開啟方式",
     "settings.maxBackups": "最大備份數量（0 代表不備份）",
@@ -506,7 +507,7 @@ const I18N = {
     "settings.fontSize": "Font Size",
     "settings.defaultGroup": "Save web pages to group from extension",
     "settings.lastAddedGroup": "Last added group",
-    "settings.hideSidebar": "Hide Sidebar",
+    "settings.hideSidebar": "Hide sidebar completely",
     "settings.sync": "Enable Sync",
     "settings.openMode": "Link Open Mode",
     "settings.maxBackups": "Max backups (0 = disabled)",
@@ -728,9 +729,19 @@ function currentLang() {
   return detectPreferredLanguage();
 }
 
+/**
+ * 解析语言字典：残缺语言包以 en/zh-CN 为底，再叠本语言，避免界面大量 raw key / 半截翻译。
+ * zh-TW 以 zh-CN 为底；其它非中文以 en 为底。
+ */
+function resolveDict(lang) {
+  if (lang === "zh-CN") return I18N["zh-CN"] || {};
+  if (lang === "zh-TW") return { ...(I18N["zh-CN"] || {}), ...(I18N["zh-TW"] || {}) };
+  return { ...(I18N.en || I18N["zh-CN"] || {}), ...(I18N[lang] || {}) };
+}
+
 function t(key, vars = null) {
   const lang = currentLang();
-  const dict = I18N[lang] || I18N.en || I18N["zh-CN"];
+  const dict = resolveDict(lang);
   const text = dict[key] || I18N.en?.[key] || I18N["zh-CN"]?.[key] || key;
   if (!vars) return text;
   return text.replace(/\{(\w+)\}/g, (_, name) => vars[name] ?? "");
@@ -1122,6 +1133,12 @@ function applyBackgroundOverlay() {
   document.documentElement.style.setProperty("--bg-overlay", "rgba(0, 0, 0, 0)");
 }
 
+function setSolidBackgroundColor(color) {
+  const safe = isSafeCssColor(color) ? String(color).trim() : "#0b0f14";
+  elements.background.style.backgroundImage = "none";
+  elements.background.style.background = safe;
+}
+
 async function loadBackground() {
   const settings = data.settings;
   elements.background.classList.add("is-loading");
@@ -1133,16 +1150,16 @@ async function loadBackground() {
       if (info.failed) toast(t("background.fetchFailedCache"));
       else if (!info.fromCache) toast(t("background.updatedToday"));
     } else {
-      elements.background.style.background = settings.backgroundColor;
+      setSolidBackgroundColor(settings.backgroundColor);
       toast(t("background.failedDefault"));
     }
   } else if (settings.backgroundType === "color") {
-    elements.background.style.backgroundImage = "none";
-    elements.background.style.background = settings.backgroundColor;
+    setSolidBackgroundColor(settings.backgroundColor);
   } else if (settings.backgroundType === "gradient") {
     setBackground(settings.backgroundGradient);
   } else if (settings.backgroundType === "custom") {
-    setBackground(settings.backgroundCustom || settings.backgroundColor);
+    if (settings.backgroundCustom) setBackground(settings.backgroundCustom);
+    else setSolidBackgroundColor(settings.backgroundColor);
   }
 
   applyBackgroundOverlay();
@@ -1497,6 +1514,26 @@ async function renderGrid() {
         }
         openUrl(url);
       }
+    });
+
+    tile.addEventListener("keydown", (e) => {
+      if (!data.settings.keyboardNav) return;
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      if (selectionMode) {
+        toggleSelect(node.id, idx, e.shiftKey);
+        return;
+      }
+      if (node.type === "folder") {
+        openFolder(node.id);
+        return;
+      }
+      const url = normalizeUrl(node.url);
+      if (!url) {
+        toast(t("error.invalidUrlSimple"));
+        return;
+      }
+      openUrl(url);
     });
 
     tile.addEventListener("contextmenu", (e) => {
@@ -4033,10 +4070,41 @@ function bindEvents() {
   });
 
   document.addEventListener("keydown", (e) => {
-    if (!data.settings.keyboardNav) return;
-    if (e.key === "Escape" && openFolderId) closeFolder();
+    if (!data?.settings?.keyboardNav) return;
+    // 输入框内不劫持方向键
+    const tag = (e.target?.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || e.target?.isContentEditable) {
+      if (e.key === "Escape" && openFolderId) closeFolder();
+      return;
+    }
+    if (e.key === "Escape" && openFolderId) {
+      closeFolder();
+      return;
+    }
     if (e.key === "/") {
       elements.topSearch.focus();
+      e.preventDefault();
+      return;
+    }
+    // 方向键在网格卡片间移动焦点
+    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+      const grid = openFolderId ? elements.folderGrid : elements.grid;
+      const tiles = qsa(".tile", grid);
+      if (!tiles.length) return;
+      const active = document.activeElement;
+      let idx = tiles.indexOf(active);
+      if (idx < 0) idx = 0;
+      else {
+        const cols = Math.max(
+          1,
+          Number.parseInt(getComputedStyle(grid).gridTemplateColumns.split(" ").length, 10) || 1,
+        );
+        if (e.key === "ArrowLeft") idx = Math.max(0, idx - 1);
+        else if (e.key === "ArrowRight") idx = Math.min(tiles.length - 1, idx + 1);
+        else if (e.key === "ArrowUp") idx = Math.max(0, idx - cols);
+        else if (e.key === "ArrowDown") idx = Math.min(tiles.length - 1, idx + cols);
+      }
+      tiles[idx]?.focus?.();
       e.preventDefault();
     }
   });

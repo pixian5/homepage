@@ -325,5 +325,45 @@ export function repairHomepageData(input, defaultSettings = {}) {
     data.lastUpdated = Number(data.lastUpdated) || 0;
   }
 
+  // 设置字段防御：搜索引擎 URL / 纯色背景等来自导入时可能带脏值
+  if (data.settings) {
+    const engine = String(data.settings.searchEngineUrl || "").trim();
+    if (engine) {
+      try {
+        const u = new URL(engine);
+        if (u.protocol !== "http:" && u.protocol !== "https:") {
+          data.settings.searchEngineUrl = defaultSettings.searchEngineUrl || "https://www.bing.com/search?q=";
+        }
+      } catch (_e) {
+        data.settings.searchEngineUrl = defaultSettings.searchEngineUrl || "https://www.bing.com/search?q=";
+      }
+    }
+    const color = String(data.settings.backgroundColor || "").trim();
+    if (color && !isSafeCssColor(color)) {
+      data.settings.backgroundColor = defaultSettings.backgroundColor || "#0b0f14";
+    }
+    // 上传图标只允许 data:image/*
+    for (const node of Object.values(data.nodes || {})) {
+      if (node?.iconType === "upload" && node.iconData && !String(node.iconData).startsWith("data:image/")) {
+        node.iconData = "";
+        node.iconType = "auto";
+      }
+    }
+  }
+
   return data;
+}
+
+/**
+ * 允许的 CSS 颜色：hex / rgb(a) / 纯字母命名色
+ * @param {string} input
+ * @returns {boolean}
+ */
+export function isSafeCssColor(input) {
+  const raw = String(input || "").trim();
+  if (!raw) return false;
+  if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(raw)) return true;
+  if (/^rgba?\(\s*[\d.]+(?:\s*,\s*[\d.%]+){2,3}\s*\)$/.test(raw)) return true;
+  if (/^[a-zA-Z]{1,30}$/.test(raw)) return true;
+  return false;
 }

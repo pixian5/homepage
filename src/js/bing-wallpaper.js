@@ -62,7 +62,10 @@ export async function getBingWallpaper(language = "") {
     const json = await res.json();
     const img = json?.images?.[0];
     if (!img?.url) throw new Error("no bing image");
-    const fullUrl = img.url.startsWith("http") ? img.url : `https://www.bing.com${img.url}`;
+    let fullUrl = img.url || "";
+    if (fullUrl.startsWith("//")) fullUrl = `https:${fullUrl}`;
+    else if (fullUrl.startsWith("/")) fullUrl = `https://www.bing.com${fullUrl}`;
+    else if (!/^https?:\/\//i.test(fullUrl)) fullUrl = `https://www.bing.com/${fullUrl.replace(/^\/+/, "")}`;
     const imgRes = await fetchWithTimeout(fullUrl, { cache: "no-store" });
     if (!imgRes.ok) throw new Error(`bing image http ${imgRes.status}`);
     const blob = await imgRes.blob();

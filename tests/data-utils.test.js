@@ -4,6 +4,7 @@ import {
   buildBackupFingerprint,
   buildBackupSettingsSnapshot,
   cloneDataSnapshot,
+  collectNodeSubtreeIds,
   createItemNode,
   dedupeData,
   moveNodeInList,
@@ -129,7 +130,8 @@ describe("data-utils", () => {
 
     it("cleans folder children", () => {
       const data = {
-        groups: [],
+        // 文件夹必须挂在分组下，否则孤儿 GC 会一并清除
+        groups: [{ id: "g1", nodes: ["f1"] }],
         nodes: {
           f1: { id: "f1", type: "folder", children: ["n1", "n1", "missing"] },
           n1: { id: "n1", type: "item" },
@@ -138,6 +140,37 @@ describe("data-utils", () => {
       const changed = dedupeData(data);
       assert.strictEqual(changed, true);
       assert.deepStrictEqual(data.nodes.f1.children, ["n1"]);
+      assert.ok(data.nodes.n1);
+    });
+
+    it("removes orphan nodes not reachable from any group", () => {
+      const data = {
+        groups: [{ id: "g1", nodes: ["n1"] }],
+        nodes: {
+          n1: { id: "n1", type: "item" },
+          orphan: { id: "orphan", type: "item" },
+          deadFolder: { id: "deadFolder", type: "folder", children: ["orphanChild"] },
+          orphanChild: { id: "orphanChild", type: "item" },
+        },
+      };
+      const changed = dedupeData(data);
+      assert.strictEqual(changed, true);
+      assert.deepStrictEqual(Object.keys(data.nodes).sort(), ["n1"]);
+    });
+
+    it("keeps nested folder descendants reachable from groups", () => {
+      const data = {
+        groups: [{ id: "g1", nodes: ["f1"] }],
+        nodes: {
+          f1: { id: "f1", type: "folder", children: ["f2"] },
+          f2: { id: "f2", type: "folder", children: ["n1"] },
+          n1: { id: "n1", type: "item" },
+        },
+      };
+      const changed = dedupeData(data);
+      assert.strictEqual(changed, false);
+      assert.ok(data.nodes.f2);
+      assert.ok(data.nodes.n1);
     });
 
     it("returns false when no changes", () => {
@@ -200,6 +233,21 @@ describe("data-utils", () => {
       const a = createItemNode({ url: "https://a.com" });
       const b = createItemNode({ url: "https://b.com" });
       assert.notStrictEqual(a.id, b.id);
+    });
+  });
+
+  describe("collectNodeSubtreeIds", () => {
+    it("collects folder and nested children", () => {
+      const data = {
+        nodes: {
+          f1: { type: "folder", children: ["f2", "n1"] },
+          f2: { type: "folder", children: ["n2"] },
+          n1: { type: "item" },
+          n2: { type: "item" },
+        },
+      };
+      const ids = collectNodeSubtreeIds(data, "f1");
+      assert.deepStrictEqual(new Set(ids), new Set(["f1", "f2", "n1", "n2"]));
     });
   });
 

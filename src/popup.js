@@ -10,7 +10,7 @@ import {
   storageSet as sharedStorageSet,
   storageArea,
 } from "./js/shared-utils.js";
-import { getStorageKey } from "./js/storage.js";
+import { getStorageKey, loadData } from "./js/storage.js";
 
 const ROOT_KEY = getStorageKey();
 const SYNC_ITEM_QUOTA_BYTES = 7500;
@@ -46,6 +46,9 @@ const POPUP_I18N = {
     savedToGroup: "已保存到分组：{name}",
     unnamed: "未命名",
     loadFailed: "加载失败，请关闭后重试",
+    invalidUrl: "当前页面无法保存（仅支持 http/https/ftp）",
+    saveFailed: "保存失败，请重试",
+    noData: "尚未初始化数据，请先打开一次新标签页",
   },
   "zh-TW": {
     title: "新增目前分頁",
@@ -56,6 +59,9 @@ const POPUP_I18N = {
     savedToGroup: "已儲存到分組：{name}",
     unnamed: "未命名",
     loadFailed: "載入失敗，請關閉後重試",
+    invalidUrl: "目前頁面無法儲存（僅支援 http/https/ftp）",
+    saveFailed: "儲存失敗，請重試",
+    noData: "尚未初始化資料，請先開啟一次新分頁",
   },
   en: {
     title: "Add Current Tab",
@@ -66,8 +72,20 @@ const POPUP_I18N = {
     savedToGroup: "Saved to group: {name}",
     unnamed: "Unnamed",
     loadFailed: "Load failed, close and retry",
+    invalidUrl: "This page cannot be saved (http/https/ftp only)",
+    saveFailed: "Save failed, please retry",
+    noData: "Data not initialized. Open a new tab once first.",
   },
 };
+
+function showPopupError(message) {
+  const empty = document.getElementById("empty");
+  if (empty) {
+    empty.textContent = message;
+    empty.classList.remove("hidden");
+  }
+  document.body.classList.remove("hidden");
+}
 
 function tr(key, language, vars = null) {
   const lang = normalizeLanguage(language) || "zh-CN";
@@ -129,16 +147,18 @@ function appendLog(entry) {
 }
 
 /**
- * 加载最新数据
+ * 加载最新数据（复用 storage.loadData，首启会创建默认分组）
  * @returns {Promise<{data: object | null, useSync: boolean}>}
  */
 async function loadLatestData() {
-  const localData = (await storageGet(ROOT_KEY, false)) || null;
+  // loadData 负责本地首启 bootstrap + migrate + repair
+  const localData = await loadData();
   const useSync = !!localData?.settings?.syncEnabled;
   if (!useSync) return { data: localData, useSync: false };
   const syncData = (await storageGet(ROOT_KEY, true)) || null;
+  // sync 缺失时 pickLatest 保留 local，避免空远端覆盖
   const data = pickLatestData(localData, syncData);
-  return { data, useSync: true };
+  return { data: data || localData, useSync: true };
 }
 
 /**
@@ -297,18 +317,18 @@ async function saveToGroup(tab, selectedGroupId, customTitle = "") {
   const url = normalizeUrl(tab?.url);
   if (!url) {
     await appendLog({ ts: Date.now(), stage: "invalid_url", raw: tab?.url || "" });
-    return null;
+    return { error: "invalid_url" };
   }
   const { data, useSync } = await loadLatestData();
   if (!data?.groups || !data.nodes) {
     await appendLog({ ts: Date.now(), stage: "no_data" });
-    return null;
+    return { error: "no_data" };
   }
 
   const group = data.groups.find((g) => g.id === selectedGroupId) || data.groups[0];
   if (!group) {
     await appendLog({ ts: Date.now(), stage: "no_group" });
-    return null;
+    return { error: "no_group" };
   }
   if (!Array.isArray(group.nodes)) group.nodes = [];
 
@@ -337,20 +357,40 @@ async function saveToGroup(tab, selectedGroupId, customTitle = "") {
     const size = estimateBytes(payload);
     if (size > SYNC_ITEM_QUOTA_BYTES) {
       data.settings.syncEnabled = false;
-      await storageSet({ [ROOT_KEY]: data }, false);
-      await appendLog({ ts: Date.now(), stage: "sync_quota_disable", bytes: size });
-      return null;
+      const localErr = await storageSet({ [ROOT_KEY]: data }, false);
+      await appendLog({ ts: Date.now(), stage: "sync_quota_disable", bytes: size, localErr });
+      if (localErr) return { error: "save_failed" };
+      return {
+        groupId: group.id,
+        groupName: group.name || "",
+        fontSize: data.settings.fontSize || DEFAULT_FONT_SIZE,
+        warning: "sync_quota",
+      };
     }
     const err = await storageSet({ [ROOT_KEY]: payload }, true);
     if (err) {
       data.settings.syncEnabled = false;
-      await storageSet({ [ROOT_KEY]: data }, false);
-      await appendLog({ ts: Date.now(), stage: "sync_error", error: err });
-      return null;
+      const localErr = await storageSet({ [ROOT_KEY]: data }, false);
+      await appendLog({ ts: Date.now(), stage: "sync_error", error: err, localErr });
+      if (localErr) return { error: "save_failed" };
+      return {
+        groupId: group.id,
+        groupName: group.name || "",
+        fontSize: data.settings.fontSize || DEFAULT_FONT_SIZE,
+        warning: "sync_error",
+      };
     }
-    await storageSet({ [ROOT_KEY]: data }, false);
+    const localErr = await storageSet({ [ROOT_KEY]: data }, false);
+    if (localErr) {
+      await appendLog({ ts: Date.now(), stage: "local_error_after_sync", error: localErr });
+      // sync 已成功，仍提示成功
+    }
   } else {
-    await storageSet({ [ROOT_KEY]: data }, false);
+    const localErr = await storageSet({ [ROOT_KEY]: data }, false);
+    if (localErr) {
+      await appendLog({ ts: Date.now(), stage: "local_error", error: localErr });
+      return { error: "save_failed" };
+    }
   }
   await appendLog({ ts: Date.now(), stage: "saved", url, group: group.id });
   return { groupId: group.id, groupName: group.name || "", fontSize: data.settings.fontSize || DEFAULT_FONT_SIZE };
@@ -441,11 +481,19 @@ async function showToastInTab(tab, message, fontSize) {
       });
       return true;
     }
-    return true;
+    // 没有任何注入 API 时不能谎报成功
+    return false;
   } catch (e) {
     console.warn("showToastInTab failed", e);
     return false;
   }
+}
+
+function explainSaveError(result) {
+  if (!result?.error) return "";
+  if (result.error === "invalid_url") return tr("invalidUrl", popupLanguage);
+  if (result.error === "no_data" || result.error === "no_group") return tr("noData", popupLanguage);
+  return tr("saveFailed", popupLanguage);
 }
 
 /**
@@ -461,17 +509,25 @@ async function init() {
   const isFixed = data?.settings?.defaultGroupMode === "fixed";
   const hasFixedGroup = !!(fixedId && data?.groups?.some((g) => g.id === fixedId));
   if (isFixed && hasFixedGroup) {
-    if (tab) {
-      const result = await saveToGroup(tab, fixedId);
-      if (result) {
-        await showToastInTab(
-          tab,
-          tr("savedToGroup", popupLanguage, { name: result.groupName || tr("unnamed", popupLanguage) }),
-          result.fontSize,
-        );
-      }
+    if (!tab) {
+      showPopupError(tr("noTab", popupLanguage));
+      return;
     }
-    window.close();
+    const result = await saveToGroup(tab, fixedId);
+    if (result && !result.error) {
+      await showToastInTab(
+        tab,
+        tr("savedToGroup", popupLanguage, { name: result.groupName || tr("unnamed", popupLanguage) }),
+        result.fontSize,
+      );
+      window.close();
+      return;
+    }
+    showPopupError(explainSaveError(result) || tr("saveFailed", popupLanguage));
+    return;
+  }
+  if (!data?.groups?.length) {
+    showPopupError(tr("noData", popupLanguage));
     return;
   }
   renderTab(tab);
@@ -484,21 +540,28 @@ async function init() {
   const btnSave = document.getElementById("btnSave");
   btnSave.addEventListener("click", async () => {
     if (saving) return;
-    if (!tab) return;
+    if (!tab) {
+      showPopupError(tr("noTab", popupLanguage));
+      return;
+    }
     saving = true;
     btnSave.disabled = true;
     const selectedGroupId = document.getElementById("groupSelect").value;
     const tabTitleInput = document.getElementById("tabTitleInput");
     const customTitle = tabTitleInput ? tabTitleInput.value : "";
     const result = await saveToGroup(tab, selectedGroupId, customTitle);
-    if (result) {
+    if (result && !result.error) {
       await showToastInTab(
         tab,
         tr("savedToGroup", popupLanguage, { name: result.groupName || tr("unnamed", popupLanguage) }),
         result.fontSize,
       );
+      window.close();
+      return;
     }
-    window.close();
+    showPopupError(explainSaveError(result) || tr("saveFailed", popupLanguage));
+    saving = false;
+    btnSave.disabled = false;
   });
 }
 

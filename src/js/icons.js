@@ -261,7 +261,9 @@ function getSiblingHostCandidates(host) {
 function normalizeCandidateUrl(raw) {
   try {
     const parsed = new URL(raw);
+    // 远程图标/favicon 只允许 http(s)；data: 由上传路径单独处理
     if (parsed.protocol === "http:") parsed.protocol = "https:";
+    if (parsed.protocol !== "https:") return "";
     return parsed.toString();
   } catch (_e) {
     // 非法 URL 直接丢弃
@@ -534,17 +536,24 @@ export async function refreshAllIcons(nodes) {
       const node = tasks[idx];
       if (!node?.url) continue;
       const finalUrl = await resolveFinalUrl(node.url);
-      const candidate = buildFaviconUrl(finalUrl);
-      // 优先抓取为 dataURL，下次打开页面可瞬显
-      const dataUrl = await fetchAsDataUrl(candidate);
-      if (dataUrl) {
-        cache[node.url] = { dataUrl, ts: Date.now() };
+      const candidates = getFaviconCandidates(finalUrl);
+      let done = false;
+      for (const candidate of candidates) {
+        if (!candidate) continue;
+        const dataUrl = await fetchAsDataUrl(candidate);
+        if (dataUrl) {
+          cache[node.url] = { dataUrl, ts: Date.now() };
+          const siteKey = getSiteKey(node.url);
+          if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
+          done = true;
+          break;
+        }
+      }
+      if (!done) {
+        // 全部候选失败：记 failed，避免把坏 URL 当成功缓存
+        applyFailureToCache(cache, node.url, cache[node.url]);
         const siteKey = getSiteKey(node.url);
-        if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
-      } else {
-        cache[node.url] = { url: candidate, ts: Date.now() };
-        const siteKey = getSiteKey(node.url);
-        if (siteKey) cache[siteKey] = { url: candidate, ts: Date.now() };
+        if (siteKey) applyFailureToCache(cache, siteKey, cache[siteKey]);
       }
     }
   });
@@ -561,7 +570,9 @@ export async function retryFailedIconsIfDue(settings) {
   if (now.getHours() !== targetHour) return;
   const cache = await loadIconCache();
   let changed = false;
-  const keys = Object.keys(cache);
+  // 只重试失败/退避中的条目，避免网络抖动把健康缓存标 failed
+  const keys = Object.keys(cache).filter((key) => isFailedCacheEntry(cache[key]));
+  if (!keys.length) return;
   const limit = 6;
   let cursor = 0;
   const workers = Array.from({ length: Math.min(limit, keys.length) }, async () => {
@@ -570,13 +581,19 @@ export async function retryFailedIconsIfDue(settings) {
       const key = keys[idx];
       if (!cache[key]) continue;
       const raw = key.startsWith("site:") ? `https://${key.slice(5)}` : key;
-      const candidate = buildFaviconUrl(raw);
-      // 优先抓取为 dataURL，下次打开页面可瞬显
-      const dataUrl = await fetchAsDataUrl(candidate);
-      if (dataUrl) {
-        cache[key] = { dataUrl, ts: Date.now() };
-      } else {
-        // 重试仍失败：累加 attempts 走退避表，而非写回 { url } 让条目立刻可用
+      const candidates = getFaviconCandidates(raw);
+      let recovered = false;
+      for (const candidate of candidates.length ? candidates : [buildFaviconUrl(raw)]) {
+        if (!candidate) continue;
+        const dataUrl = await fetchAsDataUrl(candidate);
+        if (dataUrl) {
+          cache[key] = { dataUrl, ts: Date.now() };
+          recovered = true;
+          break;
+        }
+      }
+      if (!recovered) {
+        // 重试仍失败：累加 attempts 走退避表
         applyFailureToCache(cache, key, cache[key]);
       }
       changed = true;

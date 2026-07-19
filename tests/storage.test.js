@@ -67,6 +67,8 @@ describe("storage", async () => {
     getStorageKey,
     migrateData,
     evictIconCacheLRU,
+    loadDataFromArea,
+    saveIconCache,
   } = await import("../src/js/storage.js");
 
   it("normalizeLanguage handles zh-CN variants", () => {
@@ -209,5 +211,48 @@ describe("storage", async () => {
     const result = evictIconCacheLRU(cache, 5);
     assert.equal(result.a.dataUrl, "data:image/png;base64,legacy");
     assert.ok(result.a.ts > 0);
+  });
+
+  it("loadDataFromArea returns null when key is missing", async () => {
+    const missing = await loadDataFromArea(false);
+    assert.equal(missing, null);
+  });
+
+  it("loadDataFromArea returns repaired payload when present", async () => {
+    const key = getStorageKey();
+    stored[key] = {
+      schemaVersion: 1,
+      groups: [{ id: "g1", name: "A", order: 0, nodes: ["ghost"] }],
+      nodes: {},
+      backups: [],
+      lastUpdated: 123,
+      settings: { syncEnabled: true },
+    };
+    const loaded = await loadDataFromArea(false);
+    assert.ok(loaded);
+    assert.equal(loaded.lastUpdated, 123);
+    assert.deepEqual(loaded.groups[0].nodes, []);
+  });
+
+  it("evictIconCacheLRU preserves attempts on failed entries", () => {
+    const cache = {
+      fail: { failed: true, attempts: 4, ts: 1000 },
+    };
+    const result = evictIconCacheLRU(cache, 5);
+    assert.equal(result.fail.failed, true);
+    assert.equal(result.fail.attempts, 4);
+  });
+
+  it("saveIconCache roundtrip keeps attempts", async () => {
+    await saveIconCache({
+      "https://example.com/": { failed: true, attempts: 3, ts: Date.now() },
+    });
+    // reset memory by reloading after clearing the in-memory cache via another save path:
+    // loadIconCache returns memory if set; force by reading through evict then re-import is heavy.
+    // Instead verify via stored object after save.
+    const key = "homepage_icon_cache";
+    assert.ok(stored[key]);
+    assert.equal(stored[key]["https://example.com/"].attempts, 3);
+    assert.equal(stored[key]["https://example.com/"].failed, true);
   });
 });

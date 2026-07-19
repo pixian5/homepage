@@ -10,12 +10,15 @@ import { repairHomepageData } from "./data-utils.js";
 import {
   detectPreferredLanguage,
   estimateBytes,
+  getChromeApi,
   getLastError,
   normalizeLanguage,
   sanitizeForSync,
-  getChromeApi as sharedGetChromeApi,
   storageArea,
 } from "./shared-utils.js";
+
+// 供 app/popup 等从 storage 入口复用（避免各处直接依赖 shared-utils 路径不一致）
+export { detectPreferredLanguage, getChromeApi, normalizeLanguage };
 
 const ROOT_KEY = "homepage_data";
 const ICON_CACHE_KEY = "homepage_icon_cache";
@@ -26,9 +29,6 @@ const MAX_ICON_CACHE_ENTRIES = 500;
 const STORAGE_SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en", "ja", "ko", "de", "fr", "es"];
 export const deepClone = (obj) =>
   typeof structuredClone === "function" ? structuredClone(obj) : JSON.parse(JSON.stringify(obj));
-
-// 兼容旧引用：从 shared-utils.js 重新导出
-export { detectPreferredLanguage, normalizeLanguage };
 
 function getDefaultGroupNameByLanguage(language) {
   switch (language) {
@@ -140,7 +140,7 @@ function trimLocalBackground(data) {
   return false;
 }
 
-async function storageGet(area, key) {
+async function storageGetLocal(area, key) {
   return new Promise((resolve) => {
     let done = false;
     const finish = (value) => {
@@ -170,7 +170,7 @@ async function storageGet(area, key) {
   });
 }
 
-async function storageSet(area, obj) {
+async function storageSetLocal(area, obj) {
   return new Promise((resolve) => {
     let done = false;
     const finish = (errMsg) => {
@@ -195,7 +195,7 @@ async function storageSet(area, obj) {
   });
 }
 
-async function storageRemove(area, key) {
+async function storageRemoveLocal(area, key) {
   return new Promise((resolve) => {
     let done = false;
     const finish = (errMsg) => {
@@ -279,33 +279,36 @@ export function migrateData(data) {
  */
 export async function loadData() {
   const base = createDefaultData();
-  const api = sharedGetChromeApi();
+  const api = getChromeApi();
   if (!api) return base;
 
   const local = storageArea(false);
-  let data = await storageGet(local, ROOT_KEY);
+  let data = await storageGetLocal(local, ROOT_KEY);
   if (!data) {
-    await storageSet(local, { [ROOT_KEY]: base });
+    await storageSetLocal(local, { [ROOT_KEY]: base });
     return base;
   }
   data = migrateData(data) || base;
   data.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
+  data = repairHomepageData(data, DEFAULT_SETTINGS);
   return data;
 }
 
 /**
- * 从指定存储区域加载数据
+ * 从指定存储区域加载数据。
+ * 注意：key 缺失时返回 null（不再伪造带 now 时间戳的默认数据），
+ * 避免 LWW 把空 sync 当成“更新的空主页”覆盖本地真数据。
  * @param {boolean} useSync
- * @returns {Promise<HomepageData>}
+ * @returns {Promise<HomepageData | null>}
  */
 export async function loadDataFromArea(useSync = false) {
-  const base = createDefaultData();
-  const api = sharedGetChromeApi();
-  if (!api) return base;
+  const api = getChromeApi();
+  if (!api) return null;
   const area = storageArea(useSync);
-  let data = await storageGet(area, ROOT_KEY);
-  if (!data) return base;
-  data = migrateData(data) || base;
+  let data = await storageGetLocal(area, ROOT_KEY);
+  if (!data) return null;
+  data = migrateData(data);
+  if (!data || typeof data !== "object") return null;
   data.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
   data = repairHomepageData(data, DEFAULT_SETTINGS);
   return data;
@@ -318,49 +321,57 @@ export async function loadDataFromArea(useSync = false) {
  * @returns {Promise<string | null>}
  */
 export async function saveData(data, useSync = false) {
-  const api = sharedGetChromeApi();
-  if (!api) return;
+  const api = getChromeApi();
+  if (!api) return "no_api";
   const area = storageArea(useSync);
+  const prevLastUpdated = data.lastUpdated;
   data.lastUpdated = nowTs();
   const payload = useSync ? sanitizeForSync(data, ICON_DATA_MAX_LENGTH) : data;
   if (useSync) {
     const size = estimateBytes(payload);
     if (size > SYNC_ITEM_QUOTA_BYTES) {
       data.settings.syncEnabled = false;
-      await storageSet(storageArea(false), { [ROOT_KEY]: data });
+      data.lastUpdated = nowTs();
+      const localErr = await storageSetLocal(storageArea(false), { [ROOT_KEY]: data });
+      if (localErr) data.lastUpdated = prevLastUpdated;
       return "sync_quota_exceeded";
     }
   }
-  let err = await storageSet(area, { [ROOT_KEY]: payload });
+  let err = await storageSetLocal(area, { [ROOT_KEY]: payload });
   if (!useSync && err && isQuotaError(err)) {
     if (trimLocalBackups(data)) {
-      err = await storageSet(area, { [ROOT_KEY]: data });
+      err = await storageSetLocal(area, { [ROOT_KEY]: data });
       if (!err) return "local_trimmed_backups";
     }
     if (trimLocalUploadIcons(data)) {
-      err = await storageSet(area, { [ROOT_KEY]: data });
+      err = await storageSetLocal(area, { [ROOT_KEY]: data });
       if (!err) return "local_trimmed_icons";
     }
     if (trimLocalBackground(data)) {
-      err = await storageSet(area, { [ROOT_KEY]: data });
+      err = await storageSetLocal(area, { [ROOT_KEY]: data });
       if (!err) return "local_trimmed_background";
     }
   }
   if (err && useSync) {
     // 远端同步写入失败：回退本地存储并把同步开关关闭，返回 sentinel 让 UI 给出准确提示。
-    // 注意：err 可能是 quota（上面已处理）之外的任意字符串错误，UI 需区分对待。
     data.settings.syncEnabled = false;
-    await storageSet(storageArea(false), { [ROOT_KEY]: data });
+    data.lastUpdated = nowTs();
+    const localErr = await storageSetLocal(storageArea(false), { [ROOT_KEY]: data });
+    if (localErr) data.lastUpdated = prevLastUpdated;
     return "sync_write_failed";
+  }
+  if (err) {
+    // 写盘失败：回滚 lastUpdated，避免 LWW 把“内存新、磁盘旧”当成权威
+    data.lastUpdated = prevLastUpdated;
   }
   return err;
 }
 
 export async function clearData(useSync = false) {
-  const api = sharedGetChromeApi();
+  const api = getChromeApi();
   if (!api) return;
   const area = storageArea(useSync);
-  await storageRemove(area, ROOT_KEY);
+  await storageRemoveLocal(area, ROOT_KEY);
 }
 
 let _iconCacheMemory = null;
@@ -385,6 +396,8 @@ function normalizeIconCacheEntry(entry) {
       ts: entry.ts || now,
       hits: entry.hits || 0,
       failed: entry.failed ? true : undefined,
+      // 保留失败退避次数，否则每次 save 都会把 attempts 抹成 1
+      attempts: entry.attempts ? Number(entry.attempts) || undefined : undefined,
     };
   }
   return { dataUrl: "", url: "", ts: now, hits: 0 };
@@ -415,10 +428,10 @@ export function evictIconCacheLRU(cache, maxEntries = MAX_ICON_CACHE_ENTRIES) {
  */
 export async function loadIconCache() {
   if (_iconCacheMemory) return _iconCacheMemory;
-  const api = sharedGetChromeApi();
+  const api = getChromeApi();
   if (!api) return {};
   const local = storageArea(false);
-  const raw = (await storageGet(local, ICON_CACHE_KEY)) || {};
+  const raw = (await storageGetLocal(local, ICON_CACHE_KEY)) || {};
   const normalized = {};
   for (const [key, value] of Object.entries(raw)) {
     normalized[key] = normalizeIconCacheEntry(value);
@@ -442,10 +455,10 @@ let _iconCacheSaveResolve = null;
 async function flushIconCacheOnce() {
   try {
     while (true) {
-      const api = sharedGetChromeApi();
+      const api = getChromeApi();
       if (!api) break;
       const local = storageArea(false);
-      await storageSet(local, { [ICON_CACHE_KEY]: _iconCacheMemory });
+      await storageSetLocal(local, { [ICON_CACHE_KEY]: _iconCacheMemory });
       if (!_iconCacheSaveQueued) break;
       _iconCacheSaveQueued = false;
     }
@@ -485,17 +498,17 @@ export async function saveIconCache(cache) {
 }
 
 export async function loadBgCache() {
-  const api = sharedGetChromeApi();
+  const api = getChromeApi();
   if (!api) return {};
   const local = storageArea(false);
-  return (await storageGet(local, BG_CACHE_KEY)) || {};
+  return (await storageGetLocal(local, BG_CACHE_KEY)) || {};
 }
 
 export async function saveBgCache(cache) {
-  const api = sharedGetChromeApi();
+  const api = getChromeApi();
   if (!api) return;
   const local = storageArea(false);
-  await storageSet(local, { [BG_CACHE_KEY]: cache });
+  await storageSetLocal(local, { [BG_CACHE_KEY]: cache });
 }
 
 /**
@@ -536,12 +549,4 @@ export function defaultData() {
  */
 export function getStorageKey() {
   return ROOT_KEY;
-}
-
-/**
- * 获取浏览器扩展 API
- * @returns {typeof chrome | typeof browser | null}
- */
-export function getChromeApi() {
-  return sharedGetChromeApi();
 }

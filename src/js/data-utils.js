@@ -121,10 +121,58 @@ export function moveNodeInList(list, id, index) {
 }
 
 /**
+ * 收集从 roots 可达的全部节点 ID（含文件夹内子孙）。
+ * @param {HomepageData | object} input
+ * @param {Iterable<string>} roots
+ * @returns {Set<string>}
+ */
+export function collectReachableNodeIds(input, roots) {
+  const nodes = input?.nodes || {};
+  const reachable = new Set();
+  const stack = [...roots];
+  while (stack.length) {
+    const id = stack.pop();
+    if (!id || reachable.has(id)) continue;
+    if (!nodes[id]) continue;
+    reachable.add(id);
+    const node = nodes[id];
+    if (node?.type === "folder" && Array.isArray(node.children)) {
+      for (const childId of node.children) stack.push(childId);
+    }
+  }
+  return reachable;
+}
+
+/**
+ * 递归收集删除某个节点时需要一并删除的 ID（含自身与文件夹子孙）。
+ * @param {HomepageData | object} input
+ * @param {string} rootId
+ * @returns {string[]}
+ */
+export function collectNodeSubtreeIds(input, rootId) {
+  const nodes = input?.nodes || {};
+  const result = [];
+  const seen = new Set();
+  const stack = [rootId];
+  while (stack.length) {
+    const id = stack.pop();
+    if (!id || seen.has(id) || !nodes[id]) continue;
+    seen.add(id);
+    result.push(id);
+    const node = nodes[id];
+    if (node?.type === "folder" && Array.isArray(node.children)) {
+      for (const childId of node.children) stack.push(childId);
+    }
+  }
+  return result;
+}
+
+/**
  * 数据去重与修复：
  * - 删除 groups 中引用了不存在的节点的 ID
  * - 删除 groups 中重复的节点 ID
  * - 删除 folders 中引用不存在或重复的子节点 ID
+ * - 删除没有任何分组/文件夹引用的孤儿节点
  * @param {HomepageData | object} input
  * @returns {boolean} 是否发生了变化
  */
@@ -167,6 +215,19 @@ export function dedupeData(input) {
         uniq.push(id);
       }
       node.children = uniq;
+    }
+  }
+
+  // 孤儿 GC：只保留从任意 group.nodes 可达的节点
+  const roots = [];
+  for (const group of input.groups || []) {
+    for (const id of group.nodes || []) roots.push(id);
+  }
+  const reachable = collectReachableNodeIds(input, roots);
+  for (const id of Object.keys(input.nodes)) {
+    if (!reachable.has(id)) {
+      delete input.nodes[id];
+      changed = true;
     }
   }
 

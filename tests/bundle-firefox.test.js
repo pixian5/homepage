@@ -32,6 +32,13 @@ describe("bundle-firefox", () => {
     assert.ok(result.includes("const bar"));
   });
 
+  it("stripExports removes re-export and export default forms", () => {
+    const code = `export { a, b };\nexport { c } from "./c.js";\nexport * from "./d.js";\nexport default function x() {}`;
+    const result = stripExports(code);
+    assert.ok(!/\bexport\b/.test(result));
+    assert.ok(result.includes("function x()"));
+  });
+
   it("bundle writes combined file without imports/exports", async () => {
     const srcDir = path.join(workdir, "src");
     const outDir = path.join(workdir, "out");
@@ -39,23 +46,42 @@ describe("bundle-firefox", () => {
     await mkdir(outDir, { recursive: true });
     await writeFile(
       path.join(srcDir, "a.js"),
-      `import { x } from "./x.js";\nexport function a() { return x; }\n`,
+      `import { x } from "./x.js";\nexport function a() { return x; }\nexport { a as b };\n`,
       "utf8",
     );
-    await writeFile(path.join(srcDir, "b.js"), `export const b = 2;\n`, "utf8");
+    await writeFile(path.join(srcDir, "b.js"), `export const b = 2;\nexport default b;\n`, "utf8");
     const target = path.join(outDir, "app.ff.js");
     await bundle({
       src: srcDir,
       out: outDir,
       target,
       list: ["a.js", "b.js"],
+      validate: true,
     });
     const output = await readFile(target, "utf8");
     assert.ok(output.includes("/* Firefox bundle (no ESM imports) */"));
     assert.ok(output.includes("function a"));
     assert.ok(output.includes("const b = 2"));
     assert.ok(!output.match(/^\s*import\s+/m));
-    assert.ok(!output.match(/\bexport\s+(?=function|const|let|var|class)/));
+    assert.ok(!/\bexport\b/.test(output));
+  });
+
+  it("real src modules bundle is classic-script parseable", async () => {
+    const vm = await import("node:vm");
+    const { assertClassicScript } = await import("../scripts/bundle-firefox.mjs");
+    const outDir = path.join(workdir, "real-out");
+    const target = path.join(outDir, "app.ff.js");
+    const srcDir = path.join(process.cwd(), "src", "js");
+    const output = await bundle({
+      src: srcDir,
+      out: outDir,
+      target,
+      list: ["shared-utils.js", "data-utils.js", "storage.js", "icons.js", "bing-wallpaper.js", "app.js"],
+      validate: true,
+    });
+    assertClassicScript(output, vm);
+    assert.ok(!/^\s*export\b/m.test(output));
+    assert.ok(!/^\s*import\b/m.test(output));
   });
 
   it("patchHtml replaces ESM module script with external bundle script", async () => {

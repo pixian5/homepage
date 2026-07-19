@@ -2,6 +2,7 @@ import { getBingWallpaper } from "./bing-wallpaper.js";
 import {
   buildBackupFingerprint,
   cloneDataSnapshot,
+  collectNodeSubtreeIds,
   createItemNode,
   dedupeData,
   moveNodeInList,
@@ -21,6 +22,7 @@ import {
   retryFailedIconsIfDue,
   withIconFetchConcurrency,
 } from "./icons.js";
+import { SAFE_URL_PROTOCOLS, normalizeUrl as sharedNormalizeUrl } from "./shared-utils.js";
 import {
   clearData,
   createBackupSnapshot,
@@ -842,6 +844,7 @@ function shouldDebugPersist() {
 async function loadLatestDataForApp() {
   const localData = await loadData();
   if (localData.settings.syncEnabled) {
+    // loadDataFromArea 在 key 缺失时返回 null，禁止用“空默认数据”参与 LWW
     const syncData = await loadDataFromArea(true);
     if (syncData?.groups?.length) {
       const localTs = Number(localData.lastUpdated || 0);
@@ -1055,24 +1058,9 @@ function hideTooltip() {
   elements.tooltip.classList.add("hidden");
 }
 
-const SAFE_URL_PROTOCOLS = new Set(["http:", "https:", "ftp:"]);
-
+/** 统一走 shared-utils，避免 Firefox bundle 全局重名 */
 function normalizeUrl(input) {
-  if (!input) return "";
-  try {
-    const url = new URL(input);
-    if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
-    return url.href;
-  } catch (_err) {
-    const withScheme = `https://${input}`;
-    try {
-      const url = new URL(withScheme);
-      if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
-      return url.href;
-    } catch (_err2) {
-      return "";
-    }
-  }
+  return sharedNormalizeUrl(input);
 }
 
 function normalizeUrlWithScheme(input, scheme) {
@@ -1099,7 +1087,7 @@ async function openUrl(url, mode) {
     return;
   }
   if (openMode === "new") {
-    window.open(url, "_blank");
+    window.open(url, "_blank", "noopener,noreferrer");
   } else if (openMode === "background") {
     window.open(url, "_blank", "noopener,noreferrer");
   } else {
@@ -1210,56 +1198,68 @@ function ensureAutoBackupBeforePersist() {
   return true;
 }
 
+/** 串行化 persist，避免多路 fire-and-forget 互相覆盖 */
+let _persistChain = Promise.resolve();
+
 async function persistData() {
-  persistInFlight += 1;
-  const autoBackedUp = ensureAutoBackupBeforePersist();
-  suppressStorageUntil = Math.max(suppressStorageUntil, Date.now() + STORAGE_SUPPRESS_MS * 4);
-  try {
-    debugLog("persist_start", {
-      useSync: data.settings.syncEnabled,
-      groups: data.groups?.length || 0,
-      nodes: Object.keys(data.nodes || {}).length,
-      lastUpdated: data.lastUpdated || 0,
-      autoBackedUp,
-    });
-    const useSync = data.settings.syncEnabled;
-    const changed = dedupeData(data);
-    let warning = null;
-    let err = null;
-    const err1 = await saveData(data, useSync);
-    if (err1) {
-      if (
-        err1 === "sync_quota_exceeded" ||
-        err1 === "sync_write_failed" ||
-        (typeof err1 === "string" && err1.startsWith("local_trimmed_"))
-      ) {
-        warning = err1;
-      } else {
-        err = err1;
-      }
-    }
-    if (useSync) {
-      await saveData(data, false);
-    }
-    if (changed) {
-      debugLog("persist_dedupe", { changed });
-    }
-    if (shouldDebugPersist()) {
-      const verify = await loadDataFromArea(false);
-      debugLog("persist_verify", {
-        groups: verify.groups?.length || 0,
-        nodes: Object.keys(verify.nodes || {}).length,
-        lastUpdated: verify.lastUpdated || 0,
+  const run = async () => {
+    persistInFlight += 1;
+    const autoBackedUp = ensureAutoBackupBeforePersist();
+    suppressStorageUntil = Math.max(suppressStorageUntil, Date.now() + STORAGE_SUPPRESS_MS * 4);
+    try {
+      debugLog("persist_start", {
+        useSync: data.settings.syncEnabled,
+        groups: data.groups?.length || 0,
+        nodes: Object.keys(data.nodes || {}).length,
+        lastUpdated: data.lastUpdated || 0,
+        autoBackedUp,
       });
+      const useSync = data.settings.syncEnabled;
+      const changed = dedupeData(data);
+      let warning = null;
+      let err = null;
+      const err1 = await saveData(data, useSync);
+      if (err1) {
+        if (
+          err1 === "sync_quota_exceeded" ||
+          err1 === "sync_write_failed" ||
+          (typeof err1 === "string" && err1.startsWith("local_trimmed_"))
+        ) {
+          warning = err1;
+        } else {
+          err = err1;
+        }
+      }
+      if (useSync) {
+        await saveData(data, false);
+      }
+      if (changed) {
+        debugLog("persist_dedupe", { changed });
+      }
+      if (shouldDebugPersist()) {
+        const verify = await loadDataFromArea(false);
+        debugLog("persist_verify", {
+          groups: verify?.groups?.length || 0,
+          nodes: Object.keys(verify?.nodes || {}).length,
+          lastUpdated: verify?.lastUpdated || 0,
+        });
+      }
+      if (!err) {
+        syncBackupBaseline(data);
+      }
+      debugLog("persist_done", { err1, changed, warning, err, autoBackedUp });
+      return { ok: !err, warning, err };
+    } finally {
+      persistInFlight = Math.max(0, persistInFlight - 1);
     }
-    if (!err) {
-      syncBackupBaseline(data);
-    }
-    debugLog("persist_done", { err1, changed, warning, err, autoBackedUp });
-    return { ok: !err, warning, err };
-  } finally {
-    persistInFlight = Math.max(0, persistInFlight - 1);
-  }
+  };
+  const next = _persistChain.then(run, run);
+  // 不让单次失败打断队列
+  _persistChain = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
 }
 
 function getActiveGroup() {
@@ -2106,8 +2106,19 @@ function deleteGroup(group) {
     return;
   }
   if (!confirm(t("group.deleteConfirm", { name: group.name }))) return;
+  pushBackup();
+  // 删除分组时级联删除其下全部节点（含文件夹子孙），避免孤儿占存储
+  const toDelete = new Set();
+  for (const id of group.nodes || []) {
+    for (const nid of collectNodeSubtreeIds(data, id)) toDelete.add(nid);
+  }
+  for (const id of toDelete) {
+    removeNodeFromLocation(id);
+    delete data.nodes[id];
+  }
   data.groups = data.groups.filter((g) => g.id !== group.id);
   if (activeGroupId === group.id) activeGroupId = data.groups[0].id;
+  dedupeData(data);
   persistData();
   render();
 }
@@ -2116,18 +2127,42 @@ function deleteNodes(ids) {
   if (!ids.length) return;
   if (activeGroupId === RECENT_GROUP_ID) return;
   pushBackup();
-  const snapshot = deepClone(data);
+  // 撤销只恢复本次删除的节点，避免整库快照抹掉后续编辑
+  const deletedNodes = {};
+  const expanded = new Set();
+  for (const id of ids) {
+    for (const nid of collectNodeSubtreeIds(data, id)) expanded.add(nid);
+  }
+  for (const id of expanded) {
+    if (data.nodes[id]) deletedNodes[id] = deepClone(data.nodes[id]);
+  }
+  // 记录删除前各容器中的位置，便于精确回插
+  const placements = [];
+  for (const group of data.groups || []) {
+    for (let i = 0; i < (group.nodes || []).length; i++) {
+      const id = group.nodes[i];
+      if (expanded.has(id)) placements.push({ kind: "group", groupId: group.id, index: i, id });
+    }
+  }
+  for (const [folderId, node] of Object.entries(data.nodes || {})) {
+    if (node?.type !== "folder" || !Array.isArray(node.children)) continue;
+    for (let i = 0; i < node.children.length; i++) {
+      const id = node.children[i];
+      if (expanded.has(id)) placements.push({ kind: "folder", folderId, index: i, id });
+    }
+  }
 
-  ids.forEach((id) => {
+  for (const id of expanded) {
     removeNodeFromLocation(id);
     delete data.nodes[id];
-  });
+  }
+  dedupeData(data);
 
-  pendingDeletion = { snapshot, ids, timer: null };
+  pendingDeletion = { deletedNodes, placements, ids: [...expanded], timer: null };
   persistData();
   render();
 
-  toast(t("delete.deletedCount", { count: ids.length }), t("delete.undo"), () => undoDelete());
+  toast(t("delete.deletedCount", { count: expanded.size }), t("delete.undo"), () => undoDelete());
   if (pendingDeletion.timer) clearTimeout(pendingDeletion.timer);
   pendingDeletion.timer = setTimeout(() => {
     pendingDeletion = null;
@@ -2137,8 +2172,34 @@ function deleteNodes(ids) {
 function undoDelete() {
   if (!pendingDeletion) return;
   if (pendingDeletion.timer) clearTimeout(pendingDeletion.timer);
-  data = pendingDeletion.snapshot;
+  const { deletedNodes, placements } = pendingDeletion;
   pendingDeletion = null;
+  // 先恢复节点实体
+  for (const [id, node] of Object.entries(deletedNodes || {})) {
+    data.nodes[id] = node;
+  }
+  // 再按原位置回插引用（倒序插入以尽量保持相对顺序）
+  const sorted = [...(placements || [])].sort((a, b) => b.index - a.index);
+  for (const p of sorted) {
+    if (p.kind === "group") {
+      const group = data.groups.find((g) => g.id === p.groupId);
+      if (!group) continue;
+      if (!Array.isArray(group.nodes)) group.nodes = [];
+      if (!group.nodes.includes(p.id)) {
+        const idx = Math.max(0, Math.min(p.index, group.nodes.length));
+        group.nodes.splice(idx, 0, p.id);
+      }
+    } else if (p.kind === "folder") {
+      const folder = data.nodes[p.folderId];
+      if (folder?.type !== "folder") continue;
+      if (!Array.isArray(folder.children)) folder.children = [];
+      if (!folder.children.includes(p.id)) {
+        const idx = Math.max(0, Math.min(p.index, folder.children.length));
+        folder.children.splice(idx, 0, p.id);
+      }
+    }
+  }
+  dedupeData(data);
   persistData();
   render();
   toast(t("delete.restored"));
@@ -2186,7 +2247,20 @@ function openModal(html) {
   elements.modalOverlay.setAttribute("aria-hidden", "false");
 }
 
-function closeModal() {
+async function closeModal() {
+  // 关闭前尽量刷掉 debounce 中的设置保存，避免点遮罩丢最后一次改动
+  if (settingsSaveTimer) {
+    clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = null;
+  }
+  const pendingSave = _settingsSaveNow;
+  if (settingsOpen && typeof pendingSave === "function" && !settingsSaving) {
+    try {
+      await pendingSave();
+    } catch (e) {
+      console.warn("flush settings on closeModal failed", e);
+    }
+  }
   const activeEl = document.activeElement;
   if (activeEl && elements.modalOverlay.contains(activeEl)) {
     elements.btnSettings?.focus?.({ preventScroll: true });
@@ -2200,10 +2274,6 @@ function closeModal() {
   settingsSaving = false;
   settingsSaveQueued = false;
   _settingsSaveNow = null;
-  if (settingsSaveTimer) {
-    clearTimeout(settingsSaveTimer);
-    settingsSaveTimer = null;
-  }
   if (pendingStorageReload) {
     pendingStorageReload = false;
     scheduleStorageReload();
@@ -2367,8 +2437,8 @@ function openAddModal() {
     }
     render();
     closeModal();
-    if (titlePending) fetchTitleInBackground(id, url);
-    if (iconPending) fetchFaviconInBackground(id, url);
+    if (titlePending) fetchTitleInBackground(node.id, url);
+    if (iconPending) fetchFaviconInBackground(node.id, url);
     if (result.warning === "local_trimmed_backups") {
       toast(t("toast.add.trimBackup"));
     } else if (result.warning === "local_trimmed_icons") {
@@ -2812,11 +2882,15 @@ function openSettingsModal() {
   $("btnClearData").addEventListener("click", async () => {
     if (!confirm(t("confirm.clearData"))) return;
     const keepLanguage = currentLang();
+    // 必须在重置前记下是否开过同步，否则 defaultData 会把 syncEnabled 置 false，云端清不掉
+    const prevSync = !!data?.settings?.syncEnabled;
+    await clearData(false);
+    if (prevSync) await clearData(true);
     data = defaultData();
     data.settings.language = keepLanguage;
+    data.settings.syncEnabled = false;
     if (data.groups?.[0]) data.groups[0].name = t("group.default");
     activeGroupId = data.groups[0].id;
-    await clearData(data.settings.syncEnabled);
     await persistData();
     closeModal();
     render();
@@ -3651,6 +3725,7 @@ async function init() {
     syncEnabled: !!localData.settings?.syncEnabled,
   });
   if (localData.settings.syncEnabled) {
+    // 空 sync 返回 null，不能当成“更新的空主页”
     const syncData = await loadDataFromArea(true);
     if (syncData?.groups?.length) {
       const localTs = Number(localData.lastUpdated || 0);

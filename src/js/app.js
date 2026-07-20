@@ -3110,6 +3110,25 @@ function openSyncConflictModal() {
   $("btnConflictCancel")?.addEventListener("click", () => closeModal());
 }
 
+/** 从设置表单即时读入同步相关字段（不依赖 debounce 保存） */
+function applySyncSettingsFromForm() {
+  if (!data.settings) data.settings = {};
+  const syncEl = $("settingSync");
+  const transportEl = $("settingSyncTransport");
+  const urlEl = $("settingSyncServerUrl");
+  const tokenEl = $("settingSyncServerToken");
+  if (syncEl) data.settings.syncEnabled = !!syncEl.checked;
+  if (transportEl) data.settings.syncTransport = transportEl.value === "http" ? "http" : "browser";
+  if (urlEl) data.settings.syncServerUrl = (urlEl.value || "").trim();
+  if (tokenEl) data.settings.syncServerToken = (tokenEl.value || "").trim();
+  return {
+    enabled: !!data.settings.syncEnabled,
+    transport: data.settings.syncTransport || "browser",
+    url: data.settings.syncServerUrl || "",
+    token: data.settings.syncServerToken || "",
+  };
+}
+
 async function refreshSyncStatusLine() {
   const el = $("syncStatusLine");
   if (!el) return;
@@ -3405,8 +3424,9 @@ function openSettingsModal() {
   syncHttpVisibility();
   transportSel?.addEventListener("change", syncHttpVisibility);
   $("btnSyncTestServer")?.addEventListener("click", async () => {
-    const baseUrl = ($("settingSyncServerUrl")?.value || "").trim();
-    const token = ($("settingSyncServerToken")?.value || "").trim();
+    const cfg = applySyncSettingsFromForm();
+    const baseUrl = cfg.url;
+    const token = cfg.token;
     if (!baseUrl) {
       toast(t("settings.sync.testFail", { reason: "no_url" }), "error");
       return;
@@ -3426,18 +3446,43 @@ function openSettingsModal() {
     const btn = $("btnSyncNow");
     if (btn) btn.disabled = true;
     try {
-      const pull = await pullNow("manual");
-      if (pull?.reason === "doc_conflict") {
-        openSyncConflictModal();
+      // 立即同步前先把表单里的同步配置写入 data（避免只改了 UI 未保存）
+      const prevEnabled = !!data.settings.syncEnabled;
+      const prevTransport = data.settings.syncTransport || "browser";
+      const prevUrl = data.settings.syncServerUrl || "";
+      const cfg = applySyncSettingsFromForm();
+      if (!cfg.enabled) {
+        toast(t("settings.sync.state.off"), "warning");
         void refreshSyncStatusLine();
         return;
       }
-      const res = await pushNow("manual");
-      if (res?.reason === "doc_conflict") {
-        openSyncConflictModal();
-      } else if (res?.reason === "sync_quota_total") toast(t("settings.sync.state.quota"), "warning");
-      else if (res && res.ok === false) toast(t("settings.sync.importFail", { reason: res.reason || "push" }), "error");
-      else toast(t("settings.sync.nowOk"));
+      if (cfg.transport === "http" && !cfg.url) {
+        toast(t("settings.sync.testFail", { reason: "no_url" }), "error");
+        void refreshSyncStatusLine();
+        return;
+      }
+      // 落盘配置（仅 local），再触发同步
+      await saveData(data, false);
+      const transportChanged = prevTransport !== cfg.transport || prevUrl !== cfg.url || prevEnabled !== cfg.enabled;
+      if (transportChanged) {
+        await onSyncEnabledChanged(true);
+      } else {
+        const pull = await pullNow("manual");
+        if (pull?.reason === "doc_conflict") {
+          openSyncConflictModal();
+          void refreshSyncStatusLine();
+          return;
+        }
+        const res = await pushNow("manual");
+        if (res?.reason === "doc_conflict") {
+          openSyncConflictModal();
+        } else if (res?.reason === "sync_quota_total") toast(t("settings.sync.state.quota"), "warning");
+        else if (res?.reason === "network_error" || res?.reason === "unauthorized" || res?.reason === "no_url") {
+          toast(t("settings.sync.testFail", { reason: res.reason + (res.error ? ` · ${res.error}` : "") }), "error");
+        } else if (res && res.ok === false) {
+          toast(t("settings.sync.importFail", { reason: res.reason || "push" }), "error");
+        } else toast(t("settings.sync.nowOk"));
+      }
       void refreshSyncStatusLine();
       render();
     } catch (e) {

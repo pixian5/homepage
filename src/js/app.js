@@ -40,6 +40,10 @@ import {
   saveData,
   saveIconCache,
 } from "./storage.js";
+import { exportSyncBundle, importSyncBundle } from "./sync_bundle.js";
+import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
+import { syncBytesBudgetLevel } from "./sync_policy.js";
+import { estimateSyncProjectionBytes } from "./sync_projection.js";
 import { attachVisitTracking, getVisitHistoryItems, recordVisit } from "./visit-history.js";
 
 const $ = (id) => document.getElementById(id);
@@ -312,6 +316,16 @@ const I18N = {
     "settings.lastAddedGroup": "上次添加的分组",
     "settings.hideSidebar": "完全隐藏侧边栏",
     "settings.sync": "启用同步",
+    "settings.sync.size": "同步数据约 {size}",
+    "settings.sync.budget.green": "体积正常",
+    "settings.sync.budget.yellow": "接近上限，建议精简",
+    "settings.sync.budget.red": "可能超出同步配额",
+    "settings.sync.exportBundle": "导出同步包",
+    "settings.sync.importBundle": "导入并合并同步包",
+    "settings.sync.exportOk": "同步包已复制到剪切板",
+    "settings.sync.importOk": "同步包已合并",
+    "settings.sync.importFail": "同步包合并失败：{reason}",
+    "settings.sync.hint": "同步使用浏览器账号存储，不含备份/壁纸/上传图标。跨浏览器请用同步包。",
     "settings.openMode": "网页打开方式",
     "settings.maxBackups": "最大备份数量（0 表示不备份）",
     "settings.iconRetry": "重新获取失败图标（每天）",
@@ -450,6 +464,16 @@ const I18N = {
     "settings.lastAddedGroup": "上次新增的分組",
     "settings.hideSidebar": "完全隱藏側邊欄",
     "settings.sync": "啟用同步",
+    "settings.sync.size": "同步資料約 {size}",
+    "settings.sync.budget.green": "體積正常",
+    "settings.sync.budget.yellow": "接近上限，建議精簡",
+    "settings.sync.budget.red": "可能超出同步配額",
+    "settings.sync.exportBundle": "匯出同步包",
+    "settings.sync.importBundle": "匯入並合併同步包",
+    "settings.sync.exportOk": "同步包已複製到剪貼簿",
+    "settings.sync.importOk": "同步包已合併",
+    "settings.sync.importFail": "同步包合併失敗：{reason}",
+    "settings.sync.hint": "同步使用瀏覽器帳號儲存，不含備份/桌布/上傳圖示。跨瀏覽器請用同步包。",
     "settings.openMode": "網頁開啟方式",
     "settings.maxBackups": "最大備份數量（0 代表不備份）",
     "settings.iconRetry": "重新取得失敗圖示（每日）",
@@ -540,6 +564,17 @@ const I18N = {
     "settings.lastAddedGroup": "Last added group",
     "settings.hideSidebar": "Hide sidebar completely",
     "settings.sync": "Enable Sync",
+    "settings.sync.size": "Sync payload ~ {size}",
+    "settings.sync.budget.green": "Size OK",
+    "settings.sync.budget.yellow": "Near limit",
+    "settings.sync.budget.red": "May exceed sync quota",
+    "settings.sync.exportBundle": "Export sync bundle",
+    "settings.sync.importBundle": "Import & merge sync bundle",
+    "settings.sync.exportOk": "Sync bundle copied",
+    "settings.sync.importOk": "Sync bundle merged",
+    "settings.sync.importFail": "Merge failed: {reason}",
+    "settings.sync.hint":
+      "Uses browser account sync. Backups, wallpaper files, and uploaded icons are local-only. Use a sync bundle across browsers.",
     "settings.openMode": "Link Open Mode",
     "settings.maxBackups": "Max backups (0 = disabled)",
     "settings.iconRetry": "Retry failed icons (daily)",
@@ -2924,6 +2959,28 @@ async function leaveSettingsForSubpanel() {
   _settingsSaveNow = null;
 }
 
+async function refreshSyncStatusLine() {
+  const el = $("syncStatusLine");
+  if (!el) return;
+  try {
+    const deviceId = await getOrCreateDeviceId();
+    const bytes = estimateSyncProjectionBytes(data, { deviceId, docId: "doc_ui" });
+    const level = syncBytesBudgetLevel(bytes);
+    const kb = bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
+    const budgetKey =
+      level === "red"
+        ? "settings.sync.budget.red"
+        : level === "yellow"
+          ? "settings.sync.budget.yellow"
+          : "settings.sync.budget.green";
+    el.textContent = `${t("settings.sync.size", { size: kb })} · ${t(budgetKey)}`;
+    el.dataset.level = level;
+  } catch (e) {
+    console.warn("refreshSyncStatusLine failed", e);
+    el.textContent = "";
+  }
+}
+
 function openSettingsModal() {
   settingsOpen = true;
   const modalHtml = html`
@@ -3047,6 +3104,12 @@ function openSettingsModal() {
 
     <div class="section">
       <label><input id="settingSync" type="checkbox"> ${t("settings.sync")}</label>
+      <div id="syncStatusLine" class="settings-sync-status"></div>
+      <div class="row-inline settings-sync-actions">
+        <button type="button" id="btnSyncExportBundle" class="icon-btn">${t("settings.sync.exportBundle")}</button>
+        <button type="button" id="btnSyncImportBundle" class="icon-btn">${t("settings.sync.importBundle")}</button>
+      </div>
+      <p class="settings-sync-hint">${t("settings.sync.hint")}</p>
       <div class="row-inline">
         <span class="inline-label">${t("settings.openMode")}</span>
         <select id="settingOpenMode" class="inline-select">
@@ -3129,6 +3192,48 @@ function openSettingsModal() {
   $("settingFontSize").value = data.settings.fontSize || 13;
   $("settingLanguage").value = currentLang();
   $("settingSync").checked = data.settings.syncEnabled;
+  void refreshSyncStatusLine();
+  $("btnSyncExportBundle")?.addEventListener("click", async () => {
+    try {
+      const deviceId = await getOrCreateDeviceId();
+      const bundle = exportSyncBundle(data, {
+        deviceId,
+        docId: createDocId(),
+        platform: /firefox/i.test(navigator.userAgent)
+          ? "firefox"
+          : /safari/i.test(navigator.userAgent) && !/chrome|crios|android/i.test(navigator.userAgent)
+            ? "safari"
+            : "chrome",
+      });
+      await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
+      toast(t("settings.sync.exportOk"));
+    } catch (e) {
+      toast(t("settings.sync.importFail", { reason: e?.message || "export" }), "error");
+    }
+  });
+  $("btnSyncImportBundle")?.addEventListener("click", async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      const bundle = JSON.parse(text);
+      const deviceId = await getOrCreateDeviceId();
+      const result = importSyncBundle(data, bundle, { deviceId });
+      if (!result.ok) {
+        toast(t("settings.sync.importFail", { reason: result.reason || "merge" }), "error");
+        return;
+      }
+      pushBackup();
+      data = result.state;
+      if (!data.settings) data.settings = {};
+      // 保持用户当前同步开关
+      await persistData();
+      render();
+      processPendingIconFetches();
+      toast(t("settings.sync.importOk"));
+      void refreshSyncStatusLine();
+    } catch (e) {
+      toast(t("settings.sync.importFail", { reason: e?.message || "parse" }), "error");
+    }
+  });
   $("settingOpenMode").value = data.settings.openMode || "current";
   $("settingBackup").value = data.settings.maxBackups;
   const retryHour = data.settings.iconRetryHour ?? (data.settings.iconRetryAtSix ? 18 : "");

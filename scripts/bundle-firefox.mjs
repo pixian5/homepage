@@ -16,6 +16,11 @@ const files = [
   "icons.js",
   "bing-wallpaper.js",
   "visit-history.js",
+  "sync_policy.js",
+  "sync_ids.js",
+  "sync_projection.js",
+  "sync_merge.js",
+  "sync_bundle.js",
   "app.js",
 ];
 const backgroundFiles = ["shared-utils.js", "visit-history.js", "background.js"];

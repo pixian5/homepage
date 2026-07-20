@@ -346,6 +346,9 @@ tests/                   单元测试（storage / icons / bing-wallpaper / bump-
 
 ## 7. 同步与配额策略
 
+> **19.1+ 开发中的同步 v1 底座：** 已实现安全合并内核与「同步包」导出/导入（设置页）。在线 `storage.sync` 分片推送（Phase 2）尚未替换旧整包 LWW。详见 [多设备同步开发方案.md](./多设备同步开发方案.md)。
+
+
 ## 7.1 同步选择策略
 
 实现位置：`loadData()` 函数内的 `syncSelection` 分支（[src/js/storage.js](file:///Users/x/code/homepage/src/js/storage.js#L200-L276)）

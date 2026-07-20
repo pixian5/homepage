@@ -1,6 +1,6 @@
 {
   "name": "newtab-extension",
-  "version": "19.4",
+  "version": "19.5",
   "private": true,
   "type": "module",
   "scripts": {

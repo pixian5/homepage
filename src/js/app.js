@@ -3407,9 +3407,19 @@ function openSettingsModal() {
   $("btnSyncTestServer")?.addEventListener("click", async () => {
     const baseUrl = ($("settingSyncServerUrl")?.value || "").trim();
     const token = ($("settingSyncServerToken")?.value || "").trim();
+    if (!baseUrl) {
+      toast(t("settings.sync.testFail", { reason: "no_url" }), "error");
+      return;
+    }
     const res = await httpHealth({ baseUrl, token });
     if (res.ok) toast(t("settings.sync.testOk"));
-    else toast(t("settings.sync.testFail", { reason: res.reason || res.error || "error" }), "error");
+    else {
+      // 常见：服务未启动 → Failed to fetch；把底层 error 拼进 reason 便于排查
+      const detail = [res.reason, res.error, res.status != null ? `HTTP ${res.status}` : ""]
+        .filter(Boolean)
+        .join(" · ");
+      toast(t("settings.sync.testFail", { reason: detail || "error" }), "error");
+    }
   });
   void refreshSyncStatusLine();
   $("btnSyncNow")?.addEventListener("click", async () => {

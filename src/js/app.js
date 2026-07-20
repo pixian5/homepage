@@ -41,6 +41,16 @@ import {
   saveIconCache,
 } from "./storage.js";
 import { exportSyncBundle, importSyncBundle } from "./sync_bundle.js";
+import {
+  flushOutbox,
+  getSyncStatus,
+  initSyncEngine,
+  onSyncEnabledChanged,
+  pullNow,
+  pushNow,
+  schedulePull,
+  schedulePush,
+} from "./sync_engine.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
 import { syncBytesBudgetLevel } from "./sync_policy.js";
 import { estimateSyncProjectionBytes } from "./sync_projection.js";
@@ -326,6 +336,14 @@ const I18N = {
     "settings.sync.importOk": "同步包已合并",
     "settings.sync.importFail": "同步包合并失败：{reason}",
     "settings.sync.hint": "同步使用浏览器账号存储，不含备份/壁纸/上传图标。跨浏览器请用同步包。",
+    "settings.sync.now": "立即同步",
+    "settings.sync.nowOk": "同步完成",
+    "settings.sync.state.off": "未启用",
+    "settings.sync.state.idle": "已启用",
+    "settings.sync.state.syncing": "同步中",
+    "settings.sync.state.quota": "配额不足",
+    "settings.sync.state.error": "同步出错",
+    "settings.sync.state.conflict": "需处理数据冲突",
     "settings.openMode": "网页打开方式",
     "settings.maxBackups": "最大备份数量（0 表示不备份）",
     "settings.iconRetry": "重新获取失败图标（每天）",
@@ -474,6 +492,14 @@ const I18N = {
     "settings.sync.importOk": "同步包已合併",
     "settings.sync.importFail": "同步包合併失敗：{reason}",
     "settings.sync.hint": "同步使用瀏覽器帳號儲存，不含備份/桌布/上傳圖示。跨瀏覽器請用同步包。",
+    "settings.sync.now": "立即同步",
+    "settings.sync.nowOk": "同步完成",
+    "settings.sync.state.off": "未啟用",
+    "settings.sync.state.idle": "已啟用",
+    "settings.sync.state.syncing": "同步中",
+    "settings.sync.state.quota": "配額不足",
+    "settings.sync.state.error": "同步出錯",
+    "settings.sync.state.conflict": "需處理資料衝突",
     "settings.openMode": "網頁開啟方式",
     "settings.maxBackups": "最大備份數量（0 代表不備份）",
     "settings.iconRetry": "重新取得失敗圖示（每日）",
@@ -925,7 +951,7 @@ function shouldDebugPersist() {
   }
 }
 
-async function loadLatestDataForApp() {
+async function _loadLatestDataForApp() {
   const localData = await loadData();
   if (localData.settings.syncEnabled) {
     // loadDataFromArea 在 key 缺失时返回 null，禁止用“空默认数据”参与 LWW
@@ -945,11 +971,20 @@ async function reloadFromStorage() {
   const prevSelected = new Set(selectedIds);
   const prevLocalTs = Number(data?.lastUpdated || 0);
   const prevPending = persistInFlight > 0;
-  data = await loadLatestDataForApp();
-  // 多设备 LWW 静默丢数据补提示：若刚被远端更新的数据覆盖（且本地没有正在进行的保存），
-  // 提示用户另一台设备更新了更新的数据，本地未保存的改动可能已被覆盖。
+  // 先从磁盘重载 local（popup 等外部写入），再按需 pull 合并远端投影
+  const diskLocal = await loadData();
+  const wasSync = !!diskLocal?.settings?.syncEnabled;
+  data = diskLocal;
+  if (wasSync) {
+    try {
+      await pullNow("storage_reload");
+    } catch (e) {
+      console.warn("reload pullNow failed", e);
+    }
+  }
   const newTs = Number(data?.lastUpdated || 0);
-  if (newTs > prevLocalTs && prevLocalTs > 0 && !prevPending) {
+  // merge 提示由 engine onMerged 负责；此处仅非 sync 粗提示
+  if (!wasSync && newTs > prevLocalTs && prevLocalTs > 0 && !prevPending) {
     toast(t("toast.syncOverwritten"), "warning");
   }
   if (prevActive === RECENT_GROUP_ID) {
@@ -970,6 +1005,8 @@ async function reloadFromStorage() {
   render();
   processPendingIconFetches();
   await consumeSaveToast();
+  // popup 等只写了 local：reload 后把投影推到 sync
+  if (data?.settings?.syncEnabled) schedulePush();
 }
 
 function scheduleStorageReload() {
@@ -991,13 +1028,23 @@ function attachStorageListener() {
   api.storage.onChanged.addListener((changes, areaName) => {
     if (persistInFlight > 0) return;
     if (Date.now() < suppressStorageUntil) return;
+    // 新同步协议：meta 变更触发 merge pull
+    if (areaName === "sync" && (changes?.homepage_sync_meta || changes?.homepage_data)) {
+      if (data?.settings?.syncEnabled) {
+        schedulePull("onChanged");
+        return;
+      }
+    }
     if (!changes?.[key]) return;
     if (areaName !== "local" && areaName !== "sync") return;
-    const incoming = changes[key].newValue;
-    const incomingTs = Number(incoming?.lastUpdated || 0);
-    const localTs = Number(data?.lastUpdated || 0);
-    if (incomingTs > 0 && localTs > 0 && incomingTs <= localTs) return;
-    scheduleStorageReload();
+    // 本地 homepage_data 变更（如 popup 写入）
+    if (areaName === "local") {
+      const incoming = changes[key].newValue;
+      const incomingTs = Number(incoming?.lastUpdated || 0);
+      const localTs = Number(data?.lastUpdated || 0);
+      if (incomingTs > 0 && localTs > 0 && incomingTs <= localTs) return;
+      scheduleStorageReload();
+    }
   });
 }
 
@@ -1351,24 +1398,20 @@ async function persistData() {
         lastUpdated: data.lastUpdated || 0,
         autoBackedUp,
       });
-      const useSync = data.settings.syncEnabled;
+      // 本地权威：始终先写 local；同步改走投影分片 engine
       const changed = dedupeData(data);
       let warning = null;
       let err = null;
-      const err1 = await saveData(data, useSync);
+      const err1 = await saveData(data, false);
       if (err1) {
-        if (
-          err1 === "sync_quota_exceeded" ||
-          err1 === "sync_write_failed" ||
-          (typeof err1 === "string" && err1.startsWith("local_trimmed_"))
-        ) {
+        if (typeof err1 === "string" && err1.startsWith("local_trimmed_")) {
           warning = err1;
         } else {
           err = err1;
         }
       }
-      if (useSync) {
-        await saveData(data, false);
+      if (!err && data.settings.syncEnabled) {
+        schedulePush();
       }
       if (changed) {
         debugLog("persist_dedupe", { changed });
@@ -2963,9 +3006,10 @@ async function refreshSyncStatusLine() {
   const el = $("syncStatusLine");
   if (!el) return;
   try {
+    const st = getSyncStatus();
     const deviceId = await getOrCreateDeviceId();
-    const bytes = estimateSyncProjectionBytes(data, { deviceId, docId: "doc_ui" });
-    const level = syncBytesBudgetLevel(bytes);
+    const bytes = st.bytesEstimate || estimateSyncProjectionBytes(data, { deviceId, docId: st.docId || "doc_ui" });
+    const level = st.budgetLevel || syncBytesBudgetLevel(bytes);
     const kb = bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
     const budgetKey =
       level === "red"
@@ -2973,8 +3017,21 @@ async function refreshSyncStatusLine() {
         : level === "yellow"
           ? "settings.sync.budget.yellow"
           : "settings.sync.budget.green";
-    el.textContent = `${t("settings.sync.size", { size: kb })} · ${t(budgetKey)}`;
-    el.dataset.level = level;
+    const statusKey =
+      st.status === "syncing"
+        ? "settings.sync.state.syncing"
+        : st.status === "quota"
+          ? "settings.sync.state.quota"
+          : st.status === "error"
+            ? "settings.sync.state.error"
+            : st.status === "need_setup"
+              ? "settings.sync.state.conflict"
+              : data.settings.syncEnabled
+                ? "settings.sync.state.idle"
+                : "settings.sync.state.off";
+    const err = st.lastError ? ` · ${st.lastError}` : "";
+    el.textContent = `${t(statusKey)} · ${t("settings.sync.size", { size: kb })} · ${t(budgetKey)}${err}`;
+    el.dataset.level = st.status === "error" || st.status === "quota" ? "red" : level;
   } catch (e) {
     console.warn("refreshSyncStatusLine failed", e);
     el.textContent = "";
@@ -3106,6 +3163,7 @@ function openSettingsModal() {
       <label><input id="settingSync" type="checkbox"> ${t("settings.sync")}</label>
       <div id="syncStatusLine" class="settings-sync-status"></div>
       <div class="row-inline settings-sync-actions">
+        <button type="button" id="btnSyncNow" class="icon-btn">${t("settings.sync.now")}</button>
         <button type="button" id="btnSyncExportBundle" class="icon-btn">${t("settings.sync.exportBundle")}</button>
         <button type="button" id="btnSyncImportBundle" class="icon-btn">${t("settings.sync.importBundle")}</button>
       </div>
@@ -3193,6 +3251,24 @@ function openSettingsModal() {
   $("settingLanguage").value = currentLang();
   $("settingSync").checked = data.settings.syncEnabled;
   void refreshSyncStatusLine();
+  $("btnSyncNow")?.addEventListener("click", async () => {
+    const btn = $("btnSyncNow");
+    if (btn) btn.disabled = true;
+    try {
+      await pullNow("manual");
+      const res = await pushNow("manual");
+      if (res?.reason === "sync_quota_total") toast(t("settings.sync.state.quota"), "warning");
+      else if (res && res.ok === false) toast(t("settings.sync.importFail", { reason: res.reason || "push" }), "error");
+      else toast(t("settings.sync.nowOk"));
+      void refreshSyncStatusLine();
+      render();
+    } catch (e) {
+      toast(t("settings.sync.importFail", { reason: e?.message || "sync" }), "error");
+    } finally {
+      const live = $("btnSyncNow");
+      if (live) live.disabled = false;
+    }
+  });
   $("btnSyncExportBundle")?.addEventListener("click", async () => {
     try {
       const deviceId = await getOrCreateDeviceId();
@@ -3385,7 +3461,11 @@ function openSettingsModal() {
       data.settings.defaultGroupMode = selectedDefaultGroupId ? "fixed" : "last";
       data.settings.defaultGroupId = selectedDefaultGroupId;
       data.settings.sidebarHidden = $("settingSidebarCollapsed").checked;
+      const prevSyncEnabled = !!data.settings.syncEnabled;
       data.settings.syncEnabled = $("settingSync").checked;
+      if (prevSyncEnabled !== data.settings.syncEnabled) {
+        void onSyncEnabledChanged(data.settings.syncEnabled);
+      }
       data.settings.openMode = $("settingOpenMode").value || "current";
       const nextMaxBackups = Number($("settingBackup").value) || 0;
       if (nextMaxBackups > 0 && data.backups.length > nextMaxBackups) {
@@ -4281,6 +4361,27 @@ function getDropIndex(grid, x, y) {
 
 async function init() {
   debugLog("init_start", getRuntimeInfo());
+  initSyncEngine({
+    getData: () => data,
+    setData: (next) => {
+      data = next;
+    },
+    saveLocal: async (next) => saveData(next, false),
+    createSafetySnapshot: async () => {
+      try {
+        pushBackup();
+      } catch (e) {
+        console.warn("sync safety pushBackup failed", e);
+      }
+    },
+    onMerged: async (_next, stats) => {
+      if (stats?.applied) {
+        toast(t("toast.syncOverwritten"), "warning");
+        render();
+        processPendingIconFetches();
+      }
+    },
+  });
   // Safari 无系统 history：在新标签页也挂 tabs 监听作为兜底
   try {
     attachVisitTracking();
@@ -4299,15 +4400,13 @@ async function init() {
     syncEnabled: !!localData.settings?.syncEnabled,
   });
   if (localData.settings.syncEnabled) {
-    // 空 sync 返回 null，不能当成“更新的空主页”
+    // 空 sync 返回 null，不能当成“更新的空主页”；完整 merge 由下方 pullNow 处理
     const syncData = await loadDataFromArea(true);
+    // 旧整包兼容：仅作 lastUpdated 粗选，随后 engine.pull 会 merge 投影
     if (syncData?.groups?.length) {
       const localTs = Number(localData.lastUpdated || 0);
       const syncTs = Number(syncData.lastUpdated || 0);
       data = syncTs >= localTs ? syncData : localData;
-      if (data === localData) {
-        await saveData(localData, true);
-      }
     } else {
       data = localData;
     }
@@ -4317,8 +4416,7 @@ async function init() {
   const deduped = dedupeData(data);
   const languageInitialized = ensureLanguageSetting();
   if (deduped || languageInitialized) {
-    await saveData(data, data.settings.syncEnabled);
-    if (data.settings.syncEnabled) await saveData(data, false);
+    await saveData(data, false);
   }
   syncBackupBaseline(data);
   debugLog("init_ready", {
@@ -4349,6 +4447,16 @@ async function init() {
   loadBackground();
   retryFailedIconsIfDue(data.settings);
   await consumeSaveToast();
+  if (data.settings.syncEnabled) {
+    try {
+      const pull = await pullNow("init");
+      if (pull?.needPush) await pushNow("init_need_push");
+      await flushOutbox();
+      render();
+    } catch (e) {
+      console.warn("init sync failed", e);
+    }
+  }
 }
 
 function render() {

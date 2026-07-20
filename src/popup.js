@@ -1,11 +1,9 @@
 import { createItemNode, pickLatestData } from "./js/data-utils.js";
 import {
   detectPreferredLanguage,
-  estimateBytes,
   getChromeApi,
   normalizeLanguage,
   normalizeUrl,
-  sanitizeForSync,
   storageGet as sharedStorageGet,
   storageSet as sharedStorageSet,
   storageArea,
@@ -13,9 +11,9 @@ import {
 import { getStorageKey, loadData } from "./js/storage.js";
 
 const ROOT_KEY = getStorageKey();
-const SYNC_ITEM_QUOTA_BYTES = 7500;
+const _SYNC_ITEM_QUOTA_BYTES = 7500;
 const MAX_LOG_ENTRIES = 30;
-const ICON_DATA_MAX_LENGTH = 2048;
+const _ICON_DATA_MAX_LENGTH = 2048;
 const TOAST_DURATION_MS = 3000;
 const DEFAULT_FONT_SIZE = 13;
 const TOAST_FONT_STACK = '"Avenir Next", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif';
@@ -319,7 +317,7 @@ async function saveToGroup(tab, selectedGroupId, customTitle = "") {
     await appendLog({ ts: Date.now(), stage: "invalid_url", raw: tab?.url || "" });
     return { error: "invalid_url" };
   }
-  const { data, useSync } = await loadLatestData();
+  const { data } = await loadLatestData();
   if (!data?.groups || !data.nodes) {
     await appendLog({ ts: Date.now(), stage: "no_data" });
     return { error: "no_data" };
@@ -353,45 +351,11 @@ async function saveToGroup(tab, selectedGroupId, customTitle = "") {
   // 弹窗保存仅在当前网页显示 toast，避免新标签页读取存储后重复提示
   data.settings.lastSaveToast = null;
   data.lastUpdated = Date.now();
-  const payload = useSync ? sanitizeForSync(data, ICON_DATA_MAX_LENGTH) : data;
-  if (useSync) {
-    const size = estimateBytes(payload);
-    if (size > SYNC_ITEM_QUOTA_BYTES) {
-      data.settings.syncEnabled = false;
-      const localErr = await storageSet({ [ROOT_KEY]: data }, false);
-      await appendLog({ ts: Date.now(), stage: "sync_quota_disable", bytes: size, localErr });
-      if (localErr) return { error: "save_failed" };
-      return {
-        groupId: group.id,
-        groupName: group.name || "",
-        fontSize: data.settings.fontSize || DEFAULT_FONT_SIZE,
-        warning: "sync_quota",
-      };
-    }
-    const err = await storageSet({ [ROOT_KEY]: payload }, true);
-    if (err) {
-      data.settings.syncEnabled = false;
-      const localErr = await storageSet({ [ROOT_KEY]: data }, false);
-      await appendLog({ ts: Date.now(), stage: "sync_error", error: err, localErr });
-      if (localErr) return { error: "save_failed" };
-      return {
-        groupId: group.id,
-        groupName: group.name || "",
-        fontSize: data.settings.fontSize || DEFAULT_FONT_SIZE,
-        warning: "sync_error",
-      };
-    }
-    const localErr = await storageSet({ [ROOT_KEY]: data }, false);
-    if (localErr) {
-      await appendLog({ ts: Date.now(), stage: "local_error_after_sync", error: localErr });
-      // sync 已成功，仍提示成功
-    }
-  } else {
-    const localErr = await storageSet({ [ROOT_KEY]: data }, false);
-    if (localErr) {
-      await appendLog({ ts: Date.now(), stage: "local_error", error: localErr });
-      return { error: "save_failed" };
-    }
+  // 本地权威：popup 只写 local；newtab 监听 local 变更后 schedulePush 上传投影
+  const localErr = await storageSet({ [ROOT_KEY]: data }, false);
+  if (localErr) {
+    await appendLog({ ts: Date.now(), stage: "local_error", error: localErr });
+    return { error: "save_failed" };
   }
   await appendLog({ ts: Date.now(), stage: "saved", url, group: group.id });
   return { groupId: group.id, groupName: group.name || "", fontSize: data.settings.fontSize || DEFAULT_FONT_SIZE };

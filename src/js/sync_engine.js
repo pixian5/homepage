@@ -1,0 +1,525 @@
+/**
+ * 同步引擎：local 权威 + 投影分片推送 + merge 拉取
+ */
+
+import { getLastError, storageArea } from "./shared-utils.js";
+import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
+import { mergeHomepage } from "./sync_merge.js";
+import {
+  isSyncOutboxReady,
+  normalizeSyncOutbox,
+  removeSyncOutbox,
+  SYNC_OUTBOX_KEY,
+  SYNC_OUTBOX_TARGET,
+  upsertSyncOutbox,
+} from "./sync_outbox.js";
+import { packSyncDocument, SYNC_META_KEY, syncShardKeys, unpackSyncDocument } from "./sync_pack.js";
+import {
+  SYNC_OUTBOX_MAX_ATTEMPTS,
+  SYNC_PULL_DEBOUNCE_MS,
+  SYNC_PUSH_DEBOUNCE_MS,
+  SYNC_REVISION_RETRY,
+  SYNC_SHARD_KEY_PREFIX,
+  SYNC_STATE_KEY,
+  syncBytesBudgetLevel,
+} from "./sync_policy.js";
+import { estimateSyncProjectionBytes, hashSyncDocument, toSyncDocument } from "./sync_projection.js";
+
+function areaLocal() {
+  return storageArea(false);
+}
+function areaSync() {
+  return storageArea(true);
+}
+
+function storageGetKeys(area, keys) {
+  return new Promise((resolve) => {
+    try {
+      const result = area.get(keys, (res) => {
+        if (getLastError()) return resolve({ ok: false, error: getLastError().message, value: {} });
+        resolve({ ok: true, value: res || {} });
+      });
+      if (result && typeof result.then === "function") {
+        result.then(
+          (res) => resolve({ ok: true, value: res || {} }),
+          (e) => resolve({ ok: false, error: e?.message || String(e), value: {} }),
+        );
+      }
+    } catch (e) {
+      resolve({ ok: false, error: e?.message || String(e), value: {} });
+    }
+  });
+}
+
+function storageSetObj(area, obj) {
+  return new Promise((resolve) => {
+    try {
+      const result = area.set(obj, () => {
+        const err = getLastError();
+        resolve(err ? err.message || String(err) : null);
+      });
+      if (result && typeof result.then === "function") {
+        result.then(
+          () => resolve(null),
+          (e) => resolve(e?.message || String(e)),
+        );
+      }
+    } catch (e) {
+      resolve(e?.message || String(e));
+    }
+  });
+}
+
+function storageRemoveKeys(area, keys) {
+  return new Promise((resolve) => {
+    try {
+      const result = area.remove(keys, () => resolve(getLastError() ? getLastError().message : null));
+      if (result && typeof result.then === "function") {
+        result.then(
+          () => resolve(null),
+          (e) => resolve(e?.message || String(e)),
+        );
+      }
+    } catch (e) {
+      resolve(e?.message || String(e));
+    }
+  });
+}
+
+/** @type {object} */
+let _status = {
+  enabled: false,
+  docId: null,
+  status: "off",
+  lastPullAt: 0,
+  lastPushAt: 0,
+  lastError: "",
+  lastRemoteRevision: 0,
+  bytesEstimate: 0,
+};
+
+let _pushTimer = null;
+let _pullTimer = null;
+let _chain = Promise.resolve();
+let _getData = () => null;
+let _setData = (_d) => {};
+let _onMerged = async () => {};
+let _saveLocal = async () => null;
+let _createSafety = async () => {};
+
+/**
+ * @param {{
+ *   getData: () => object,
+ *   setData: (d: object) => void,
+ *   saveLocal: (d: object) => Promise<string|null>,
+ *   onMerged?: (d: object, stats: object) => Promise<void>|void,
+ *   createSafetySnapshot?: () => Promise<void>|void,
+ * }} hooks
+ */
+export function initSyncEngine(hooks) {
+  _getData = hooks.getData;
+  _setData = hooks.setData;
+  _saveLocal = hooks.saveLocal;
+  _onMerged = hooks.onMerged || (async () => {});
+  _createSafety = hooks.createSafetySnapshot || (async () => {});
+}
+
+export function getSyncStatus() {
+  const data = _getData();
+  return {
+    ..._status,
+    enabled: !!data?.settings?.syncEnabled,
+    bytesEstimate: data ? estimateSyncProjectionBytes(data, { deviceId: "x", docId: _status.docId || "y" }) : 0,
+    budgetLevel: syncBytesBudgetLevel(
+      data ? estimateSyncProjectionBytes(data, { deviceId: "x", docId: _status.docId || "y" }) : 0,
+    ),
+  };
+}
+
+async function loadState() {
+  const local = areaLocal();
+  if (!local) return;
+  const got = await storageGetKeys(local, [SYNC_STATE_KEY, SYNC_OUTBOX_KEY]);
+  const st = got.value?.[SYNC_STATE_KEY];
+  if (st && typeof st === "object") {
+    _status = { ..._status, ...st };
+  }
+}
+
+async function saveState() {
+  const local = areaLocal();
+  if (!local) return;
+  await storageSetObj(local, {
+    [SYNC_STATE_KEY]: {
+      docId: _status.docId,
+      status: _status.status,
+      lastPullAt: _status.lastPullAt,
+      lastPushAt: _status.lastPushAt,
+      lastError: _status.lastError,
+      lastRemoteRevision: _status.lastRemoteRevision,
+      bytesEstimate: _status.bytesEstimate,
+    },
+  });
+}
+
+function enqueue(task) {
+  const run = _chain.then(task, task);
+  _chain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/**
+ * 读取远端 SyncDocument
+ */
+export async function readRemoteSyncDocument() {
+  const sync = areaSync();
+  if (!sync) return { ok: false, reason: "no_sync_area" };
+  const metaGot = await storageGetKeys(sync, [SYNC_META_KEY, "homepage_data"]);
+  if (!metaGot.ok) return { ok: false, reason: "meta_read_error", error: metaGot.error };
+  const meta = metaGot.value?.[SYNC_META_KEY];
+  const legacyBlob = metaGot.value?.homepage_data;
+
+  // 新协议 meta 优先
+  if (meta?.shardCount) {
+    const keys = syncShardKeys(meta.shardCount);
+    const shardGot = await storageGetKeys(sync, keys);
+    if (!shardGot.ok) return { ok: false, reason: "shard_read_error", error: shardGot.error };
+    return unpackSyncDocument(meta, shardGot.value);
+  }
+
+  // 兼容：旧版整包写在 sync.homepage_data
+  if (legacyBlob && typeof legacyBlob === "object" && (legacyBlob.groups || legacyBlob.nodes)) {
+    return { ok: false, reason: "legacy_blob", legacy: legacyBlob };
+  }
+  // 兼容：误把整包写在 meta key
+  if (meta?.groups && meta.nodes && !meta.shardCount) {
+    return { ok: false, reason: "legacy_blob", legacy: meta };
+  }
+  return { ok: false, reason: "no_remote" };
+}
+
+/**
+ * 写入远端投影
+ */
+async function writeRemoteSyncDocument(doc) {
+  const sync = areaSync();
+  if (!sync) return "no_sync_area";
+  let packed;
+  try {
+    packed = packSyncDocument(doc);
+  } catch (e) {
+    if (e?.code === "sync_quota_total" || e?.code === "sync_shard_too_large") {
+      return e.code;
+    }
+    return e?.message || String(e);
+  }
+  // 清理多余旧 shard
+  const removeKeys = [];
+  for (let i = packed.meta.shardCount; i < packed.meta.shardCount + 20; i++) {
+    removeKeys.push(`${SYNC_SHARD_KEY_PREFIX}${i}`);
+  }
+  // 先写 shards
+  const errShards = await storageSetObj(sync, packed.shards);
+  if (errShards) return errShards;
+  // 再写 meta
+  const errMeta = await storageSetObj(sync, { [SYNC_META_KEY]: packed.meta });
+  if (errMeta) return errMeta;
+  // best-effort 删旧片
+  if (removeKeys.length) await storageRemoveKeys(sync, removeKeys);
+  // 清理旧整包 key（若存在）
+  await storageRemoveKeys(sync, ["homepage_data"]);
+  return null;
+}
+
+/**
+ * Pull + merge 到本地
+ */
+export async function pullNow(reason = "manual") {
+  return enqueue(async () => {
+    const data = _getData();
+    if (!data?.settings?.syncEnabled) {
+      _status.status = "off";
+      return { ok: true, skipped: true };
+    }
+    _status.status = "syncing";
+    _status.lastError = "";
+    await saveState();
+
+    const deviceId = await getOrCreateDeviceId();
+    const remote = await readRemoteSyncDocument();
+
+    if (!remote.ok) {
+      if (remote.reason === "no_remote") {
+        // 远端空：若本地有数据则 push；否则 idle
+        _status.status = "idle";
+        _status.lastPullAt = Date.now();
+        await saveState();
+        if ((data.groups?.length || 0) > 0 || Object.keys(data.nodes || {}).length > 0) {
+          // 同队列内直接 push，避免嵌套 enqueue 死锁
+          const pushed = await pushNowImpl("pull_empty_remote");
+          return { ok: true, empty: true, pushed };
+        }
+        return { ok: true, empty: true };
+      }
+      if (remote.reason === "legacy_blob") {
+        // 将旧整包当 HomepageData 投影再 merge
+        const legacy = remote.legacy;
+        const docId = _status.docId || createDocId();
+        _status.docId = docId;
+        const asDoc = toSyncDocument(legacy, {
+          deviceId: legacy?.settings?.lastDeviceId || deviceId,
+          docId,
+          revision: 1,
+          writtenAt: Number(legacy.lastUpdated) || Date.now(),
+        });
+        return applyRemoteDoc(asDoc, deviceId, reason);
+      }
+      _status.status = remote.reason === "incomplete_remote" ? "error" : "error";
+      _status.lastError = remote.reason || "pull_failed";
+      await saveState();
+      return { ok: false, reason: remote.reason };
+    }
+
+    return applyRemoteDoc(remote.doc, deviceId, reason);
+  });
+}
+
+async function applyRemoteDoc(doc, deviceId, reason) {
+  const data = _getData();
+  if (!_status.docId) _status.docId = doc.docId || createDocId();
+  if (doc.docId && _status.docId && doc.docId !== _status.docId) {
+    // 文档冲突：暂不自动覆盖，标 need_setup
+    _status.status = "need_setup";
+    _status.lastError = "doc_conflict";
+    await saveState();
+    return { ok: false, reason: "doc_conflict", remoteDocId: doc.docId, localDocId: _status.docId };
+  }
+  if (!doc.docId) doc.docId = _status.docId;
+
+  const merged = mergeHomepage(data, doc, { deviceId, now: Date.now() });
+  if (!merged.ok) {
+    _status.status = "error";
+    _status.lastError = merged.reason || "merge_failed";
+    await saveState();
+    return { ok: false, reason: merged.reason, stats: merged.stats };
+  }
+
+  if (merged.stats?.applied) {
+    try {
+      await _createSafety();
+    } catch (e) {
+      console.warn("sync safety snapshot failed", e);
+    }
+    _setData(merged.state);
+    const err = await _saveLocal(merged.state);
+    if (err) {
+      _status.status = "error";
+      _status.lastError = err;
+      await saveState();
+      return { ok: false, reason: "local_write_failed", error: err };
+    }
+    await _onMerged(merged.state, merged.stats);
+  }
+
+  _status.lastPullAt = Date.now();
+  _status.lastRemoteRevision = Number(doc.revision) || 0;
+  _status.status = "idle";
+  _status.lastError = "";
+  _status.docId = doc.docId || _status.docId;
+  await saveState();
+  return { ok: true, merged: !!merged.stats?.applied, stats: merged.stats, reason };
+}
+
+/**
+ * 推送本地投影（可在 pull 的 enqueue 内调用，勿再包 enqueue）
+ */
+async function pushNowImpl(reason = "manual") {
+  const data = _getData();
+  if (!data?.settings?.syncEnabled) {
+    _status.status = "off";
+    return { ok: true, skipped: true };
+  }
+  _status.status = "syncing";
+  await saveState();
+
+  const deviceId = await getOrCreateDeviceId();
+  if (!_status.docId) _status.docId = createDocId();
+
+  let baseRevision = 0;
+  const remote = await readRemoteSyncDocument();
+  if (remote.ok && remote.doc) {
+    if (remote.doc.docId && _status.docId && remote.doc.docId !== _status.docId) {
+      _status.status = "need_setup";
+      _status.lastError = "doc_conflict";
+      await saveState();
+      return { ok: false, reason: "doc_conflict" };
+    }
+    baseRevision = Number(remote.doc.revision) || 0;
+    if (baseRevision > (_status.lastRemoteRevision || 0)) {
+      const pulled = await applyRemoteDoc(remote.doc, deviceId, "push_pre_pull");
+      if (!pulled.ok && pulled.reason === "doc_conflict") return pulled;
+    }
+    const again = await readRemoteSyncDocument();
+    if (again.ok) baseRevision = Number(again.doc.revision) || baseRevision;
+  } else if (remote.reason === "legacy_blob" && remote.legacy) {
+    const docId = _status.docId || createDocId();
+    _status.docId = docId;
+    const asDoc = toSyncDocument(remote.legacy, {
+      deviceId: deviceId,
+      docId,
+      revision: 1,
+      writtenAt: Number(remote.legacy.lastUpdated) || Date.now(),
+    });
+    await applyRemoteDoc(asDoc, deviceId, "push_legacy_pull");
+    baseRevision = 1;
+  }
+
+  const latest = _getData();
+  let lastErr = null;
+  for (let attempt = 0; attempt < SYNC_REVISION_RETRY; attempt++) {
+    const revision = baseRevision + 1;
+    const doc = toSyncDocument(latest, {
+      deviceId,
+      docId: _status.docId,
+      revision,
+      writtenAt: Date.now(),
+    });
+    doc.contentHash = hashSyncDocument(doc);
+    _status.bytesEstimate = estimateSyncProjectionBytes(latest, { deviceId, docId: _status.docId });
+
+    const writeErr = await writeRemoteSyncDocument(doc);
+    if (!writeErr) {
+      _status.lastPushAt = Date.now();
+      _status.lastRemoteRevision = revision;
+      _status.status = "idle";
+      _status.lastError = "";
+      await clearOutboxSuccess();
+      await saveState();
+      return { ok: true, revision, reason };
+    }
+    lastErr = writeErr;
+    if (writeErr === "sync_quota_total" || writeErr === "sync_shard_too_large") {
+      _status.status = "quota";
+      _status.lastError = writeErr;
+      await enqueueOutbox(doc, writeErr);
+      await saveState();
+      return { ok: false, reason: writeErr };
+    }
+    const again = await readRemoteSyncDocument();
+    if (again.ok) {
+      baseRevision = Number(again.doc.revision) || baseRevision;
+      await applyRemoteDoc(again.doc, deviceId, "push_retry_pull");
+    }
+  }
+
+  _status.status = "error";
+  _status.lastError = lastErr || "push_failed";
+  await enqueueOutbox(
+    toSyncDocument(_getData(), {
+      deviceId,
+      docId: _status.docId,
+      revision: baseRevision + 1,
+      writtenAt: Date.now(),
+    }),
+    lastErr,
+  );
+  await saveState();
+  return { ok: false, reason: lastErr || "push_failed" };
+}
+
+export async function pushNow(reason = "manual") {
+  return enqueue(() => pushNowImpl(reason));
+}
+
+async function enqueueOutbox(doc, error) {
+  const local = areaLocal();
+  if (!local) return;
+  const got = await storageGetKeys(local, [SYNC_OUTBOX_KEY]);
+  const next = upsertSyncOutbox(got.value?.[SYNC_OUTBOX_KEY], {
+    targetKey: SYNC_OUTBOX_TARGET,
+    payload: doc,
+    error,
+  });
+  await storageSetObj(local, { [SYNC_OUTBOX_KEY]: next });
+}
+
+async function clearOutboxSuccess() {
+  const local = areaLocal();
+  if (!local) return;
+  const got = await storageGetKeys(local, [SYNC_OUTBOX_KEY]);
+  const next = removeSyncOutbox(got.value?.[SYNC_OUTBOX_KEY], SYNC_OUTBOX_TARGET);
+  await storageSetObj(local, { [SYNC_OUTBOX_KEY]: next });
+}
+
+/**
+ * 防抖推送
+ */
+export function schedulePush() {
+  const data = _getData();
+  if (!data?.settings?.syncEnabled) return;
+  if (_pushTimer) clearTimeout(_pushTimer);
+  _pushTimer = setTimeout(() => {
+    _pushTimer = null;
+    void pushNow("schedule").catch((e) => console.warn("schedulePush", e));
+  }, SYNC_PUSH_DEBOUNCE_MS);
+}
+
+export function schedulePull(reason = "onChanged") {
+  const data = _getData();
+  if (!data?.settings?.syncEnabled) return;
+  if (_pullTimer) clearTimeout(_pullTimer);
+  _pullTimer = setTimeout(() => {
+    _pullTimer = null;
+    void pullNow(reason).catch((e) => console.warn("schedulePull", e));
+  }, SYNC_PULL_DEBOUNCE_MS);
+}
+
+/**
+ * 刷新 outbox 到期项
+ */
+export async function flushOutbox() {
+  const data = _getData();
+  if (!data?.settings?.syncEnabled) return { ok: true, skipped: true };
+  const local = areaLocal();
+  if (!local) return { ok: false, reason: "no_local" };
+  const got = await storageGetKeys(local, [SYNC_OUTBOX_KEY]);
+  const list = normalizeSyncOutbox(got.value?.[SYNC_OUTBOX_KEY]);
+  const item = list.find((x) => x.targetKey === SYNC_OUTBOX_TARGET);
+  if (!item) return { ok: true, empty: true };
+  if (!isSyncOutboxReady(item)) return { ok: true, wait: true };
+  if (item.attempts >= SYNC_OUTBOX_MAX_ATTEMPTS) {
+    _status.status = "error";
+    _status.lastError = item.lastError || "outbox_exhausted";
+    await saveState();
+    return { ok: false, reason: "outbox_exhausted" };
+  }
+  return pushNow("outbox");
+}
+
+/**
+ * 启用时初始化状态并尝试首同步
+ */
+export async function onSyncEnabledChanged(enabled) {
+  await loadState();
+  if (!enabled) {
+    _status.status = "off";
+    await saveState();
+    return;
+  }
+  _status.status = "idle";
+  if (!_status.docId) _status.docId = createDocId();
+  await saveState();
+  const pull = await pullNow("enable");
+  if (pull?.needPush || pull?.empty || (pull?.ok && !pull?.merged)) {
+    await pushNow("enable");
+  } else if (pull?.ok && pull?.merged) {
+    // 已从远端合并，再推一次拉齐 revision（push 内部会处理）
+    await pushNow("enable_after_pull");
+  }
+}
+
+// 启动时加载状态
+void loadState();

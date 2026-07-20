@@ -21,6 +21,9 @@ const files = [
   "sync_projection.js",
   "sync_merge.js",
   "sync_bundle.js",
+  "sync_pack.js",
+  "sync_outbox.js",
+  "sync_engine.js",
   "app.js",
 ];
 const backgroundFiles = ["shared-utils.js", "visit-history.js", "background.js"];

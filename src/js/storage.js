@@ -140,32 +140,36 @@ function trimLocalBackground(data) {
   return false;
 }
 
+/**
+ * @returns {Promise<{ ok: true, value: any } | { ok: false, error: string }>}
+ * ok:false = 读失败（不可当「无数据」）；ok:true 且 value undefined = 确实无 key
+ */
 async function storageGetLocal(area, key) {
   return new Promise((resolve) => {
     let done = false;
-    const finish = (value) => {
+    const finish = (result) => {
       if (done) return;
       done = true;
-      resolve(value);
+      resolve(result);
     };
     try {
       const result = area.get(key, (res) => {
         const err = getLastError();
-        if (err) return finish(undefined);
-        finish(res?.[key]);
+        if (err) return finish({ ok: false, error: err.message || String(err) });
+        finish({ ok: true, value: res?.[key] });
       });
       if (result && typeof result.then === "function") {
         result.then(
-          (res) => finish(res?.[key]),
+          (res) => finish({ ok: true, value: res?.[key] }),
           (e) => {
             console.warn("storageGet promise rejected", e);
-            finish(undefined);
+            finish({ ok: false, error: e?.message || String(e) });
           },
         );
       }
     } catch (e) {
       console.warn("storageGet failed", e);
-      finish(undefined);
+      finish({ ok: false, error: e?.message || String(e) });
     }
   });
 }
@@ -283,7 +287,20 @@ export async function loadData() {
   if (!api) return base;
 
   const local = storageArea(false);
-  let data = await storageGetLocal(local, ROOT_KEY);
+  // 读失败时最多重试 2 次，避免瞬时错误被当成「无数据」并覆盖默认主页
+  let got = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    got = await storageGetLocal(local, ROOT_KEY);
+    if (got.ok) break;
+    console.warn("loadData storage read failed", got.error, "attempt", attempt + 1);
+    if (attempt < 2) await new Promise((r) => setTimeout(r, 50 * (attempt + 1)));
+  }
+  if (!got?.ok) {
+    // 失败关闭：返回内存默认值，但不写盘，避免冲掉真实数据
+    console.error("loadData: storage unreadable, using in-memory defaults without overwrite");
+    return base;
+  }
+  let data = got.value;
   if (!data) {
     await storageSetLocal(local, { [ROOT_KEY]: base });
     return base;
@@ -305,9 +322,10 @@ export async function loadDataFromArea(useSync = false) {
   const api = getChromeApi();
   if (!api) return null;
   const area = storageArea(useSync);
-  let data = await storageGetLocal(area, ROOT_KEY);
-  if (!data) return null;
-  data = migrateData(data);
+  const got = await storageGetLocal(area, ROOT_KEY);
+  // 读失败与「无 key」都返回 null，由调用方按「无远端数据」处理，避免用错误默认覆盖
+  if (!got?.ok || got.value == null) return null;
+  let data = migrateData(got.value);
   if (!data || typeof data !== "object") return null;
   data.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
   data = repairHomepageData(data, DEFAULT_SETTINGS);
@@ -431,7 +449,8 @@ export async function loadIconCache() {
   const api = getChromeApi();
   if (!api) return {};
   const local = storageArea(false);
-  const raw = (await storageGetLocal(local, ICON_CACHE_KEY)) || {};
+  const got = await storageGetLocal(local, ICON_CACHE_KEY);
+  const raw = got?.ok && got.value && typeof got.value === "object" ? got.value : {};
   const normalized = {};
   for (const [key, value] of Object.entries(raw)) {
     normalized[key] = normalizeIconCacheEntry(value);
@@ -501,7 +520,9 @@ export async function loadBgCache() {
   const api = getChromeApi();
   if (!api) return {};
   const local = storageArea(false);
-  return (await storageGetLocal(local, BG_CACHE_KEY)) || {};
+  const got = await storageGetLocal(local, BG_CACHE_KEY);
+  if (!got?.ok || !got.value || typeof got.value !== "object") return {};
+  return got.value;
 }
 
 export async function saveBgCache(cache) {

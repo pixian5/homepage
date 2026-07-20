@@ -539,7 +539,7 @@ async function init() {
   document.body.classList.remove("hidden");
   let saving = false;
   const btnSave = document.getElementById("btnSave");
-  btnSave.addEventListener("click", async () => {
+  const doSave = async () => {
     if (saving) return;
     if (!tab) {
       showPopupError(tr("noTab", popupLanguage));
@@ -563,6 +563,18 @@ async function init() {
     showPopupError(explainSaveError(result) || tr("saveFailed", popupLanguage));
     saving = false;
     btnSave.disabled = false;
+  };
+  btnSave.addEventListener("click", () => {
+    void doSave();
+  });
+  // 面板内回车默认保存（与 newtab 弹窗一致）
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.isComposing) return;
+    const tag = (e.target?.tagName || "").toLowerCase();
+    if (tag === "textarea") return;
+    if (e.target?.closest?.("select")) return;
+    e.preventDefault();
+    void doSave();
   });
 }
 

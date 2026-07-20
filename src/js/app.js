@@ -933,6 +933,7 @@ async function reloadFromStorage() {
   ensureLanguageSetting();
   syncBackupBaseline(data);
   render();
+  processPendingIconFetches();
   await consumeSaveToast();
 }
 
@@ -1166,11 +1167,7 @@ async function openUrl(url, mode) {
   const api = getChromeApi();
   const openMode = mode || data.settings.openMode;
   // 用户从本扩展打开的链接也记入「最近访问」（Safari 无系统历史时的数据来源）
-  try {
-    recordVisit({ url, title: "" });
-  } catch (_e) {
-    // ignore
-  }
+  void recordVisit({ url, title: "" }).catch((e) => console.warn("recordVisit failed", e));
   if (api?.tabs && (openMode === "new" || openMode === "background")) {
     api.tabs.create({ url, active: openMode !== "background" });
     return;
@@ -2453,8 +2450,12 @@ function findModalDefaultActionButton(modal) {
     const btn = modal.querySelector?.(`#${id}`);
     if (btn && !btn.disabled && btn.offsetParent !== null) return btn;
   }
-  // 设置等无明确 save id 的面板：actions 区最后一个非 danger 按钮，否则最后一个按钮
-  const actions = modal.querySelector?.(".actions, .settings-actions");
+  // 设置面板改完即存，且 actions 末钮是「刷新图标」——禁止 Enter 误触
+  if (modal.querySelector?.(".settings-actions") && !modal.querySelector?.("#btnSave")) {
+    return null;
+  }
+  // 其它有 .actions 的面板：取最后一个非 danger 按钮
+  const actions = modal.querySelector?.(".actions");
   if (actions) {
     const buttons = [...actions.querySelectorAll("button.icon-btn, button")].filter(
       (b) => !b.disabled && !b.classList.contains("danger"),
@@ -2810,20 +2811,26 @@ function openEditModal(node) {
 
   $("btnCancel")?.addEventListener("click", closeModal);
   $("btnSave")?.addEventListener("click", async () => {
+    // 先校验再改内存/备份，避免无效 URL 留下半截修改
+    const nextTitle = ($("fieldTitle")?.value || "").trim() || node.title;
+    let nextUrl = node.url;
+    if (node.type === "item") {
+      nextUrl = normalizeUrl(($("fieldUrl")?.value || "").trim());
+      if (!nextUrl) {
+        toast(t("error.invalidUrl"), "error");
+        return;
+      }
+    }
+
     const snapshot = deepClone(data);
     pushBackup();
 
     const oldUrl = node.url;
     const oldIconType = node.iconType;
 
-    const titleEl = $("fieldTitle");
-    node.title = titleEl?.value?.trim() || node.title;
+    node.title = nextTitle;
     if (node.type === "item") {
-      const url = normalizeUrl(($("fieldUrl")?.value || "").trim());
-      if (!url) {
-        toast(t("error.invalidUrl"), "error");
-        return;
-      }
+      const url = nextUrl;
       node.url = url;
       const iconType = $("fieldIconType")?.value || "auto";
       node.iconType = iconType;
@@ -2897,6 +2904,24 @@ async function openOpenModeMenu() {
     updateOpenModeButton();
     toast(t("openMode.saveFailed"), "error");
   }
+}
+
+/** 离开设置主表单进入子面板前：刷掉 debounce 中的保存，避免改动丢失 */
+async function leaveSettingsForSubpanel() {
+  if (settingsSaveTimer) {
+    clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = null;
+  }
+  const pending = _settingsSaveNow;
+  if (typeof pending === "function" && !settingsSaving) {
+    try {
+      await pending();
+    } catch (e) {
+      console.warn("leaveSettingsForSubpanel flush failed", e);
+    }
+  }
+  settingsOpen = false;
+  _settingsSaveNow = null;
 }
 
 function openSettingsModal() {
@@ -3217,79 +3242,81 @@ function openSettingsModal() {
       return;
     }
     settingsSaving = true;
-    qsa(".group-name", elements.modal).forEach((input) => {
-      const row = input.closest("[data-group]");
-      const id = row.dataset.group;
-      const group = data.groups.find((g) => g.id === id);
-      if (group) group.name = input.value.trim() || group.name;
-    });
+    try {
+      qsa(".group-name", elements.modal).forEach((input) => {
+        const row = input.closest("[data-group]");
+        const id = row.dataset.group;
+        const group = data.groups.find((g) => g.id === id);
+        if (group) group.name = input.value.trim() || group.name;
+      });
 
-    data.settings.showSearch = $("settingShowSearch").checked;
-    data.settings.enableSearchEngine = true;
-    {
-      const engineInput = $("settingSearchEngine").value.trim();
-      if (engineInput) {
-        const normalizedEngine = normalizeUrl(engineInput);
-        data.settings.searchEngineUrl = normalizedEngine || data.settings.searchEngineUrl;
+      data.settings.showSearch = $("settingShowSearch").checked;
+      data.settings.enableSearchEngine = true;
+      {
+        const engineInput = $("settingSearchEngine").value.trim();
+        if (engineInput) {
+          const normalizedEngine = normalizeUrl(engineInput);
+          data.settings.searchEngineUrl = normalizedEngine || data.settings.searchEngineUrl;
+        }
       }
-    }
-    data.settings.fixedLayout = $("settingFixedLayout").checked;
-    data.settings.fixedCols = Number($("settingCols").value) || 8;
-    const selectedDensity = qsa("input[name='density']", elements.modal).find((r) => r.checked);
-    data.settings.gridDensity = selectedDensity ? selectedDensity.value : data.settings.gridDensity;
-    data.settings.backgroundType = $("settingBgType").value;
-    data.settings.backgroundColor = $("settingBgColor").value;
-    const gA = $("settingBgGradientA").value || "#1d2a3b";
-    const gB = $("settingBgGradientB").value || "#0b0f14";
-    data.settings.backgroundGradientA = gA;
-    data.settings.backgroundGradientB = gB;
-    data.settings.backgroundGradient = `linear-gradient(120deg, ${gA}, ${gB})`;
-    data.settings.backgroundOverlayStrength = Number($("settingBgOverlay").value);
-    data.settings.tooltipEnabled = $("settingTooltip").checked;
-    data.settings.keyboardNav = $("settingKeyboard").checked;
-    data.settings.fontSize = Number($("settingFontSize").value) || data.settings.fontSize;
-    data.settings.theme = $("settingTheme").value;
-    data.settings.language = normalizeLanguage($("settingLanguage").value) || detectPreferredLanguage();
-    const selectedDefaultGroupId = $("settingDefaultGroupId").value;
-    data.settings.defaultGroupMode = selectedDefaultGroupId ? "fixed" : "last";
-    data.settings.defaultGroupId = selectedDefaultGroupId;
-    data.settings.sidebarHidden = $("settingSidebarCollapsed").checked;
-    data.settings.syncEnabled = $("settingSync").checked;
-    data.settings.openMode = $("settingOpenMode").value || "current";
-    const nextMaxBackups = Number($("settingBackup").value) || 0;
-    if (nextMaxBackups > 0 && data.backups.length > nextMaxBackups) {
-      data.backups = data.backups.slice(0, nextMaxBackups);
-    }
-    data.settings.maxBackups = nextMaxBackups;
-    const retryVal = $("settingIconRetryHour").value;
-    if (retryVal === "") {
-      data.settings.iconRetryHour = "";
-      data.settings.iconRetryAtSix = false;
-    } else {
-      data.settings.iconRetryHour = Number(retryVal);
-      data.settings.iconRetryAtSix = Number(retryVal) === 18;
-    }
+      data.settings.fixedLayout = $("settingFixedLayout").checked;
+      data.settings.fixedCols = Number($("settingCols").value) || 8;
+      const selectedDensity = qsa("input[name='density']", elements.modal).find((r) => r.checked);
+      data.settings.gridDensity = selectedDensity ? selectedDensity.value : data.settings.gridDensity;
+      data.settings.backgroundType = $("settingBgType").value;
+      data.settings.backgroundColor = $("settingBgColor").value;
+      const gA = $("settingBgGradientA").value || "#1d2a3b";
+      const gB = $("settingBgGradientB").value || "#0b0f14";
+      data.settings.backgroundGradientA = gA;
+      data.settings.backgroundGradientB = gB;
+      data.settings.backgroundGradient = `linear-gradient(120deg, ${gA}, ${gB})`;
+      data.settings.backgroundOverlayStrength = Number($("settingBgOverlay").value);
+      data.settings.tooltipEnabled = $("settingTooltip").checked;
+      data.settings.keyboardNav = $("settingKeyboard").checked;
+      data.settings.fontSize = Number($("settingFontSize").value) || data.settings.fontSize;
+      data.settings.theme = $("settingTheme").value;
+      data.settings.language = normalizeLanguage($("settingLanguage").value) || detectPreferredLanguage();
+      const selectedDefaultGroupId = $("settingDefaultGroupId").value;
+      data.settings.defaultGroupMode = selectedDefaultGroupId ? "fixed" : "last";
+      data.settings.defaultGroupId = selectedDefaultGroupId;
+      data.settings.sidebarHidden = $("settingSidebarCollapsed").checked;
+      data.settings.syncEnabled = $("settingSync").checked;
+      data.settings.openMode = $("settingOpenMode").value || "current";
+      const nextMaxBackups = Number($("settingBackup").value) || 0;
+      if (nextMaxBackups > 0 && data.backups.length > nextMaxBackups) {
+        data.backups = data.backups.slice(0, nextMaxBackups);
+      }
+      data.settings.maxBackups = nextMaxBackups;
+      const retryVal = $("settingIconRetryHour").value;
+      if (retryVal === "") {
+        data.settings.iconRetryHour = "";
+        data.settings.iconRetryAtSix = false;
+      } else {
+        data.settings.iconRetryHour = Number(retryVal);
+        data.settings.iconRetryAtSix = Number(retryVal) === 18;
+      }
 
-    const bgFile = $("settingBgFile").files?.[0];
-    if (bgFile) {
-      data.settings.backgroundCustom = await readFileAsDataUrl(bgFile);
-    }
+      const bgFile = $("settingBgFile").files?.[0];
+      if (bgFile) {
+        data.settings.backgroundCustom = await readFileAsDataUrl(bgFile);
+      }
 
-    applyDensity();
-    applyTheme();
-    applyStaticI18n();
-    await persistData();
-    render();
-    loadBackground();
-    if (toastOnSave) toast(t("settings.saved"));
-    if (close) closeModal();
-    settingsSaving = false;
+      applyDensity();
+      applyTheme();
+      applyStaticI18n();
+      await persistData();
+      render();
+      loadBackground();
+      if (toastOnSave) toast(t("settings.saved"));
+      if (close) closeModal();
+    } finally {
+      settingsSaving = false;
+    }
     if (settingsSaveQueued) {
       settingsSaveQueued = false;
-      saveSettings({ close: false, toastOnSave: false });
+      void saveSettings({ close: false, toastOnSave: false });
       return;
     }
-    return;
   };
   _settingsSaveNow = saveSettings;
 
@@ -3343,8 +3370,7 @@ async function exportJsonToClipboard() {
 }
 
 function openManualExportModal() {
-  settingsOpen = false;
-  _settingsSaveNow = null;
+  void leaveSettingsForSubpanel();
   const payload = JSON.stringify(data, null, 2);
   const modalHtml = html`
     <h2>导出设置</h2>
@@ -3369,8 +3395,7 @@ function openManualExportModal() {
 }
 
 async function openImportModal() {
-  settingsOpen = false;
-  _settingsSaveNow = null;
+  await leaveSettingsForSubpanel();
 
   const modalHtml = html`
     <h2>导入设置</h2>
@@ -3439,11 +3464,22 @@ async function openImportModal() {
         for (const [id, node] of Object.entries(incomingNodes)) {
           if (!data.nodes[id]) data.nodes[id] = node;
         }
-        const existingIds = new Set(data.groups.map((g) => g.id));
+        const existingById = new Map(data.groups.map((g) => [g.id, g]));
         for (const group of repairedIncoming.groups || []) {
-          if (existingIds.has(group.id)) continue;
-          data.groups.push(group);
-          existingIds.add(group.id);
+          const target = existingById.get(group.id);
+          if (!target) {
+            data.groups.push(group);
+            existingById.set(group.id, group);
+            continue;
+          }
+          // 同 ID 分组：只追加本地尚不存在的节点引用，避免仅新增节点被孤儿 GC 清掉
+          const have = new Set(target.nodes || []);
+          for (const nid of group.nodes || []) {
+            if (!have.has(nid) && data.nodes[nid]) {
+              target.nodes.push(nid);
+              have.add(nid);
+            }
+          }
         }
       }
       // 导入完成后对所有节点 URL 做协议白名单校验，丢弃危险协议
@@ -3486,8 +3522,7 @@ async function openImportModal() {
 }
 
 function openImportUrlModal() {
-  settingsOpen = false;
-  _settingsSaveNow = null;
+  void leaveSettingsForSubpanel();
 
   if (!data.groups?.length) {
     toast(t("group.noneAvailable"), "warning");
@@ -3571,7 +3606,7 @@ function openImportUrlModal() {
     }
     data.settings.lastActiveGroupId = group.id;
     await persistData();
-    closeModal();
+    closeWithCleanup();
     render();
     processPendingIconFetches();
     toast(
@@ -3586,7 +3621,7 @@ function openImportUrlModal() {
 }
 
 function openBackupModal() {
-  settingsOpen = false;
+  void leaveSettingsForSubpanel();
   const list = rawHtml(
     data.backups
       .map(
@@ -4205,6 +4240,7 @@ async function init() {
   closeFolder();
   // 先渲染 UI，图标走缓存瞬显；背景和图标重试后台异步进行，不阻塞首屏
   render();
+  processPendingIconFetches();
   loadBackground();
   retryFailedIconsIfDue(data.settings);
   await consumeSaveToast();

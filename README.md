@@ -346,7 +346,22 @@ tests/                   单元测试（storage / icons / bing-wallpaper / bump-
 
 ## 7. 同步与配额策略
 
-> **19.2 同步 v1：** 本地权威 + 投影分片写入 `storage.sync` + `mergeHomepage` 拉取；设置页可看体积、「立即同步」、导出/导入同步包。详见 [多设备同步开发方案.md](./多设备同步开发方案.md)。
+> **19.3+ 同步：** 浏览器账号（`storage.sync` 分片）或 **自建 HTTP JSON 服务**；设置页可选同步方式、立即同步、同步包文件/剪贴板。详见 [多设备同步开发方案.md](./多设备同步开发方案.md)。
+
+### 自建同步服务（HTTP JSON）
+
+```bash
+# 本机
+TOKEN=dev-secret PORT=8787 npm run sync-server
+# 数据文件默认 ./data/homepage-sync-state.json
+
+# 扩展设置 → 启用同步 → 同步方式选「自建服务器」
+# 服务器 URL: http://127.0.0.1:8787
+# Token: dev-secret（与 TOKEN 一致；也可不设 TOKEN）
+```
+
+远程服务器同样启动该进程（建议 HTTPS 反代），扩展填写 `https://你的域名` 即可。
+
 
 
 ## 7.1 同步选择策略

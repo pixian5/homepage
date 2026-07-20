@@ -3,6 +3,7 @@
  */
 
 import { getLastError, storageArea } from "./shared-utils.js";
+import { httpPullState, httpPushState } from "./sync_http_transport.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
 import { mergeHomepage } from "./sync_merge.js";
 import {
@@ -23,13 +24,29 @@ import {
   SYNC_STATE_KEY,
   syncBytesBudgetLevel,
 } from "./sync_policy.js";
-import { estimateSyncProjectionBytes, hashSyncDocument, toSyncDocument } from "./sync_projection.js";
+import {
+  estimateSyncProjectionBytes,
+  hashSyncDocument,
+  syncDocumentToHomepageShape,
+  toSyncDocument,
+} from "./sync_projection.js";
 
 function areaLocal() {
   return storageArea(false);
 }
 function areaSync() {
   return storageArea(true);
+}
+
+function getTransportConfig() {
+  const data = _getData();
+  const settings = data?.settings || {};
+  const mode = settings.syncTransport === "http" ? "http" : "browser";
+  return {
+    mode,
+    baseUrl: String(settings.syncServerUrl || "").trim(),
+    token: String(settings.syncServerToken || "").trim(),
+  };
 }
 
 function storageGetKeys(area, keys) {
@@ -95,7 +112,9 @@ let _status = {
   lastPushAt: 0,
   lastError: "",
   lastRemoteRevision: 0,
+  lastRemoteEtag: "",
   bytesEstimate: 0,
+  transport: "browser", // browser | http
 };
 
 let _pushTimer = null;
@@ -128,9 +147,12 @@ export function initSyncEngine(hooks) {
 
 export function getSyncStatus() {
   const data = _getData();
+  const transport = getTransportConfig();
   return {
     ..._status,
     enabled: !!data?.settings?.syncEnabled,
+    transport: transport.mode,
+    serverUrl: transport.baseUrl,
     hasConflict: _status.status === "need_setup" && !!_pendingConflictRemote,
     bytesEstimate: data ? estimateSyncProjectionBytes(data, { deviceId: "x", docId: _status.docId || "y" }) : 0,
     budgetLevel: syncBytesBudgetLevel(
@@ -160,7 +182,9 @@ async function saveState() {
       lastPushAt: _status.lastPushAt,
       lastError: _status.lastError,
       lastRemoteRevision: _status.lastRemoteRevision,
+      lastRemoteEtag: _status.lastRemoteEtag || "",
       bytesEstimate: _status.bytesEstimate,
+      transport: getTransportConfig().mode,
     },
   });
 }
@@ -178,6 +202,18 @@ function enqueue(task) {
  * 读取远端 SyncDocument
  */
 export async function readRemoteSyncDocument() {
+  const transport = getTransportConfig();
+  if (transport.mode === "http") {
+    if (!transport.baseUrl) return { ok: false, reason: "no_url" };
+    const res = await httpPullState({ baseUrl: transport.baseUrl, token: transport.token });
+    if (!res.ok) {
+      if (res.reason === "no_remote") return { ok: false, reason: "no_remote" };
+      return { ok: false, reason: res.reason || "http_error", error: res.error, status: res.status };
+    }
+    _status.lastRemoteEtag = res.etag || "";
+    return { ok: true, doc: res.doc, etag: res.etag, revision: res.revision };
+  }
+
   const sync = areaSync();
   if (!sync) return { ok: false, reason: "no_sync_area" };
   const metaGot = await storageGetKeys(sync, [SYNC_META_KEY, "homepage_data"]);
@@ -185,7 +221,6 @@ export async function readRemoteSyncDocument() {
   const meta = metaGot.value?.[SYNC_META_KEY];
   const legacyBlob = metaGot.value?.homepage_data;
 
-  // 新协议 meta 优先
   if (meta?.shardCount) {
     const keys = syncShardKeys(meta.shardCount);
     const shardGot = await storageGetKeys(sync, keys);
@@ -193,11 +228,9 @@ export async function readRemoteSyncDocument() {
     return unpackSyncDocument(meta, shardGot.value);
   }
 
-  // 兼容：旧版整包写在 sync.homepage_data
   if (legacyBlob && typeof legacyBlob === "object" && (legacyBlob.groups || legacyBlob.nodes)) {
     return { ok: false, reason: "legacy_blob", legacy: legacyBlob };
   }
-  // 兼容：误把整包写在 meta key
   if (meta?.groups && meta.nodes && !meta.shardCount) {
     return { ok: false, reason: "legacy_blob", legacy: meta };
   }
@@ -208,6 +241,30 @@ export async function readRemoteSyncDocument() {
  * 写入远端投影
  */
 async function writeRemoteSyncDocument(doc) {
+  const transport = getTransportConfig();
+  if (transport.mode === "http") {
+    if (!transport.baseUrl) return "no_url";
+    const res = await httpPushState({ baseUrl: transport.baseUrl, token: transport.token }, doc, {
+      ifMatch: _status.lastRemoteEtag || undefined,
+      idempotencyKey: `${doc.docId || "doc"}:${doc.revision || 0}:${Date.now()}`,
+    });
+    if (res.ok) {
+      _status.lastRemoteEtag = res.etag || _status.lastRemoteEtag;
+      if (res.revision) doc.revision = res.revision;
+      return null;
+    }
+    if (res.reason === "precondition_failed") {
+      // 把远端 doc 塞回，供上层 merge 重试
+      if (res.remote?.doc) {
+        return { code: "precondition_failed", remote: res.remote };
+      }
+      return "precondition_failed";
+    }
+    if (res.reason === "unauthorized") return "unauthorized";
+    if (res.reason === "network_error") return res.error || "network_error";
+    return res.error || res.reason || "http_error";
+  }
+
   const sync = areaSync();
   if (!sync) return "no_sync_area";
   let packed;
@@ -219,20 +276,15 @@ async function writeRemoteSyncDocument(doc) {
     }
     return e?.message || String(e);
   }
-  // 清理多余旧 shard
   const removeKeys = [];
   for (let i = packed.meta.shardCount; i < packed.meta.shardCount + 20; i++) {
     removeKeys.push(`${SYNC_SHARD_KEY_PREFIX}${i}`);
   }
-  // 先写 shards
   const errShards = await storageSetObj(sync, packed.shards);
   if (errShards) return errShards;
-  // 再写 meta
   const errMeta = await storageSetObj(sync, { [SYNC_META_KEY]: packed.meta });
   if (errMeta) return errMeta;
-  // best-effort 删旧片
   if (removeKeys.length) await storageRemoveKeys(sync, removeKeys);
-  // 清理旧整包 key（若存在）
   await storageRemoveKeys(sync, ["homepage_data"]);
   return null;
 }
@@ -406,17 +458,35 @@ async function pushNowImpl(reason = "manual") {
       await saveState();
       return { ok: true, revision, reason };
     }
-    lastErr = writeErr;
-    if (writeErr === "sync_quota_total" || writeErr === "sync_shard_too_large") {
+    // HTTP 412：服务端返回最新状态
+    if (writeErr && typeof writeErr === "object" && writeErr.code === "precondition_failed") {
+      lastErr = "precondition_failed";
+      const remoteDoc = writeErr.remote?.doc;
+      if (remoteDoc) {
+        baseRevision = Number(writeErr.remote.revision || remoteDoc.revision) || baseRevision;
+        await applyRemoteDoc(remoteDoc, deviceId, "push_412_pull");
+        continue;
+      }
+    } else {
+      lastErr = typeof writeErr === "string" ? writeErr : writeErr?.code || "push_failed";
+    }
+    if (lastErr === "sync_quota_total" || lastErr === "sync_shard_too_large") {
       _status.status = "quota";
-      _status.lastError = writeErr;
-      await enqueueOutbox(doc, writeErr);
+      _status.lastError = lastErr;
+      await enqueueOutbox(doc, lastErr);
       await saveState();
-      return { ok: false, reason: writeErr };
+      return { ok: false, reason: lastErr };
+    }
+    if (lastErr === "unauthorized") {
+      _status.status = "error";
+      _status.lastError = "unauthorized";
+      await saveState();
+      return { ok: false, reason: "unauthorized" };
     }
     const again = await readRemoteSyncDocument();
     if (again.ok) {
       baseRevision = Number(again.doc.revision) || baseRevision;
+      if (again.etag) _status.lastRemoteEtag = again.etag;
       await applyRemoteDoc(again.doc, deviceId, "push_retry_pull");
     }
   }

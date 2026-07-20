@@ -70,6 +70,9 @@ export const SYNC_SETTINGS_WHITELIST = [
   "maxBackups",
   "emptyHintDisabled",
   "syncEnabled",
+  "syncTransport",
+  "syncServerUrl",
+  "syncServerToken",
 ];
 
 /**

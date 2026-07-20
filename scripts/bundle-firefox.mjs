@@ -23,6 +23,7 @@ const files = [
   "sync_bundle.js",
   "sync_pack.js",
   "sync_outbox.js",
+  "sync_http_transport.js",
   "sync_engine.js",
   "app.js",
 ];

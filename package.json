@@ -1,6 +1,6 @@
 {
   "name": "newtab-extension",
-  "version": "19.3",
+  "version": "19.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,8 @@
     "check": "biome check src scripts tests *.json",
     "lint": "biome lint src scripts tests *.json",
     "format": "biome format --write src scripts tests *.json",
-    "test": "node --test"
+    "test": "node --test",
+    "sync-server": "node scripts/sync-server.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.4"

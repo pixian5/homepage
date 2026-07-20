@@ -51,6 +51,7 @@ import {
   schedulePull,
   schedulePush,
 } from "./sync_engine.js";
+import { httpHealth } from "./sync_http_transport.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
 import { syncBytesBudgetLevel } from "./sync_policy.js";
 import { estimateSyncProjectionBytes } from "./sync_projection.js";
@@ -335,7 +336,16 @@ const I18N = {
     "settings.sync.exportOk": "同步包已复制到剪切板",
     "settings.sync.importOk": "同步包已合并",
     "settings.sync.importFail": "同步包合并失败：{reason}",
-    "settings.sync.hint": "同步使用浏览器账号存储，不含备份/壁纸/上传图标。跨浏览器请用同步包。",
+    "settings.sync.hint": "浏览器账号同步或自建 HTTP 服务；不含备份/壁纸/上传图标。跨浏览器也可用同步包/自建服。",
+    "settings.sync.transport": "同步方式",
+    "settings.sync.transport.browser": "浏览器账号",
+    "settings.sync.transport.http": "自建服务器 (HTTP)",
+    "settings.sync.serverUrl": "服务器 URL",
+    "settings.sync.serverToken": "Token（可选）",
+    "settings.sync.serverUrlPh": "http://127.0.0.1:8787",
+    "settings.sync.testServer": "测试连接",
+    "settings.sync.testOk": "服务器可用",
+    "settings.sync.testFail": "连接失败：{reason}",
     "settings.sync.now": "立即同步",
     "settings.sync.nowOk": "同步完成",
     "settings.sync.state.off": "未启用",
@@ -500,7 +510,16 @@ const I18N = {
     "settings.sync.exportOk": "同步包已複製到剪貼簿",
     "settings.sync.importOk": "同步包已合併",
     "settings.sync.importFail": "同步包合併失敗：{reason}",
-    "settings.sync.hint": "同步使用瀏覽器帳號儲存，不含備份/桌布/上傳圖示。跨瀏覽器請用同步包。",
+    "settings.sync.hint": "瀏覽器帳號同步或自建 HTTP 服務；不含備份/桌布/上傳圖示。跨瀏覽器也可用同步包/自建服。",
+    "settings.sync.transport": "同步方式",
+    "settings.sync.transport.browser": "瀏覽器帳號",
+    "settings.sync.transport.http": "自建伺服器 (HTTP)",
+    "settings.sync.serverUrl": "伺服器 URL",
+    "settings.sync.serverToken": "Token（可選）",
+    "settings.sync.serverUrlPh": "http://127.0.0.1:8787",
+    "settings.sync.testServer": "測試連線",
+    "settings.sync.testOk": "伺服器可用",
+    "settings.sync.testFail": "連線失敗：{reason}",
     "settings.sync.now": "立即同步",
     "settings.sync.nowOk": "同步完成",
     "settings.sync.state.off": "未啟用",
@@ -3119,7 +3138,8 @@ async function refreshSyncStatusLine() {
                 ? "settings.sync.state.idle"
                 : "settings.sync.state.off";
     const err = st.lastError ? ` · ${st.lastError}` : "";
-    el.textContent = `${t(statusKey)} · ${t("settings.sync.size", { size: kb })} · ${t(budgetKey)}${err}`;
+    const via = st.transport === "http" ? t("settings.sync.transport.http") : t("settings.sync.transport.browser");
+    el.textContent = `${t(statusKey)} · ${via} · ${t("settings.sync.size", { size: kb })} · ${t(budgetKey)}${err}`;
     el.dataset.level = st.status === "error" || st.status === "quota" || st.status === "need_setup" ? "red" : level;
     const resolveBtn = $("btnSyncResolveConflict");
     if (resolveBtn) {
@@ -3258,6 +3278,26 @@ function openSettingsModal() {
 
     <div class="section">
       <label><input id="settingSync" type="checkbox"> ${t("settings.sync")}</label>
+      <div class="row-inline">
+        <span class="inline-label">${t("settings.sync.transport")}</span>
+        <select id="settingSyncTransport" class="inline-select">
+          <option value="browser">${t("settings.sync.transport.browser")}</option>
+          <option value="http">${t("settings.sync.transport.http")}</option>
+        </select>
+      </div>
+      <div id="syncHttpFields" class="settings-sync-http hidden">
+        <div class="row-inline">
+          <span class="inline-label">${t("settings.sync.serverUrl")}</span>
+          <input id="settingSyncServerUrl" type="url" class="inline-text" placeholder="${t("settings.sync.serverUrlPh")}" />
+        </div>
+        <div class="row-inline">
+          <span class="inline-label">${t("settings.sync.serverToken")}</span>
+          <input id="settingSyncServerToken" type="password" class="inline-text" autocomplete="off" />
+        </div>
+        <div class="row-inline settings-sync-actions">
+          <button type="button" id="btnSyncTestServer" class="icon-btn">${t("settings.sync.testServer")}</button>
+        </div>
+      </div>
       <div id="syncStatusLine" class="settings-sync-status"></div>
       <div class="row-inline settings-sync-actions">
         <button type="button" id="btnSyncNow" class="icon-btn">${t("settings.sync.now")}</button>
@@ -3352,6 +3392,25 @@ function openSettingsModal() {
   $("settingFontSize").value = data.settings.fontSize || 13;
   $("settingLanguage").value = currentLang();
   $("settingSync").checked = data.settings.syncEnabled;
+  const transportSel = $("settingSyncTransport");
+  if (transportSel) transportSel.value = data.settings.syncTransport === "http" ? "http" : "browser";
+  const urlInput = $("settingSyncServerUrl");
+  if (urlInput) urlInput.value = data.settings.syncServerUrl || "";
+  const tokenInput = $("settingSyncServerToken");
+  if (tokenInput) tokenInput.value = data.settings.syncServerToken || "";
+  const httpFields = $("syncHttpFields");
+  const syncHttpVisibility = () => {
+    if (httpFields) httpFields.classList.toggle("hidden", transportSel?.value !== "http");
+  };
+  syncHttpVisibility();
+  transportSel?.addEventListener("change", syncHttpVisibility);
+  $("btnSyncTestServer")?.addEventListener("click", async () => {
+    const baseUrl = ($("settingSyncServerUrl")?.value || "").trim();
+    const token = ($("settingSyncServerToken")?.value || "").trim();
+    const res = await httpHealth({ baseUrl, token });
+    if (res.ok) toast(t("settings.sync.testOk"));
+    else toast(t("settings.sync.testFail", { reason: res.reason || res.error || "error" }), "error");
+  });
   void refreshSyncStatusLine();
   $("btnSyncNow")?.addEventListener("click", async () => {
     const btn = $("btnSyncNow");
@@ -3618,8 +3677,14 @@ function openSettingsModal() {
       data.settings.defaultGroupId = selectedDefaultGroupId;
       data.settings.sidebarHidden = $("settingSidebarCollapsed").checked;
       const prevSyncEnabled = !!data.settings.syncEnabled;
+      const prevTransport = data.settings.syncTransport || "browser";
+      const prevUrl = data.settings.syncServerUrl || "";
       data.settings.syncEnabled = $("settingSync").checked;
-      if (prevSyncEnabled !== data.settings.syncEnabled) {
+      data.settings.syncTransport = $("settingSyncTransport")?.value === "http" ? "http" : "browser";
+      data.settings.syncServerUrl = ($("settingSyncServerUrl")?.value || "").trim();
+      data.settings.syncServerToken = ($("settingSyncServerToken")?.value || "").trim();
+      const transportChanged = prevTransport !== data.settings.syncTransport || prevUrl !== data.settings.syncServerUrl;
+      if (prevSyncEnabled !== data.settings.syncEnabled || (data.settings.syncEnabled && transportChanged)) {
         void onSyncEnabledChanged(data.settings.syncEnabled);
       }
       data.settings.openMode = $("settingOpenMode").value || "current";

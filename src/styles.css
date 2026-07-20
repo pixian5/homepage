@@ -1076,3 +1076,5 @@ body {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+.settings-sync-http{margin:8px 0;padding:8px 0;border-top:1px solid rgba(127,127,127,.2);}

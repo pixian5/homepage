@@ -106,6 +106,8 @@ let _setData = (_d) => {};
 let _onMerged = async () => {};
 let _saveLocal = async () => null;
 let _createSafety = async () => {};
+/** @type {object|null} */
+let _pendingConflictRemote = null;
 
 /**
  * @param {{
@@ -129,6 +131,7 @@ export function getSyncStatus() {
   return {
     ..._status,
     enabled: !!data?.settings?.syncEnabled,
+    hasConflict: _status.status === "need_setup" && !!_pendingConflictRemote,
     bytesEstimate: data ? estimateSyncProjectionBytes(data, { deviceId: "x", docId: _status.docId || "y" }) : 0,
     budgetLevel: syncBytesBudgetLevel(
       data ? estimateSyncProjectionBytes(data, { deviceId: "x", docId: _status.docId || "y" }) : 0,
@@ -291,9 +294,12 @@ async function applyRemoteDoc(doc, deviceId, reason) {
   const data = _getData();
   if (!_status.docId) _status.docId = doc.docId || createDocId();
   if (doc.docId && _status.docId && doc.docId !== _status.docId) {
-    // 文档冲突：暂不自动覆盖，标 need_setup
+    // 文档冲突：缓存远端文档，交由 UI 三选一
+    _pendingConflictRemote = doc;
     _status.status = "need_setup";
     _status.lastError = "doc_conflict";
+    _status.conflictRemoteDocId = doc.docId;
+    _status.conflictLocalDocId = _status.docId;
     await saveState();
     return { ok: false, reason: "doc_conflict", remoteDocId: doc.docId, localDocId: _status.docId };
   }
@@ -502,6 +508,148 @@ export async function flushOutbox() {
 /**
  * 启用时初始化状态并尝试首同步
  */
+
+/**
+ * 解决 docId 冲突。
+ * @param {"merge"|"local"|"remote"} choice
+ */
+export async function resolveDocConflict(choice) {
+  return enqueue(async () => {
+    const remote = _pendingConflictRemote;
+    if (!remote) {
+      return { ok: false, reason: "no_conflict" };
+    }
+    const deviceId = await getOrCreateDeviceId();
+    const local = _getData();
+
+    if (choice === "local") {
+      // 本机覆盖云端：采用本机 docId 强制推送
+      _status.docId = _status.conflictLocalDocId || _status.docId || createDocId();
+      _pendingConflictRemote = null;
+      _status.status = "idle";
+      _status.lastError = "";
+      delete _status.conflictRemoteDocId;
+      delete _status.conflictLocalDocId;
+      await saveState();
+      // 提高 revision 盖过远端
+      const remoteRead = await readRemoteSyncDocument();
+      let base = 0;
+      if (remoteRead.ok) base = Number(remoteRead.doc.revision) || 0;
+      const doc = toSyncDocument(local, {
+        deviceId,
+        docId: _status.docId,
+        revision: base + 1,
+        writtenAt: Date.now(),
+      });
+      doc.contentHash = hashSyncDocument(doc);
+      const err = await writeRemoteSyncDocument(doc);
+      if (err) {
+        _status.status = err.includes("quota") ? "quota" : "error";
+        _status.lastError = err;
+        await saveState();
+        return { ok: false, reason: err };
+      }
+      _status.lastPushAt = Date.now();
+      _status.lastRemoteRevision = doc.revision;
+      _status.status = "idle";
+      await saveState();
+      return { ok: true, choice: "local" };
+    }
+
+    if (choice === "remote") {
+      // 云端替换本机：接受远端 docId，强制应用远端（绕过 docId 检查）
+      const forceDoc = { ...remote };
+      _status.docId = forceDoc.docId;
+      _pendingConflictRemote = null;
+      delete _status.conflictRemoteDocId;
+      delete _status.conflictLocalDocId;
+      // 临时清空 local doc 绑定后 apply
+      const merged = mergeHomepage(
+        {
+          schemaVersion: 1,
+          settings: { ...(local.settings || {}) },
+          groups: [],
+          nodes: {},
+          backups: local.backups || [],
+          lastUpdated: 0,
+        },
+        forceDoc,
+        { deviceId, now: Date.now() },
+      );
+      // 更好：直接用 from remote shape — merge empty local keeps remote
+      if (!merged.ok) {
+        // fallback: project remote only
+        const shape = syncDocumentToHomepageShape(forceDoc);
+        const state = {
+          schemaVersion: 1,
+          settings: { ...(local.settings || {}), ...(shape.settings || {}), syncEnabled: true },
+          groups: shape.groups,
+          nodes: shape.nodes,
+          backups: local.backups || [],
+          lastUpdated: Date.now(),
+        };
+        try {
+          await _createSafety();
+        } catch (_e) {}
+        _setData(state);
+        const err = await _saveLocal(state);
+        if (err) return { ok: false, reason: err };
+        await _onMerged(state, { applied: true, choice: "remote" });
+      } else {
+        merged.state.settings = { ...merged.state.settings, syncEnabled: true };
+        try {
+          await _createSafety();
+        } catch (_e) {}
+        _setData(merged.state);
+        const err = await _saveLocal(merged.state);
+        if (err) return { ok: false, reason: err };
+        await _onMerged(merged.state, { ...merged.stats, choice: "remote" });
+      }
+      _status.status = "idle";
+      _status.lastError = "";
+      _status.lastPullAt = Date.now();
+      _status.lastRemoteRevision = Number(forceDoc.revision) || 0;
+      await saveState();
+      // 再推一次确认
+      await pushNowImpl("resolve_remote");
+      return { ok: true, choice: "remote" };
+    }
+
+    // merge：两侧并集，docId 采用远端（已有云）并 push
+    const merged = mergeHomepage(local, remote, { deviceId, now: Date.now() });
+    if (!merged.ok) {
+      // 若因 empty 等失败，仍尝试以 placements 并集：放宽 — 用远端 docId 强制 merge 忽略 doc check already done
+      return { ok: false, reason: merged.reason || "merge_failed" };
+    }
+    _status.docId = remote.docId;
+    _pendingConflictRemote = null;
+    delete _status.conflictRemoteDocId;
+    delete _status.conflictLocalDocId;
+    try {
+      await _createSafety();
+    } catch (_e) {}
+    _setData(merged.state);
+    const err = await _saveLocal(merged.state);
+    if (err) return { ok: false, reason: err };
+    await _onMerged(merged.state, { ...merged.stats, choice: "merge" });
+    _status.status = "idle";
+    _status.lastError = "";
+    _status.lastPullAt = Date.now();
+    await saveState();
+    await pushNowImpl("resolve_merge");
+    return { ok: true, choice: "merge" };
+  });
+}
+
+export function getPendingConflict() {
+  if (!_pendingConflictRemote) return null;
+  return {
+    localDocId: _status.conflictLocalDocId || _status.docId,
+    remoteDocId: _status.conflictRemoteDocId || _pendingConflictRemote.docId,
+    remoteRevision: _pendingConflictRemote.revision,
+  };
+}
+
 export async function onSyncEnabledChanged(enabled) {
   await loadState();
   if (!enabled) {

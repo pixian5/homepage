@@ -344,6 +344,15 @@ const I18N = {
     "settings.sync.state.quota": "配额不足",
     "settings.sync.state.error": "同步出错",
     "settings.sync.state.conflict": "需处理数据冲突",
+    "settings.sync.conflict.title": "同步数据冲突",
+    "settings.sync.conflict.desc": "云端与本机不是同一份主页数据。请选择如何处理：",
+    "settings.sync.conflict.merge": "合并两边",
+    "settings.sync.conflict.local": "本机覆盖云端",
+    "settings.sync.conflict.remote": "云端替换本机",
+    "settings.sync.conflict.done": "冲突已处理",
+    "settings.sync.exportFile": "导出到文件",
+    "settings.sync.importFile": "从文件导入",
+    "settings.sync.safariHint": "当前为 Safari：浏览器账号同步能力较弱，推荐使用「同步包」在设备间拷贝数据。",
     "settings.openMode": "网页打开方式",
     "settings.maxBackups": "最大备份数量（0 表示不备份）",
     "settings.iconRetry": "重新获取失败图标（每天）",
@@ -500,6 +509,15 @@ const I18N = {
     "settings.sync.state.quota": "配額不足",
     "settings.sync.state.error": "同步出錯",
     "settings.sync.state.conflict": "需處理資料衝突",
+    "settings.sync.conflict.title": "同步資料衝突",
+    "settings.sync.conflict.desc": "雲端與本機不是同一份主頁資料。請選擇如何處理：",
+    "settings.sync.conflict.merge": "合併兩邊",
+    "settings.sync.conflict.local": "本機覆蓋雲端",
+    "settings.sync.conflict.remote": "雲端取代本機",
+    "settings.sync.conflict.done": "衝突已處理",
+    "settings.sync.exportFile": "匯出到檔案",
+    "settings.sync.importFile": "從檔案匯入",
+    "settings.sync.safariHint": "目前為 Safari：瀏覽器帳號同步能力較弱，建議使用「同步包」在裝置間拷貝資料。",
     "settings.openMode": "網頁開啟方式",
     "settings.maxBackups": "最大備份數量（0 代表不備份）",
     "settings.iconRetry": "重新取得失敗圖示（每日）",
@@ -3002,6 +3020,77 @@ async function leaveSettingsForSubpanel() {
   _settingsSaveNow = null;
 }
 
+function isSafariBrowser() {
+  const ua = navigator.userAgent || "";
+  return /safari/i.test(ua) && !/chrome|crios|chromium|android/i.test(ua);
+}
+
+function detectExtensionPlatform() {
+  if (/firefox/i.test(navigator.userAgent || "")) return "firefox";
+  if (isSafariBrowser()) return "safari";
+  return "chrome";
+}
+
+function downloadJsonFile(filename, obj) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function openSyncConflictModal() {
+  const pending = getPendingConflict();
+  if (!pending) {
+    toast(t("settings.sync.state.idle"));
+    return;
+  }
+  const modalHtml = html`
+    <h2>${t("settings.sync.conflict.title")}</h2>
+    <div class="section">
+      <p>${t("settings.sync.conflict.desc")}</p>
+      <p class="settings-sync-hint">local: ${pending.localDocId || "-"}<br/>remote: ${pending.remoteDocId || "-"}</p>
+    </div>
+    <div class="actions">
+      <button type="button" id="btnConflictMerge" class="icon-btn">${t("settings.sync.conflict.merge")}</button>
+      <button type="button" id="btnConflictLocal" class="icon-btn">${t("settings.sync.conflict.local")}</button>
+      <button type="button" id="btnConflictRemote" class="icon-btn">${t("settings.sync.conflict.remote")}</button>
+      <button type="button" id="btnConflictCancel" class="icon-btn">${t("common.cancel")}</button>
+    </div>
+  `;
+  openModal(modalHtml);
+  const run = async (choice) => {
+    const btnIds = ["btnConflictMerge", "btnConflictLocal", "btnConflictRemote", "btnConflictCancel"];
+    for (const id of btnIds) {
+      const b = $(id);
+      if (b) b.disabled = true;
+    }
+    try {
+      const res = await resolveDocConflict(choice);
+      if (!res?.ok) {
+        toast(t("settings.sync.importFail", { reason: res?.reason || "conflict" }), "error");
+        return;
+      }
+      closeModal();
+      toast(t("settings.sync.conflict.done"));
+      render();
+      processPendingIconFetches();
+      // 若设置仍打开则刷新状态（关闭后由下次打开刷新）
+    } catch (e) {
+      toast(t("settings.sync.importFail", { reason: e?.message || "conflict" }), "error");
+    }
+  };
+  $("btnConflictMerge")?.addEventListener("click", () => void run("merge"));
+  $("btnConflictLocal")?.addEventListener("click", () => void run("local"));
+  $("btnConflictRemote")?.addEventListener("click", () => void run("remote"));
+  $("btnConflictCancel")?.addEventListener("click", () => closeModal());
+}
+
 async function refreshSyncStatusLine() {
   const el = $("syncStatusLine");
   if (!el) return;
@@ -3031,7 +3120,15 @@ async function refreshSyncStatusLine() {
                 : "settings.sync.state.off";
     const err = st.lastError ? ` · ${st.lastError}` : "";
     el.textContent = `${t(statusKey)} · ${t("settings.sync.size", { size: kb })} · ${t(budgetKey)}${err}`;
-    el.dataset.level = st.status === "error" || st.status === "quota" ? "red" : level;
+    el.dataset.level = st.status === "error" || st.status === "quota" || st.status === "need_setup" ? "red" : level;
+    const resolveBtn = $("btnSyncResolveConflict");
+    if (resolveBtn) {
+      resolveBtn.classList.toggle("hidden", !(st.hasConflict || st.status === "need_setup"));
+    }
+    const safariHint = $("syncSafariHint");
+    if (safariHint) {
+      safariHint.classList.toggle("hidden", !isSafariBrowser());
+    }
   } catch (e) {
     console.warn("refreshSyncStatusLine failed", e);
     el.textContent = "";
@@ -3164,10 +3261,15 @@ function openSettingsModal() {
       <div id="syncStatusLine" class="settings-sync-status"></div>
       <div class="row-inline settings-sync-actions">
         <button type="button" id="btnSyncNow" class="icon-btn">${t("settings.sync.now")}</button>
+        <button type="button" id="btnSyncResolveConflict" class="icon-btn hidden">${t("settings.sync.state.conflict")}</button>
         <button type="button" id="btnSyncExportBundle" class="icon-btn">${t("settings.sync.exportBundle")}</button>
         <button type="button" id="btnSyncImportBundle" class="icon-btn">${t("settings.sync.importBundle")}</button>
+        <button type="button" id="btnSyncExportFile" class="icon-btn">${t("settings.sync.exportFile")}</button>
+        <button type="button" id="btnSyncImportFile" class="icon-btn">${t("settings.sync.importFile")}</button>
       </div>
+      <input id="syncImportFileInput" type="file" accept="application/json,.json" class="hidden" />
       <p class="settings-sync-hint">${t("settings.sync.hint")}</p>
+      <p id="syncSafariHint" class="settings-sync-hint hidden">${t("settings.sync.safariHint")}</p>
       <div class="row-inline">
         <span class="inline-label">${t("settings.openMode")}</span>
         <select id="settingOpenMode" class="inline-select">
@@ -3255,9 +3357,16 @@ function openSettingsModal() {
     const btn = $("btnSyncNow");
     if (btn) btn.disabled = true;
     try {
-      await pullNow("manual");
+      const pull = await pullNow("manual");
+      if (pull?.reason === "doc_conflict") {
+        openSyncConflictModal();
+        void refreshSyncStatusLine();
+        return;
+      }
       const res = await pushNow("manual");
-      if (res?.reason === "sync_quota_total") toast(t("settings.sync.state.quota"), "warning");
+      if (res?.reason === "doc_conflict") {
+        openSyncConflictModal();
+      } else if (res?.reason === "sync_quota_total") toast(t("settings.sync.state.quota"), "warning");
       else if (res && res.ok === false) toast(t("settings.sync.importFail", { reason: res.reason || "push" }), "error");
       else toast(t("settings.sync.nowOk"));
       void refreshSyncStatusLine();
@@ -3310,6 +3419,53 @@ function openSettingsModal() {
       toast(t("settings.sync.importFail", { reason: e?.message || "parse" }), "error");
     }
   });
+
+  $("btnSyncResolveConflict")?.addEventListener("click", () => openSyncConflictModal());
+  $("btnSyncExportFile")?.addEventListener("click", async () => {
+    try {
+      const deviceId = await getOrCreateDeviceId();
+      const st = getSyncStatus();
+      const bundle = exportSyncBundle(data, {
+        deviceId,
+        docId: st.docId || createDocId(),
+        platform: detectExtensionPlatform(),
+      });
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      downloadJsonFile(`homepage-sync-${stamp}.json`, bundle);
+      toast(t("settings.sync.exportOk"));
+    } catch (e) {
+      toast(t("settings.sync.importFail", { reason: e?.message || "export" }), "error");
+    }
+  });
+  $("btnSyncImportFile")?.addEventListener("click", () => {
+    $("syncImportFileInput")?.click();
+  });
+  $("syncImportFileInput")?.addEventListener("change", async (e) => {
+    const file = e.target?.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const bundle = JSON.parse(text);
+      const deviceId = await getOrCreateDeviceId();
+      const result = importSyncBundle(data, bundle, { deviceId });
+      if (!result.ok) {
+        toast(t("settings.sync.importFail", { reason: result.reason || "merge" }), "error");
+        return;
+      }
+      pushBackup();
+      data = result.state;
+      if (!data.settings) data.settings = {};
+      await persistData();
+      render();
+      processPendingIconFetches();
+      toast(t("settings.sync.importOk"));
+      void refreshSyncStatusLine();
+    } catch (err) {
+      toast(t("settings.sync.importFail", { reason: err?.message || "parse" }), "error");
+    }
+  });
+
   $("settingOpenMode").value = data.settings.openMode || "current";
   $("settingBackup").value = data.settings.maxBackups;
   const retryHour = data.settings.iconRetryHour ?? (data.settings.iconRetryAtSix ? 18 : "");

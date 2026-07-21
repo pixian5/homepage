@@ -3223,7 +3223,11 @@ async function refreshSyncStatusLine() {
                 : "settings.sync.state.off";
     const err = st.lastError ? ` · ${st.lastError}` : "";
     const via = st.transport === "http" ? t("settings.sync.transport.http") : t("settings.sync.transport.browser");
-    el.textContent = `${t(statusKey)} · ${via} · ${t("settings.sync.size", { size: kb })} · ${t(budgetKey)}${err}`;
+    const intervalKey = normalizeSyncInterval(data.settings?.syncInterval);
+    const intervalLabel = data.settings?.syncEnabled
+      ? ` · ${t("settings.sync.interval")}: ${t(`settings.sync.interval.${intervalKey}`)}`
+      : "";
+    el.textContent = `${t(statusKey)} · ${via}${intervalLabel} · ${t("settings.sync.size", { size: kb })} · ${t(budgetKey)}${err}`;
     el.dataset.level = st.status === "error" || st.status === "quota" || st.status === "need_setup" ? "red" : level;
     const resolveBtn = $("btnSyncResolveConflict");
     if (resolveBtn) {
@@ -3372,9 +3376,12 @@ function openSettingsModal() {
       <div class="row-inline">
         <span class="inline-label">${t("settings.sync.interval")}</span>
         <select id="settingSyncInterval" class="inline-select">
-          ${SYNC_INTERVAL_OPTIONS.map(
-            (o) => `<option value="${o.value}">${t(`settings.sync.interval.${o.value}`)}</option>`,
-          ).join("")}
+          ${rawHtml(
+            SYNC_INTERVAL_OPTIONS.map(
+              (o) =>
+                `<option value="${escapeHtml(o.value)}">${escapeHtml(t(`settings.sync.interval.${o.value}`))}</option>`,
+            ).join(""),
+          )}
         </select>
       </div>
       <div id="syncHttpFields" class="settings-sync-http hidden">
@@ -3877,6 +3884,10 @@ function openSettingsModal() {
         void onSyncEnabledChanged(data.settings.syncEnabled);
       } else if (data.settings.syncEnabled && intervalChanged) {
         refreshSyncInterval();
+      }
+      // 间隔/同步开关变更后刷新状态行，避免「点了没反应」
+      if (intervalChanged || prevSyncEnabled !== data.settings.syncEnabled) {
+        void refreshSyncStatusLine();
       }
       data.settings.openMode = $("settingOpenMode").value || "current";
       const nextMaxBackups = Number($("settingBackup").value) || 0;

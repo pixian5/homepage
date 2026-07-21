@@ -48,12 +48,13 @@ import {
   onSyncEnabledChanged,
   pullNow,
   pushNow,
+  refreshSyncInterval,
   schedulePull,
   schedulePush,
 } from "./sync_engine.js";
 import { httpHealth, httpPullState } from "./sync_http_transport.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
-import { syncBytesBudgetLevel } from "./sync_policy.js";
+import { normalizeSyncInterval, SYNC_INTERVAL_OPTIONS, syncBytesBudgetLevel } from "./sync_policy.js";
 import { estimateSyncProjectionBytes } from "./sync_projection.js";
 import { attachVisitTracking, getVisitHistoryItems, recordVisit } from "./visit-history.js";
 
@@ -343,10 +344,20 @@ const I18N = {
     "settings.sync.serverUrl": "服务器 URL",
     "settings.sync.serverToken": "Token（可选）",
     "settings.sync.serverUrlPh": "http://127.0.0.1:8787",
+    "settings.sync.interval": "同步间隔",
+    "settings.sync.interval.off": "仅手动/变更时",
+    "settings.sync.interval.1m": "1 分钟",
+    "settings.sync.interval.5m": "5 分钟",
+    "settings.sync.interval.15m": "15 分钟",
+    "settings.sync.interval.30m": "30 分钟",
+    "settings.sync.interval.1h": "1 小时",
+    "settings.sync.interval.6h": "6 小时",
+    "settings.sync.interval.12h": "12 小时",
+    "settings.sync.interval.1d": "1 天",
     "settings.sync.testServer": "测试连接",
     "settings.sync.testOk": "服务器可用",
     "settings.sync.testFail": "连接失败：{reason}",
-    "settings.sync.unauthorized": "鉴权失败：Token 与服务器不匹配（服务器未设置 TOKEN 时可留空）",
+    "settings.sync.unauthorized": "鉴权失败：当前服务器启用了 TOKEN，扩展 Token 需与之一致；若希望留空，请用不带 TOKEN 的方式启动同步服务",
     "settings.sync.now": "立即同步",
     "settings.sync.nowOk": "同步完成",
     "settings.sync.state.off": "未启用",
@@ -423,7 +434,7 @@ const I18N = {
     "toast.save.trimBackground": "保存成功（已清理自定义背景以释放空间）",
     "toast.save.syncFallback": "保存成功（同步空间不足，已保存到本地）",
     "toast.save.syncWriteFailed": "保存成功（同步写入失败，已关闭同步并保存到本地）",
-    "toast.syncOverwritten": "检测到另一设备更新了更新的数据，本地未保存的改动可能已被覆盖",
+    "toast.syncOverwritten": "检测到另一设备有较新数据，已合并到本机",
     "tile.folderSuffix": "（文件夹）",
     "folder.newTitle": "新建文件夹",
     "folder.created": "已创建文件夹",
@@ -518,10 +529,20 @@ const I18N = {
     "settings.sync.serverUrl": "伺服器 URL",
     "settings.sync.serverToken": "Token（可選）",
     "settings.sync.serverUrlPh": "http://127.0.0.1:8787",
+    "settings.sync.interval": "同步間隔",
+    "settings.sync.interval.off": "僅手動/變更時",
+    "settings.sync.interval.1m": "1 分鐘",
+    "settings.sync.interval.5m": "5 分鐘",
+    "settings.sync.interval.15m": "15 分鐘",
+    "settings.sync.interval.30m": "30 分鐘",
+    "settings.sync.interval.1h": "1 小時",
+    "settings.sync.interval.6h": "6 小時",
+    "settings.sync.interval.12h": "12 小時",
+    "settings.sync.interval.1d": "1 天",
     "settings.sync.testServer": "測試連線",
     "settings.sync.testOk": "伺服器可用",
     "settings.sync.testFail": "連線失敗：{reason}",
-    "settings.sync.unauthorized": "鑑權失敗：Token 與伺服器不匹配（伺服器未設定 TOKEN 時可留空）",
+    "settings.sync.unauthorized": "鑑權失敗：目前伺服器啟用了 TOKEN，擴充 Token 需一致；若要留空，請用不帶 TOKEN 的方式啟動同步服務",
     "settings.sync.now": "立即同步",
     "settings.sync.nowOk": "同步完成",
     "settings.sync.state.off": "未啟用",
@@ -639,7 +660,46 @@ const I18N = {
     "settings.sync.importOk": "Sync bundle merged",
     "settings.sync.importFail": "Merge failed: {reason}",
     "settings.sync.hint":
-      "Uses browser account sync. Backups, wallpaper files, and uploaded icons are local-only. Use a sync bundle across browsers.",
+      "Browser account sync or self-hosted HTTP; backups/wallpaper/uploaded icons stay local. Cross-browser: bundle or self-host.",
+    "settings.sync.transport": "Sync method",
+    "settings.sync.transport.browser": "Browser account",
+    "settings.sync.transport.http": "Self-hosted (HTTP)",
+    "settings.sync.serverUrl": "Server URL",
+    "settings.sync.serverToken": "Token (optional)",
+    "settings.sync.serverUrlPh": "http://127.0.0.1:8787",
+    "settings.sync.interval": "Sync interval",
+    "settings.sync.interval.off": "Manual / on change only",
+    "settings.sync.interval.1m": "1 minute",
+    "settings.sync.interval.5m": "5 minutes",
+    "settings.sync.interval.15m": "15 minutes",
+    "settings.sync.interval.30m": "30 minutes",
+    "settings.sync.interval.1h": "1 hour",
+    "settings.sync.interval.6h": "6 hours",
+    "settings.sync.interval.12h": "12 hours",
+    "settings.sync.interval.1d": "1 day",
+    "settings.sync.testServer": "Test connection",
+    "settings.sync.testOk": "Server OK",
+    "settings.sync.testFail": "Connection failed: {reason}",
+    "settings.sync.unauthorized":
+      "Auth failed: server has TOKEN set; leave empty only if server runs without TOKEN",
+    "settings.sync.now": "Sync now",
+    "settings.sync.nowOk": "Sync complete",
+    "settings.sync.state.off": "Off",
+    "settings.sync.state.idle": "On",
+    "settings.sync.state.syncing": "Syncing",
+    "settings.sync.state.quota": "Quota exceeded",
+    "settings.sync.state.error": "Sync error",
+    "settings.sync.state.conflict": "Resolve data conflict",
+    "settings.sync.conflict.title": "Sync data conflict",
+    "settings.sync.conflict.desc": "Cloud and this device are not the same homepage document. Choose:",
+    "settings.sync.conflict.merge": "Merge both",
+    "settings.sync.conflict.local": "This device overwrites cloud",
+    "settings.sync.conflict.remote": "Cloud replaces this device",
+    "settings.sync.conflict.done": "Conflict resolved",
+    "settings.sync.exportFile": "Export to file",
+    "settings.sync.importFile": "Import from file",
+    "settings.sync.safariHint":
+      "Safari: browser-account sync is limited; prefer a sync bundle between devices.",
     "settings.openMode": "Link Open Mode",
     "settings.maxBackups": "Max backups (0 = disabled)",
     "settings.iconRetry": "Retry failed icons (daily)",
@@ -699,7 +759,7 @@ const I18N = {
     "toast.save.trimBackground": "Saved (custom background cleared)",
     "toast.save.syncFallback": "Saved (sync quota exceeded, saved locally)",
     "toast.save.syncWriteFailed": "Saved (sync write failed, sync disabled and saved locally)",
-    "toast.syncOverwritten": "Another device had newer data; your unsaved local changes may have been overwritten",
+    "toast.syncOverwritten": "Newer data from another device was merged into this one",
     "tile.folderSuffix": " (Folder)",
     "folder.newTitle": "New Folder",
     "folder.created": "Folder created",
@@ -3117,15 +3177,18 @@ function applySyncSettingsFromForm() {
   if (!data.settings) data.settings = {};
   const syncEl = $("settingSync");
   const transportEl = $("settingSyncTransport");
+  const intervalEl = $("settingSyncInterval");
   const urlEl = $("settingSyncServerUrl");
   const tokenEl = $("settingSyncServerToken");
   if (syncEl) data.settings.syncEnabled = !!syncEl.checked;
   if (transportEl) data.settings.syncTransport = transportEl.value === "http" ? "http" : "browser";
+  if (intervalEl) data.settings.syncInterval = normalizeSyncInterval(intervalEl.value);
   if (urlEl) data.settings.syncServerUrl = (urlEl.value || "").trim();
   if (tokenEl) data.settings.syncServerToken = (tokenEl.value || "").trim();
   return {
     enabled: !!data.settings.syncEnabled,
     transport: data.settings.syncTransport || "browser",
+    interval: data.settings.syncInterval || "5m",
     url: data.settings.syncServerUrl || "",
     token: data.settings.syncServerToken || "",
   };
@@ -3306,6 +3369,14 @@ function openSettingsModal() {
           <option value="http">${t("settings.sync.transport.http")}</option>
         </select>
       </div>
+      <div class="row-inline">
+        <span class="inline-label">${t("settings.sync.interval")}</span>
+        <select id="settingSyncInterval" class="inline-select">
+          ${SYNC_INTERVAL_OPTIONS.map(
+            (o) => `<option value="${o.value}">${t(`settings.sync.interval.${o.value}`)}</option>`,
+          ).join("")}
+        </select>
+      </div>
       <div id="syncHttpFields" class="settings-sync-http hidden">
         <div class="row-inline">
           <span class="inline-label">${t("settings.sync.serverUrl")}</span>
@@ -3415,6 +3486,8 @@ function openSettingsModal() {
   $("settingSync").checked = data.settings.syncEnabled;
   const transportSel = $("settingSyncTransport");
   if (transportSel) transportSel.value = data.settings.syncTransport === "http" ? "http" : "browser";
+  const intervalSel = $("settingSyncInterval");
+  if (intervalSel) intervalSel.value = normalizeSyncInterval(data.settings.syncInterval);
   const urlInput = $("settingSyncServerUrl");
   if (urlInput) urlInput.value = data.settings.syncServerUrl || "";
   const tokenInput = $("settingSyncServerToken");
@@ -3433,7 +3506,7 @@ function openSettingsModal() {
       toast(t("settings.sync.testFail", { reason: "no_url" }), "error");
       return;
     }
-    // 先 health（可达性），再 pull state（鉴权；404 表示空库也算鉴权通过）
+    // 先 health（可达性 + 是否需要鉴权），再 pull state（404 表示空库也算鉴权通过）
     const health = await httpHealth({ baseUrl, token });
     if (!health.ok && health.reason === "network_error") {
       toast(
@@ -3446,7 +3519,13 @@ function openSettingsModal() {
     }
     const pull = await httpPullState({ baseUrl, token });
     if (pull.reason === "unauthorized") {
-      toast(t("settings.sync.unauthorized"), "error");
+      const need = health?.body?.authRequired === true;
+      toast(
+        need || !token
+          ? t("settings.sync.unauthorized")
+          : t("settings.sync.testFail", { reason: "unauthorized · Token 不正确" }),
+        "error",
+      );
       return;
     }
     if (pull.ok || pull.reason === "no_remote") {
@@ -3481,7 +3560,13 @@ function openSettingsModal() {
       }
       // 落盘配置（仅 local），再触发同步
       await saveData(data, false);
-      const transportChanged = prevTransport !== cfg.transport || prevUrl !== cfg.url || prevEnabled !== cfg.enabled;
+      // 间隔可能刚在表单里改过
+      refreshSyncInterval();
+      const transportChanged =
+        prevTransport !== cfg.transport ||
+        prevUrl !== cfg.url ||
+        prevToken !== cfg.token ||
+        prevEnabled !== cfg.enabled;
       if (transportChanged) {
         await onSyncEnabledChanged(true);
         const st = getSyncStatus();
@@ -3777,16 +3862,21 @@ function openSettingsModal() {
       const prevTransport = data.settings.syncTransport || "browser";
       const prevUrl = data.settings.syncServerUrl || "";
       const prevToken = data.settings.syncServerToken || "";
+      const prevInterval = normalizeSyncInterval(data.settings.syncInterval);
       data.settings.syncEnabled = $("settingSync").checked;
       data.settings.syncTransport = $("settingSyncTransport")?.value === "http" ? "http" : "browser";
+      data.settings.syncInterval = normalizeSyncInterval($("settingSyncInterval")?.value);
       data.settings.syncServerUrl = ($("settingSyncServerUrl")?.value || "").trim();
       data.settings.syncServerToken = ($("settingSyncServerToken")?.value || "").trim();
       const transportChanged =
         prevTransport !== data.settings.syncTransport ||
         prevUrl !== data.settings.syncServerUrl ||
         prevToken !== data.settings.syncServerToken;
+      const intervalChanged = prevInterval !== data.settings.syncInterval;
       if (prevSyncEnabled !== data.settings.syncEnabled || (data.settings.syncEnabled && transportChanged)) {
         void onSyncEnabledChanged(data.settings.syncEnabled);
+      } else if (data.settings.syncEnabled && intervalChanged) {
+        refreshSyncInterval();
       }
       data.settings.openMode = $("settingOpenMode").value || "current";
       const nextMaxBackups = Number($("settingBackup").value) || 0;
@@ -4697,8 +4787,11 @@ async function init() {
       }
     },
     onMerged: async (_next, stats) => {
+      // merge 成功几乎总会 applied；仅当远端 revision 推进，或用户选了「用云端」才提示
       if (stats?.applied) {
-        toast(t("toast.syncOverwritten"), "warning");
+        if (stats.remoteNewer || stats.choice === "remote") {
+          toast(t("toast.syncOverwritten"), "warning");
+        }
         render();
         processPendingIconFetches();
       }
@@ -4778,6 +4871,7 @@ async function init() {
     } catch (e) {
       console.warn("init sync failed", e);
     }
+    refreshSyncInterval();
   }
 }
 

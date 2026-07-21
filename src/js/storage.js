@@ -82,6 +82,8 @@ const DEFAULT_SETTINGS = {
   syncTransport: "browser",
   syncServerUrl: "",
   syncServerToken: "",
+  /** 周期同步间隔：off | 1m | 5m | 15m | 30m | 1h | 6h | 12h | 1d */
+  syncInterval: "5m",
   maxBackups: 30,
   keyboardNav: true,
   lastActiveGroupId: "",

@@ -22,7 +22,9 @@ import {
   SYNC_REVISION_RETRY,
   SYNC_SHARD_KEY_PREFIX,
   SYNC_STATE_KEY,
+  normalizeSyncInterval,
   syncBytesBudgetLevel,
+  syncIntervalToMs,
 } from "./sync_policy.js";
 import {
   estimateSyncProjectionBytes,
@@ -119,6 +121,10 @@ let _status = {
 
 let _pushTimer = null;
 let _pullTimer = null;
+/** @type {ReturnType<typeof setInterval>|null} */
+let _intervalTimer = null;
+/** 当前 interval 定时器对应的 ms，避免重复重建 */
+let _intervalMsApplied = -1;
 let _chain = Promise.resolve();
 let _getData = () => null;
 let _setData = (_d) => {};
@@ -357,6 +363,12 @@ async function applyRemoteDoc(doc, deviceId, reason) {
   }
   if (!doc.docId) doc.docId = _status.docId;
 
+  const prevRemoteRevision = Number(_status.lastRemoteRevision) || 0;
+  const remoteRevision = Number(doc.revision) || 0;
+  // 仅当此前已知远端 revision，且远端比上次更高，才视为「他端更新」
+  // prev=0：首次 pull / 本机刚启用，不弹覆盖警告
+  const remoteNewer = prevRemoteRevision > 0 && remoteRevision > prevRemoteRevision;
+
   const merged = mergeHomepage(data, doc, { deviceId, now: Date.now() });
   if (!merged.ok) {
     _status.status = "error";
@@ -379,16 +391,27 @@ async function applyRemoteDoc(doc, deviceId, reason) {
       await saveState();
       return { ok: false, reason: "local_write_failed", error: err };
     }
-    await _onMerged(merged.state, merged.stats);
+    await _onMerged(merged.state, {
+      ...merged.stats,
+      remoteNewer,
+      remoteRevision,
+      prevRemoteRevision,
+      reason,
+    });
   }
 
   _status.lastPullAt = Date.now();
-  _status.lastRemoteRevision = Number(doc.revision) || 0;
+  _status.lastRemoteRevision = remoteRevision;
   _status.status = "idle";
   _status.lastError = "";
   _status.docId = doc.docId || _status.docId;
   await saveState();
-  return { ok: true, merged: !!merged.stats?.applied, stats: merged.stats, reason };
+  return {
+    ok: true,
+    merged: !!merged.stats?.applied,
+    stats: { ...merged.stats, remoteNewer, remoteRevision },
+    reason,
+  };
 }
 
 /**
@@ -725,6 +748,7 @@ export async function onSyncEnabledChanged(enabled) {
   if (!enabled) {
     _status.status = "off";
     await saveState();
+    stopSyncInterval();
     return;
   }
   _status.status = "idle";
@@ -737,6 +761,64 @@ export async function onSyncEnabledChanged(enabled) {
     // 已从远端合并，再推一次拉齐 revision（push 内部会处理）
     await pushNow("enable_after_pull");
   }
+  startSyncInterval();
+}
+
+/**
+ * 停止周期同步定时器
+ */
+export function stopSyncInterval() {
+  if (_intervalTimer) {
+    clearInterval(_intervalTimer);
+    _intervalTimer = null;
+  }
+  _intervalMsApplied = -1;
+}
+
+/**
+ * 按 settings.syncInterval 启停周期 pull（随后必要时 push）
+ * 本地变更仍走 schedulePush 防抖，不受「关闭周期」影响。
+ */
+export function startSyncInterval() {
+  const data = _getData();
+  if (!data?.settings?.syncEnabled) {
+    stopSyncInterval();
+    return;
+  }
+  const key = normalizeSyncInterval(data.settings.syncInterval);
+  const ms = syncIntervalToMs(key);
+  if (!ms) {
+    stopSyncInterval();
+    return;
+  }
+  if (_intervalTimer && _intervalMsApplied === ms) return;
+  stopSyncInterval();
+  _intervalMsApplied = ms;
+  _intervalTimer = setInterval(() => {
+    void (async () => {
+      try {
+        const live = _getData();
+        if (!live?.settings?.syncEnabled) return;
+        if (document.visibilityState && document.visibilityState === "hidden") return;
+        const pull = await pullNow("interval");
+        if (pull?.needPush || pull?.empty || (pull?.ok && !pull?.merged && pull?.reason !== "doc_conflict")) {
+          // empty / 未合并：尝试推本地；doc_conflict 交给 UI
+          if (pull?.reason !== "doc_conflict") await pushNow("interval");
+        } else if (pull?.ok && pull?.merged) {
+          await pushNow("interval_after_pull");
+        }
+      } catch (e) {
+        console.warn("sync interval tick failed", e);
+      }
+    })();
+  }, ms);
+}
+
+/**
+ * 设置变更后调用：按最新 syncEnabled / syncInterval 重建定时器
+ */
+export function refreshSyncInterval() {
+  startSyncInterval();
 }
 
 // 启动时加载状态

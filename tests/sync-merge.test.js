@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { exportSyncBundle, importSyncBundle } from "../src/js/sync_bundle.js";
 import { _setDeviceIdForTests, createDocId } from "../src/js/sync_ids.js";
 import { mergeHomepage, mergeNode, mergePlacements, newerField } from "../src/js/sync_merge.js";
-import { SYNC_TOTAL_SOFT_BYTES, syncBytesBudgetLevel } from "../src/js/sync_policy.js";
+import { SYNC_TOTAL_SOFT_BYTES, normalizeSyncInterval, syncBytesBudgetLevel, syncIntervalToMs } from "../src/js/sync_policy.js";
 import { estimateSyncProjectionBytes, hashSyncDocument, toSyncDocument } from "../src/js/sync_projection.js";
 
 function baseData(overrides = {}) {
@@ -36,6 +36,15 @@ describe("sync_policy", () => {
     assert.equal(syncBytesBudgetLevel(0), "green");
     assert.equal(syncBytesBudgetLevel(SYNC_TOTAL_SOFT_BYTES), "yellow");
     assert.equal(syncBytesBudgetLevel(999999), "red");
+  });
+
+  it("sync interval normalize and ms", () => {
+    assert.equal(normalizeSyncInterval("1h"), "1h");
+    assert.equal(normalizeSyncInterval("nope"), "5m");
+    assert.equal(syncIntervalToMs("off"), 0);
+    assert.equal(syncIntervalToMs("1m"), 60_000);
+    assert.equal(syncIntervalToMs("1h"), 3_600_000);
+    assert.equal(syncIntervalToMs("1d"), 86_400_000);
   });
 });
 

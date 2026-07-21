@@ -346,21 +346,27 @@ tests/                   单元测试（storage / icons / bing-wallpaper / bump-
 
 ## 7. 同步与配额策略
 
-> **19.3+ 同步：** 浏览器账号（`storage.sync` 分片）或 **自建 HTTP JSON 服务**；设置页可选同步方式、立即同步、同步包文件/剪贴板。详见 [多设备同步开发方案.md](./多设备同步开发方案.md)。
+> **19.3+ 同步：** 浏览器账号（`storage.sync` 分片）或 **自建 HTTP JSON 服务**；设置页可选同步方式、**同步间隔**（分/时/天）、立即同步、同步包文件/剪贴板。详见 [多设备同步开发方案.md](./多设备同步开发方案.md)。
 
 ### 自建同步服务（HTTP JSON）
 
 ```bash
-# 本机
-TOKEN=dev-secret PORT=8787 npm run sync-server
+# 本机（默认开放：扩展 Token 可留空）
+PORT=8787 npm run sync-server
 # 数据文件默认 ./data/homepage-sync-state.json
+
+# 可选：加共享密钥（扩展 Token 需与 TOKEN 一致）
+# TOKEN=dev-secret PORT=8787 npm run sync-server
 
 # 扩展设置 → 启用同步 → 同步方式选「自建服务器」
 # 服务器 URL: http://127.0.0.1:8787
-# Token: dev-secret（与 TOKEN 一致；也可不设 TOKEN）
+# Token: 可留空；仅当服务端设置了 TOKEN 时再填相同值
+# 同步间隔: 默认 5 分钟；可选仅手动、1/5/15/30 分、1/6/12 时、1 天
 ```
 
 远程服务器同样启动该进程（建议 HTTPS 反代），扩展填写 `https://你的域名` 即可。
+
+> **说明：** Token 在扩展侧始终可选。只有服务端用环境变量 `TOKEN=...` 启动时才会校验；`/health` 会返回 `authRequired: true/false`。
 
 
 

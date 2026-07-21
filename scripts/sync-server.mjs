@@ -154,7 +154,13 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.pathname === "/health") {
-    json(res, 200, { ok: true, service: "homepage-sync", hasState: !!state });
+    json(res, 200, {
+      ok: true,
+      service: "homepage-sync",
+      hasState: !!state,
+      // 客户端可据此区分：open 时可留空 Token；true 时需填与启动 TOKEN 一致
+      authRequired: !!TOKEN,
+    });
     return;
   }
 

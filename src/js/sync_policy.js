@@ -23,6 +23,45 @@ export const SYNC_PULL_DEBOUNCE_MS = 400;
 export const SYNC_REVISION_RETRY = 3;
 export const SYNC_SAFETY_MAX = 5;
 
+/**
+ * 周期同步间隔（设置下拉 value → 毫秒）
+ * - off: 不自动周期同步（仍支持手动 / 本地变更防抖推送 / 浏览器 onChanged）
+ * - 分 / 时 / 天
+ */
+export const SYNC_INTERVAL_OPTIONS = [
+  { value: "off", ms: 0 },
+  { value: "1m", ms: 60_000 },
+  { value: "5m", ms: 5 * 60_000 },
+  { value: "15m", ms: 15 * 60_000 },
+  { value: "30m", ms: 30 * 60_000 },
+  { value: "1h", ms: 60 * 60_000 },
+  { value: "6h", ms: 6 * 60 * 60_000 },
+  { value: "12h", ms: 12 * 60 * 60_000 },
+  { value: "1d", ms: 24 * 60 * 60_000 },
+];
+
+export const SYNC_INTERVAL_DEFAULT = "5m";
+
+/**
+ * @param {unknown} value
+ * @returns {"off"|"1m"|"5m"|"15m"|"30m"|"1h"|"6h"|"12h"|"1d"}
+ */
+export function normalizeSyncInterval(value) {
+  const v = String(value || "").trim();
+  if (SYNC_INTERVAL_OPTIONS.some((o) => o.value === v)) return /** @type {any} */ (v);
+  return SYNC_INTERVAL_DEFAULT;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {number} 毫秒；0 表示关闭周期同步
+ */
+export function syncIntervalToMs(value) {
+  const key = normalizeSyncInterval(value);
+  const hit = SYNC_INTERVAL_OPTIONS.find((o) => o.value === key);
+  return hit ? hit.ms : 0;
+}
+
 /** 标题进同步投影时截断，控体积 */
 export const SYNC_TITLE_MAX_CHARS = 200;
 
@@ -73,6 +112,7 @@ export const SYNC_SETTINGS_WHITELIST = [
   "syncTransport",
   "syncServerUrl",
   "syncServerToken",
+  "syncInterval",
 ];
 
 /**

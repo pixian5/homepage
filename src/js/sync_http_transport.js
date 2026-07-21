@@ -14,7 +14,10 @@ function joinUrl(base, path) {
 }
 
 function authHeaders(token) {
-  const t = String(token || "").trim();
+  let t = String(token || "").trim();
+  if (!t) return {};
+  // 用户若粘贴了 "Bearer xxx"，避免变成 "Bearer Bearer xxx"
+  if (/^Bearer\s+/i.test(t)) t = t.replace(/^Bearer\s+/i, "").trim();
   if (!t) return {};
   return { Authorization: `Bearer ${t}` };
 }

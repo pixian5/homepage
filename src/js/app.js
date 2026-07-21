@@ -51,7 +51,7 @@ import {
   schedulePull,
   schedulePush,
 } from "./sync_engine.js";
-import { httpHealth } from "./sync_http_transport.js";
+import { httpHealth, httpPullState } from "./sync_http_transport.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
 import { syncBytesBudgetLevel } from "./sync_policy.js";
 import { estimateSyncProjectionBytes } from "./sync_projection.js";
@@ -346,6 +346,7 @@ const I18N = {
     "settings.sync.testServer": "测试连接",
     "settings.sync.testOk": "服务器可用",
     "settings.sync.testFail": "连接失败：{reason}",
+    "settings.sync.unauthorized": "鉴权失败：Token 与服务器不匹配（服务器未设置 TOKEN 时可留空）",
     "settings.sync.now": "立即同步",
     "settings.sync.nowOk": "同步完成",
     "settings.sync.state.off": "未启用",
@@ -520,6 +521,7 @@ const I18N = {
     "settings.sync.testServer": "測試連線",
     "settings.sync.testOk": "伺服器可用",
     "settings.sync.testFail": "連線失敗：{reason}",
+    "settings.sync.unauthorized": "鑑權失敗：Token 與伺服器不匹配（伺服器未設定 TOKEN 時可留空）",
     "settings.sync.now": "立即同步",
     "settings.sync.nowOk": "同步完成",
     "settings.sync.state.off": "未啟用",
@@ -3431,15 +3433,30 @@ function openSettingsModal() {
       toast(t("settings.sync.testFail", { reason: "no_url" }), "error");
       return;
     }
-    const res = await httpHealth({ baseUrl, token });
-    if (res.ok) toast(t("settings.sync.testOk"));
-    else {
-      // 常见：服务未启动 → Failed to fetch；把底层 error 拼进 reason 便于排查
-      const detail = [res.reason, res.error, res.status != null ? `HTTP ${res.status}` : ""]
-        .filter(Boolean)
-        .join(" · ");
-      toast(t("settings.sync.testFail", { reason: detail || "error" }), "error");
+    // 先 health（可达性），再 pull state（鉴权；404 表示空库也算鉴权通过）
+    const health = await httpHealth({ baseUrl, token });
+    if (!health.ok && health.reason === "network_error") {
+      toast(
+        t("settings.sync.testFail", {
+          reason: `network_error · ${health.error || "服务未启动？"}`,
+        }),
+        "error",
+      );
+      return;
     }
+    const pull = await httpPullState({ baseUrl, token });
+    if (pull.reason === "unauthorized") {
+      toast(t("settings.sync.unauthorized"), "error");
+      return;
+    }
+    if (pull.ok || pull.reason === "no_remote") {
+      toast(t("settings.sync.testOk"));
+      return;
+    }
+    const detail = [pull.reason, pull.error, pull.status != null ? `HTTP ${pull.status}` : ""]
+      .filter(Boolean)
+      .join(" · ");
+    toast(t("settings.sync.testFail", { reason: detail || health.reason || "error" }), "error");
   });
   void refreshSyncStatusLine();
   $("btnSyncNow")?.addEventListener("click", async () => {
@@ -3450,6 +3467,7 @@ function openSettingsModal() {
       const prevEnabled = !!data.settings.syncEnabled;
       const prevTransport = data.settings.syncTransport || "browser";
       const prevUrl = data.settings.syncServerUrl || "";
+      const prevToken = data.settings.syncServerToken || "";
       const cfg = applySyncSettingsFromForm();
       if (!cfg.enabled) {
         toast(t("settings.sync.state.off"), "warning");
@@ -3466,6 +3484,11 @@ function openSettingsModal() {
       const transportChanged = prevTransport !== cfg.transport || prevUrl !== cfg.url || prevEnabled !== cfg.enabled;
       if (transportChanged) {
         await onSyncEnabledChanged(true);
+        const st = getSyncStatus();
+        if (String(st.lastError || "").includes("unauthorized")) toast(t("settings.sync.unauthorized"), "error");
+        else if (st.status === "error" && st.lastError) toast(t("settings.sync.testFail", { reason: st.lastError }), "error");
+        else if (st.status === "quota") toast(t("settings.sync.state.quota"), "warning");
+        else toast(t("settings.sync.nowOk"));
       } else {
         const pull = await pullNow("manual");
         if (pull?.reason === "doc_conflict") {
@@ -3473,12 +3496,31 @@ function openSettingsModal() {
           void refreshSyncStatusLine();
           return;
         }
+        if (pull?.reason === "unauthorized") {
+          toast(t("settings.sync.unauthorized"), "error");
+          void refreshSyncStatusLine();
+          return;
+        }
+        if (pull?.reason === "network_error" || pull?.reason === "no_url") {
+          toast(
+            t("settings.sync.testFail", {
+              reason: (pull.reason || "") + (pull.error ? ` · ${pull.error}` : ""),
+            }),
+            "error",
+          );
+          void refreshSyncStatusLine();
+          return;
+        }
         const res = await pushNow("manual");
         if (res?.reason === "doc_conflict") {
           openSyncConflictModal();
         } else if (res?.reason === "sync_quota_total") toast(t("settings.sync.state.quota"), "warning");
-        else if (res?.reason === "network_error" || res?.reason === "unauthorized" || res?.reason === "no_url") {
-          toast(t("settings.sync.testFail", { reason: res.reason + (res.error ? ` · ${res.error}` : "") }), "error");
+        else if (res?.reason === "unauthorized") {
+          toast(t("settings.sync.unauthorized"), "error");
+        } else if (res?.reason === "network_error" || res?.reason === "no_url") {
+          const r = res?.reason || "error";
+          const err = res?.error || "";
+          toast(t("settings.sync.testFail", { reason: err ? `${r} · ${err}` : r }), "error");
         } else if (res && res.ok === false) {
           toast(t("settings.sync.importFail", { reason: res.reason || "push" }), "error");
         } else toast(t("settings.sync.nowOk"));
@@ -3734,11 +3776,15 @@ function openSettingsModal() {
       const prevSyncEnabled = !!data.settings.syncEnabled;
       const prevTransport = data.settings.syncTransport || "browser";
       const prevUrl = data.settings.syncServerUrl || "";
+      const prevToken = data.settings.syncServerToken || "";
       data.settings.syncEnabled = $("settingSync").checked;
       data.settings.syncTransport = $("settingSyncTransport")?.value === "http" ? "http" : "browser";
       data.settings.syncServerUrl = ($("settingSyncServerUrl")?.value || "").trim();
       data.settings.syncServerToken = ($("settingSyncServerToken")?.value || "").trim();
-      const transportChanged = prevTransport !== data.settings.syncTransport || prevUrl !== data.settings.syncServerUrl;
+      const transportChanged =
+        prevTransport !== data.settings.syncTransport ||
+        prevUrl !== data.settings.syncServerUrl ||
+        prevToken !== data.settings.syncServerToken;
       if (prevSyncEnabled !== data.settings.syncEnabled || (data.settings.syncEnabled && transportChanged)) {
         void onSyncEnabledChanged(data.settings.syncEnabled);
       }

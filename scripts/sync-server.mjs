@@ -58,9 +58,10 @@ function unauthorized(res) {
 
 function checkAuth(req) {
   if (!TOKEN) return true;
-  const h = String(req.headers.authorization || "");
-  if (h === `Bearer ${TOKEN}`) return true;
-  // 也允许 ?token=
+  const h = String(req.headers.authorization || "").trim();
+  // 允许大小写 Bearer，以及多余空白
+  const m = /^Bearer\s+(.+)$/i.exec(h);
+  if (m && m[1].trim() === TOKEN) return true;
   return false;
 }
 

@@ -44,7 +44,7 @@ sudo scripts/setup-sync-server.sh
 - `/etc/homepage-sync/homepage-sync.env`：权限 `600` 的 Token 和运行参数
 - `/etc/systemd/system/homepage-sync.service`：自动重启和开机启动
 
-脚本默认使用 Token `qqq77777`，也可以通过 `--token` 或 `SYNC_TOKEN` 覆盖。不希望安装时启动服务可加 `--no-start`；只查看计划可用 `--dry-run`。更新服务代码时重新执行同一脚本即可，数据目录会保留。
+首次安装未传入 Token 时，脚本默认使用 `9`；也可以通过 `--token` 或 `SYNC_TOKEN` 传入。配置会写入 `/etc/homepage-sync/homepage-sync.env`，重复执行且未显式传入新 Token 时会继续读取已有 Token，不会被默认值覆盖。不希望安装时启动服务可加 `--no-start`；只查看计划可用 `--dry-run`。更新服务代码时重新执行同一脚本即可，数据目录会保留。
 
 远程服务器应使用 HTTPS 反向代理，Node 服务只监听内网端口。例如 Nginx/Caddy 负责 TLS，Node 服务监听 `127.0.0.1:8787`。Token 只通过 `Authorization: Bearer` 请求头发送，不写入仓库或 URL。
 

@@ -10,7 +10,7 @@ ENV_FILE="/etc/homepage-sync/homepage-sync.env"
 SERVICE_NAME="homepage-sync"
 SERVICE_USER="homepage-sync"
 PORT="8787"
-TOKEN="${SYNC_TOKEN:-qqq77777}"
+TOKEN="${SYNC_TOKEN:-}"
 DRY_RUN=0
 NO_START=0
 
@@ -19,7 +19,7 @@ usage() {
 用法：sudo scripts/setup-sync-server.sh [选项]
 
 选项：
-  --token TOKEN       设置 Bearer Token；默认 qqq77777，也可使用 SYNC_TOKEN 环境变量
+  --token TOKEN       设置 Bearer Token；也可使用 SYNC_TOKEN，首次默认 9
   --port PORT         Node 内部端口，默认 8787
   --install-dir DIR  服务代码目录，默认 /opt/homepage-sync
   --data-dir DIR     JSON 数据目录，默认 /var/lib/homepage-sync
@@ -93,10 +93,7 @@ done
 ((PORT >= 1 && PORT <= 65535)) || die "端口范围必须是 1-65535"
 [[ "$INSTALL_DIR" = /* && "$DATA_DIR" = /* ]] || die "目录必须使用绝对路径"
 
-if ((DRY_RUN)); then
-  printf '[setup-sync-server] dry-run：系统=%s，代码=%s，数据=%s，端口=%s，Token=%s\n' \
-    "$(uname -s)" "$INSTALL_DIR" "$DATA_DIR" "$PORT" "$([[ -n "$TOKEN" ]] && printf '已提供' || printf '将生成')"
-else
+if ((DRY_RUN == 0)); then
   [[ "$(uname -s)" == "Linux" ]] || die "安装模式只支持 Linux/systemd；本机请使用 --dry-run"
   [[ "$(id -u)" -eq 0 ]] || die "安装模式需要 root，请使用 sudo"
   command -v node >/dev/null 2>&1 || die "未找到 node，请先安装 Node.js 18 或更高版本"
@@ -104,11 +101,18 @@ else
   NODE_BIN="$(command -v node)"
 fi
 
-if [[ -z "$TOKEN" && -f "$ENV_FILE" ]]; then
+if [[ -z "$TOKEN" && -r "$ENV_FILE" ]]; then
   TOKEN="$(sed -n 's/^TOKEN=//p' "$ENV_FILE" | head -n 1)"
 fi
 
-GENERATED_TOKEN=0
+if [[ -z "$TOKEN" ]]; then
+  TOKEN="9"
+fi
+
+if ((DRY_RUN)); then
+  printf '[setup-sync-server] dry-run：系统=%s，代码=%s，数据=%s，端口=%s，Token=已设置\n' \
+    "$(uname -s)" "$INSTALL_DIR" "$DATA_DIR" "$PORT"
+fi
 
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 STATE_FILE="${DATA_DIR}/homepage-sync-state.json"

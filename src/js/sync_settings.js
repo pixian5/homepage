@@ -64,7 +64,7 @@ export function stampChangedSyncSettings(data, previousSettings = {}, ctx = {}) 
   const prev = previousSettings && typeof previousSettings === "object" ? previousSettings : {};
   const changed = [];
   for (const key of SYNC_SETTINGS_WHITELIST) {
-    if (!Object.hasOwn(settings, key)) continue;
+    if (!Object.getOwnPropertyDescriptor(settings, key)) continue;
     if (stableValue(settings[key]) !== stableValue(prev[key])) changed.push(key);
   }
   if (!changed.length) return changed;
@@ -114,7 +114,7 @@ export function mergeSettingsByClock(localSettings = {}, remoteSettings = {}, lo
     if (!SYNC_SETTING_KEYS.has(key)) continue;
     const remoteHasClock = !!rClock[key];
     const localHasClock = !!lClock[key];
-    const localHasValue = Object.hasOwn(local, key) && local[key] !== undefined;
+    const localHasValue = Object.getOwnPropertyDescriptor(local, key) && local[key] !== undefined;
 
     if (!remoteHasClock) {
       if (!localHasValue) settings[key] = remoteValue;

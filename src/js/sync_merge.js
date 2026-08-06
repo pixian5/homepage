@@ -334,7 +334,7 @@ export function mergeHomepage(localData, remoteDoc, ctx = {}) {
     remoteShape?._syncMeta?.settingsClock,
   );
   // syncEnabled 以本地开关为准（避免远端关同步锁死）
-  if (Object.hasOwn(localSettings, "syncEnabled")) {
+  if (Object.getOwnPropertyDescriptor(localSettings, "syncEnabled")) {
     mergedSettings.syncEnabled = localSettings.syncEnabled;
   }
 

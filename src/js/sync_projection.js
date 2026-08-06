@@ -64,7 +64,7 @@ export function toSyncDocument(data, ctx) {
   const settingsIn = data?.settings && typeof data.settings === "object" ? data.settings : {};
   const settings = {};
   for (const key of SYNC_SETTINGS_WHITELIST) {
-    if (Object.hasOwn(settingsIn, key)) {
+    if (Object.getOwnPropertyDescriptor(settingsIn, key)) {
       settings[key] = settingsIn[key];
     }
   }

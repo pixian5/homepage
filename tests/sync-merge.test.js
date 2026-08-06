@@ -214,7 +214,32 @@ describe("mergeHomepage", () => {
     assert.ok(remote.nodes.some((n) => n.id === "n1" && n.deletedAt));
     const result = mergeHomepage(local, remote, { deviceId: "dev_a" });
     assert.equal(result.ok, true);
-    assert.equal(result.state.nodes.n1, undefined);
+    assert.equal(result.state.nodes.n1.deletedAt, 3000);
+    assert.equal(result.state.groups[0].nodes.includes("n1"), false);
+  });
+
+  it("keeps a local delete tombstone when the remote still has the old live node", () => {
+    const local = baseData({
+      groups: [{ id: "g1", name: "默认", order: 0, nodes: [], updatedAt: 3000, updatedBy: "dev_a" }],
+      nodes: {
+        n1: {
+          id: "n1",
+          type: "item",
+          title: "A",
+          url: "https://a.example/",
+          iconType: "auto",
+          updatedAt: 3000,
+          deletedAt: 3000,
+          updatedBy: "dev_a",
+        },
+      },
+      lastUpdated: 3000,
+    });
+    const remote = toSyncDocument(baseData(), { deviceId: "dev_b", docId: "doc1", revision: 2, writtenAt: 2000 });
+    const result = mergeHomepage(local, remote, { deviceId: "dev_a", now: 4000 });
+    assert.equal(result.ok, true);
+    assert.equal(result.state.nodes.n1.deletedAt, 3000);
+    assert.equal(result.state.groups[0].nodes.includes("n1"), false);
   });
 
   it("newer title wins on same node", () => {

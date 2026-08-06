@@ -338,16 +338,13 @@ export function mergeHomepage(localData, remoteDoc, ctx = {}) {
     mergedSettings.syncEnabled = localSettings.syncEnabled;
   }
 
-  const visibleNodes = {};
-  for (const [id, n] of Object.entries(mergedNodes)) {
-    if (!n.deletedAt && !n.purgedAt) visibleNodes[id] = n;
-  }
-
   const state = {
     schemaVersion: 1,
     settings: mergedSettings,
     groups: activeGroups.sort((a, b) => mergeAsNum(a.order) - mergeAsNum(b.order)),
-    nodes: visibleNodes,
+    // 保留墓碑到下一轮投影，防止删除在另一台设备上被旧存活节点复活。
+    // 渲染和 placements 已经过滤 deletedAt/purgedAt，因此墓碑不会显示。
+    nodes: mergedNodes,
     backups: Array.isArray(localData?.backups) ? deepClone(localData.backups) : [],
     lastUpdated: Math.max(localWritten, remoteWritten, now),
     _syncMeta: {

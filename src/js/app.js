@@ -2492,7 +2492,13 @@ function deleteNodes(ids) {
 
   for (const id of expanded) {
     removeNodeFromLocation(id);
-    delete data.nodes[id];
+    const node = data.nodes[id];
+    if (node) {
+      // 保留不可见墓碑，避免另一台设备用旧存活节点把删除操作复活。
+      const deletedAt = Date.now();
+      node.deletedAt = deletedAt;
+      node.updatedAt = deletedAt;
+    }
   }
   dedupeData(data);
 

@@ -225,7 +225,8 @@ export function dedupeData(input) {
   }
   const reachable = collectReachableNodeIds(input, roots);
   for (const id of Object.keys(input.nodes)) {
-    if (!reachable.has(id)) {
+    // 删除墓碑虽然不再挂在任何分组下，也必须保留到同步完成，不能被孤儿 GC 提前抹掉。
+    if (!reachable.has(id) && !input.nodes[id]?.deletedAt && !input.nodes[id]?.purgedAt) {
       delete input.nodes[id];
       changed = true;
     }

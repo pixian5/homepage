@@ -110,6 +110,7 @@ describe("storage", async () => {
     assert.equal(data.schemaVersion, 1);
     assert.ok(data.groups.length > 0);
     assert.ok(data.settings.language);
+    assert.equal(data.settings.syncTransport, "http");
     assert.equal(typeof data.nodes, "object");
     assert.ok(Array.isArray(data.backups));
   });

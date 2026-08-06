@@ -49,7 +49,6 @@ import {
   pullNow,
   pushNow,
   refreshSyncInterval,
-  schedulePull,
   schedulePush,
 } from "./sync_engine.js";
 import { httpHealth, httpPullState } from "./sync_http_transport.js";
@@ -338,10 +337,8 @@ const I18N = {
     "settings.sync.exportOk": "同步包已复制到剪切板",
     "settings.sync.importOk": "同步包已合并",
     "settings.sync.importFail": "同步包合并失败：{reason}",
-    "settings.sync.hint": "浏览器账号同步或自建 HTTP 服务；不含备份/壁纸/上传图标。跨浏览器也可用同步包/自建服。",
-    "settings.sync.transport": "同步方式",
-    "settings.sync.transport.browser": "浏览器账号",
-    "settings.sync.transport.http": "自建服务器 (HTTP)",
+    "settings.sync.hint": "仅使用自建 HTTP 服务器同步；不含备份、壁纸和上传图标。离线时保存在本机，联网后自动重试。",
+    "settings.sync.transport.http": "服务器同步 (HTTP)",
     "settings.sync.serverUrl": "服务器 URL",
     "settings.sync.serverToken": "Token（可选）",
     "settings.sync.serverUrlPh": "http://127.0.0.1:8787",
@@ -376,7 +373,6 @@ const I18N = {
     "settings.sync.conflict.done": "冲突已处理",
     "settings.sync.exportFile": "导出到文件",
     "settings.sync.importFile": "从文件导入",
-    "settings.sync.safariHint": "当前为 Safari：浏览器账号同步能力较弱，推荐使用「同步包」在设备间拷贝数据。",
     "settings.openMode": "网页打开方式",
     "settings.maxBackups": "最大备份数量（0 表示不备份）",
     "settings.iconRetry": "重新获取失败图标（每天）",
@@ -524,10 +520,8 @@ const I18N = {
     "settings.sync.exportOk": "同步包已複製到剪貼簿",
     "settings.sync.importOk": "同步包已合併",
     "settings.sync.importFail": "同步包合併失敗：{reason}",
-    "settings.sync.hint": "瀏覽器帳號同步或自建 HTTP 服務；不含備份/桌布/上傳圖示。跨瀏覽器也可用同步包/自建服。",
-    "settings.sync.transport": "同步方式",
-    "settings.sync.transport.browser": "瀏覽器帳號",
-    "settings.sync.transport.http": "自建伺服器 (HTTP)",
+    "settings.sync.hint": "僅使用自建 HTTP 伺服器同步；不含備份、桌布和上傳圖示。離線時保存在本機，連線後自動重試。",
+    "settings.sync.transport.http": "伺服器同步 (HTTP)",
     "settings.sync.serverUrl": "伺服器 URL",
     "settings.sync.serverToken": "Token（可選）",
     "settings.sync.serverUrlPh": "http://127.0.0.1:8787",
@@ -562,7 +556,6 @@ const I18N = {
     "settings.sync.conflict.done": "衝突已處理",
     "settings.sync.exportFile": "匯出到檔案",
     "settings.sync.importFile": "從檔案匯入",
-    "settings.sync.safariHint": "目前為 Safari：瀏覽器帳號同步能力較弱，建議使用「同步包」在裝置間拷貝資料。",
     "settings.openMode": "網頁開啟方式",
     "settings.maxBackups": "最大備份數量（0 代表不備份）",
     "settings.iconRetry": "重新取得失敗圖示（每日）",
@@ -663,10 +656,8 @@ const I18N = {
     "settings.sync.importOk": "Sync bundle merged",
     "settings.sync.importFail": "Merge failed: {reason}",
     "settings.sync.hint":
-      "Browser account sync or self-hosted HTTP; backups/wallpaper/uploaded icons stay local. Cross-browser: bundle or self-host.",
-    "settings.sync.transport": "Sync method",
-    "settings.sync.transport.browser": "Browser account",
-    "settings.sync.transport.http": "Self-hosted (HTTP)",
+      "Uses a self-hosted HTTP server only; backups, wallpaper, and uploaded icons stay local. Offline edits retry when connected.",
+    "settings.sync.transport.http": "Server sync (HTTP)",
     "settings.sync.serverUrl": "Server URL",
     "settings.sync.serverToken": "Token (optional)",
     "settings.sync.serverUrlPh": "http://127.0.0.1:8787",
@@ -700,7 +691,6 @@ const I18N = {
     "settings.sync.conflict.done": "Conflict resolved",
     "settings.sync.exportFile": "Export to file",
     "settings.sync.importFile": "Import from file",
-    "settings.sync.safariHint": "Safari: browser-account sync is limited; prefer a sync bundle between devices.",
     "settings.openMode": "Link Open Mode",
     "settings.maxBackups": "Max backups (0 = disabled)",
     "settings.iconRetry": "Retry failed icons (daily)",
@@ -1051,20 +1041,6 @@ function shouldDebugPersist() {
   }
 }
 
-async function _loadLatestDataForApp() {
-  const localData = await loadData();
-  if (localData.settings.syncEnabled) {
-    // loadDataFromArea 在 key 缺失时返回 null，禁止用“空默认数据”参与 LWW
-    const syncData = await loadDataFromArea(true);
-    if (syncData?.groups?.length) {
-      const localTs = Number(localData.lastUpdated || 0);
-      const syncTs = Number(syncData.lastUpdated || 0);
-      return syncTs >= localTs ? syncData : localData;
-    }
-  }
-  return localData;
-}
-
 async function reloadFromStorage() {
   const prevActive = activeGroupId;
   const prevOpenFolder = openFolderId;
@@ -1129,15 +1105,8 @@ function attachStorageListener() {
   api.storage.onChanged.addListener((changes, areaName) => {
     if (persistInFlight > 0) return;
     if (Date.now() < suppressStorageUntil) return;
-    // 新同步协议：meta 变更触发 merge pull
-    if (areaName === "sync" && (changes?.homepage_sync_meta || changes?.homepage_data)) {
-      if (data?.settings?.syncEnabled) {
-        schedulePull("onChanged");
-        return;
-      }
-    }
     if (!changes?.[key]) return;
-    if (areaName !== "local" && areaName !== "sync") return;
+    if (areaName !== "local") return;
     // 本地 homepage_data 变更（如 popup 写入）
     if (areaName === "local") {
       const incoming = changes[key].newValue;
@@ -3202,18 +3171,17 @@ function openSyncConflictModal() {
 function applySyncSettingsFromForm() {
   if (!data.settings) data.settings = {};
   const syncEl = $("settingSync");
-  const transportEl = $("settingSyncTransport");
   const intervalEl = $("settingSyncInterval");
   const urlEl = $("settingSyncServerUrl");
   const tokenEl = $("settingSyncServerToken");
   if (syncEl) data.settings.syncEnabled = !!syncEl.checked;
-  if (transportEl) data.settings.syncTransport = transportEl.value === "http" ? "http" : "browser";
+  data.settings.syncTransport = "http";
   if (intervalEl) data.settings.syncInterval = normalizeSyncInterval(intervalEl.value);
   if (urlEl) data.settings.syncServerUrl = (urlEl.value || "").trim();
   if (tokenEl) data.settings.syncServerToken = (tokenEl.value || "").trim();
   return {
     enabled: !!data.settings.syncEnabled,
-    transport: data.settings.syncTransport || "browser",
+    transport: "http",
     interval: data.settings.syncInterval || "5m",
     url: data.settings.syncServerUrl || "",
     token: data.settings.syncServerToken || "",
@@ -3248,7 +3216,7 @@ async function refreshSyncStatusLine() {
                 ? "settings.sync.state.idle"
                 : "settings.sync.state.off";
     const err = st.lastError ? ` · ${st.lastError}` : "";
-    const via = st.transport === "http" ? t("settings.sync.transport.http") : t("settings.sync.transport.browser");
+    const via = t("settings.sync.transport.http");
     const intervalKey = normalizeSyncInterval(data.settings?.syncInterval);
     const intervalLabel = data.settings?.syncEnabled
       ? ` · ${t("settings.sync.interval")}: ${t(`settings.sync.interval.${intervalKey}`)}`
@@ -3258,10 +3226,6 @@ async function refreshSyncStatusLine() {
     const resolveBtn = $("btnSyncResolveConflict");
     if (resolveBtn) {
       resolveBtn.classList.toggle("hidden", !(st.hasConflict || st.status === "need_setup"));
-    }
-    const safariHint = $("syncSafariHint");
-    if (safariHint) {
-      safariHint.classList.toggle("hidden", !isSafariBrowser());
     }
   } catch (e) {
     console.warn("refreshSyncStatusLine failed", e);
@@ -3393,13 +3357,6 @@ function openSettingsModal() {
     <div class="section">
       <label><input id="settingSync" type="checkbox"> ${t("settings.sync")}</label>
       <div class="row-inline">
-        <span class="inline-label">${t("settings.sync.transport")}</span>
-        <select id="settingSyncTransport" class="inline-select">
-          <option value="browser">${t("settings.sync.transport.browser")}</option>
-          <option value="http">${t("settings.sync.transport.http")}</option>
-        </select>
-      </div>
-      <div class="row-inline">
         <span class="inline-label">${t("settings.sync.interval")}</span>
         <select id="settingSyncInterval" class="inline-select">
           ${rawHtml(
@@ -3410,7 +3367,7 @@ function openSettingsModal() {
           )}
         </select>
       </div>
-      <div id="syncHttpFields" class="settings-sync-http hidden">
+      <div id="syncHttpFields" class="settings-sync-http">
         <div class="row-inline">
           <span class="inline-label">${t("settings.sync.serverUrl")}</span>
           <input id="settingSyncServerUrl" type="url" class="inline-text" placeholder="${t("settings.sync.serverUrlPh")}" />
@@ -3434,7 +3391,6 @@ function openSettingsModal() {
       </div>
       <input id="syncImportFileInput" type="file" accept="application/json,.json" class="hidden" />
       <p class="settings-sync-hint">${t("settings.sync.hint")}</p>
-      <p id="syncSafariHint" class="settings-sync-hint hidden">${t("settings.sync.safariHint")}</p>
       <div class="row-inline">
         <span class="inline-label">${t("settings.openMode")}</span>
         <select id="settingOpenMode" class="inline-select">
@@ -3517,20 +3473,13 @@ function openSettingsModal() {
   $("settingFontSize").value = data.settings.fontSize || 13;
   $("settingLanguage").value = currentLang();
   $("settingSync").checked = data.settings.syncEnabled;
-  const transportSel = $("settingSyncTransport");
-  if (transportSel) transportSel.value = data.settings.syncTransport === "http" ? "http" : "browser";
+  data.settings.syncTransport = "http";
   const intervalSel = $("settingSyncInterval");
   if (intervalSel) intervalSel.value = normalizeSyncInterval(data.settings.syncInterval);
   const urlInput = $("settingSyncServerUrl");
   if (urlInput) urlInput.value = data.settings.syncServerUrl || "";
   const tokenInput = $("settingSyncServerToken");
   if (tokenInput) tokenInput.value = data.settings.syncServerToken || "";
-  const httpFields = $("syncHttpFields");
-  const syncHttpVisibility = () => {
-    if (httpFields) httpFields.classList.toggle("hidden", transportSel?.value !== "http");
-  };
-  syncHttpVisibility();
-  transportSel?.addEventListener("change", syncHttpVisibility);
   $("btnSyncTestServer")?.addEventListener("click", async () => {
     const cfg = applySyncSettingsFromForm();
     const baseUrl = cfg.url;
@@ -3577,7 +3526,6 @@ function openSettingsModal() {
     try {
       // 立即同步前先把表单里的同步配置写入 data（避免只改了 UI 未保存）
       const prevEnabled = !!data.settings.syncEnabled;
-      const prevTransport = data.settings.syncTransport || "browser";
       const prevUrl = data.settings.syncServerUrl || "";
       const prevToken = data.settings.syncServerToken || "";
       const cfg = applySyncSettingsFromForm();
@@ -3586,21 +3534,17 @@ function openSettingsModal() {
         void refreshSyncStatusLine();
         return;
       }
-      if (cfg.transport === "http" && !cfg.url) {
+      if (!cfg.url) {
         toast(t("settings.sync.testFail", { reason: "no_url" }), "error");
         void refreshSyncStatusLine();
         return;
       }
       // 落盘配置（仅 local），再触发同步
-      await saveData(data, false);
+      await persistData();
       // 间隔可能刚在表单里改过
       refreshSyncInterval();
-      const transportChanged =
-        prevTransport !== cfg.transport ||
-        prevUrl !== cfg.url ||
-        prevToken !== cfg.token ||
-        prevEnabled !== cfg.enabled;
-      if (transportChanged) {
+      const serverChanged = prevUrl !== cfg.url || prevToken !== cfg.token || prevEnabled !== cfg.enabled;
+      if (serverChanged) {
         await onSyncEnabledChanged(true);
         const st = getSyncStatus();
         if (String(st.lastError || "").includes("unauthorized")) toast(t("settings.sync.unauthorized"), "error");
@@ -3895,21 +3839,17 @@ function openSettingsModal() {
       data.settings.defaultGroupId = selectedDefaultGroupId;
       data.settings.sidebarHidden = $("settingSidebarCollapsed").checked;
       const prevSyncEnabled = !!data.settings.syncEnabled;
-      const prevTransport = data.settings.syncTransport || "browser";
       const prevUrl = data.settings.syncServerUrl || "";
       const prevToken = data.settings.syncServerToken || "";
       const prevInterval = normalizeSyncInterval(data.settings.syncInterval);
       data.settings.syncEnabled = $("settingSync").checked;
-      data.settings.syncTransport = $("settingSyncTransport")?.value === "http" ? "http" : "browser";
+      data.settings.syncTransport = "http";
       data.settings.syncInterval = normalizeSyncInterval($("settingSyncInterval")?.value);
       data.settings.syncServerUrl = ($("settingSyncServerUrl")?.value || "").trim();
       data.settings.syncServerToken = ($("settingSyncServerToken")?.value || "").trim();
-      const transportChanged =
-        prevTransport !== data.settings.syncTransport ||
-        prevUrl !== data.settings.syncServerUrl ||
-        prevToken !== data.settings.syncServerToken;
+      const serverChanged = prevUrl !== data.settings.syncServerUrl || prevToken !== data.settings.syncServerToken;
       const intervalChanged = prevInterval !== data.settings.syncInterval;
-      if (prevSyncEnabled !== data.settings.syncEnabled || (data.settings.syncEnabled && transportChanged)) {
+      if (prevSyncEnabled !== data.settings.syncEnabled || (data.settings.syncEnabled && serverChanged)) {
         void onSyncEnabledChanged(data.settings.syncEnabled);
       } else if (data.settings.syncEnabled && intervalChanged) {
         refreshSyncInterval();
@@ -4855,20 +4795,7 @@ async function init() {
     lastUpdated: localData.lastUpdated || 0,
     syncEnabled: !!localData.settings?.syncEnabled,
   });
-  if (localData.settings.syncEnabled) {
-    // 空 sync 返回 null，不能当成“更新的空主页”；完整 merge 由下方 pullNow 处理
-    const syncData = await loadDataFromArea(true);
-    // 旧整包兼容：仅作 lastUpdated 粗选，随后 engine.pull 会 merge 投影
-    if (syncData?.groups?.length) {
-      const localTs = Number(localData.lastUpdated || 0);
-      const syncTs = Number(syncData.lastUpdated || 0);
-      data = syncTs >= localTs ? syncData : localData;
-    } else {
-      data = localData;
-    }
-  } else {
-    data = localData;
-  }
+  data = localData;
   const deduped = dedupeData(data);
   const languageInitialized = ensureLanguageSetting();
   if (deduped || languageInitialized) {

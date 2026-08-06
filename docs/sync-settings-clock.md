@@ -11,7 +11,7 @@
 - 同步投影把该元数据写入 `SyncDocument.settingsMeta`。
 - 合并时只比较同一个 setting key 的 clock，不再用整份文档时间覆盖全部设置。
 - 旧版远端缺少 `settingsMeta` 时，只补本地缺失字段，不覆盖本地已有设置。
-- `syncServerToken` 不进入同步投影，避免 Token 被浏览器同步或 HTTP 状态文件传播。
+- 同步只走 HTTP 服务器；`syncServerToken`、服务器地址和同步开关均为本机配置，不进入同步投影。
 
 ## 合并规则
 
@@ -27,5 +27,4 @@
 - 远端书签更新不覆盖本机较新设置。
 - 远端较新的单个设置只覆盖该设置，不影响其它本机较新设置。
 - 旧版远端缺少设置 clock 时不会覆盖本地已有设置。
-- `syncServerToken` 不进入 `SyncDocument.settings` 或 `settingsMeta`。
-
+- `syncServerToken`、`syncServerUrl`、`syncEnabled` 和 `syncInterval` 不进入 `SyncDocument.settings` 或 `settingsMeta`。

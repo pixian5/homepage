@@ -3,7 +3,7 @@
  * 供 projection / pack / outbox / UI 共用，避免 magic number 散落。
  */
 
-/** storage.sync 单片目标上限（Chrome 单 key ~8KB，留余量） */
+/** 保留旧分片编解码的单片上限；服务器同步运行路径不使用分片。 */
 export const SYNC_SHARD_MAX_BYTES = 7000;
 
 /** 投影总体积软/硬预算 */
@@ -19,7 +19,6 @@ export const SYNC_OUTBOX_BASE_DELAY_MS = 5_000;
 export const SYNC_OUTBOX_MAX_DELAY_MS = 60 * 60 * 1000;
 
 export const SYNC_PUSH_DEBOUNCE_MS = 1000;
-export const SYNC_PULL_DEBOUNCE_MS = 400;
 export const SYNC_REVISION_RETRY = 3;
 export const SYNC_SAFETY_MAX = 5;
 
@@ -108,10 +107,6 @@ export const SYNC_SETTINGS_WHITELIST = [
   "backgroundFade",
   "maxBackups",
   "emptyHintDisabled",
-  "syncEnabled",
-  "syncTransport",
-  "syncServerUrl",
-  "syncInterval",
 ];
 
 /**

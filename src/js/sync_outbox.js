@@ -4,7 +4,7 @@
 
 import { SYNC_OUTBOX_KEY, SYNC_OUTBOX_MAX_ATTEMPTS, syncOutboxRetryDelayMs } from "./sync_policy.js";
 
-export const SYNC_OUTBOX_TARGET = "storage.sync|homepage";
+export const SYNC_OUTBOX_TARGET = "http-server|homepage";
 
 /**
  * @param {any} value

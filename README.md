@@ -254,7 +254,7 @@ tests/                   单元测试（storage / icons / bing-wallpaper / bump-
 - `iconFetch`: 自动图标抓取
 - `iconRetryAtSix`: 兼容字段（18 点重试）
 - `iconRetryHour`: 重试小时（0~23 或空）
-- `syncEnabled`: 是否启用 `storage.sync`
+- `syncEnabled`: 是否启用服务器同步
 - `maxBackups`: 最大备份数（0 代表不自动备份）
 - `keyboardNav`: 键盘导航开关
 - `lastActiveGroupId`: 上次激活分组
@@ -346,7 +346,7 @@ tests/                   单元测试（storage / icons / bing-wallpaper / bump-
 
 ## 7. 同步与配额策略
 
-> **19.3+ 同步：** 浏览器账号（`storage.sync` 分片）或 **自建 HTTP JSON 服务**；设置页可选同步方式、**同步间隔**（分/时/天）、立即同步、同步包文件/剪贴板。详见 [多设备同步开发方案.md](./多设备同步开发方案.md)。
+> **20.3+ 同步：** 仅使用 **自建 HTTP JSON 服务**；本机 `storage.local` 作为离线工作副本，联网后自动拉取、合并、重试。设置页支持同步间隔（分/时/天）、立即同步、同步包文件/剪贴板。详见 [docs/server-sync.md](docs/server-sync.md)。
 
 ### 自建同步服务（HTTP JSON）
 
@@ -358,41 +358,29 @@ PORT=8787 npm run sync-server
 # 可选：加共享密钥（扩展 Token 需与 TOKEN 一致）
 # TOKEN=dev-secret PORT=8787 npm run sync-server
 
-# 扩展设置 → 启用同步 → 同步方式选「自建服务器」
+# 扩展设置 → 启用同步
 # 服务器 URL: http://127.0.0.1:8787
 # Token: 可留空；仅当服务端设置了 TOKEN 时再填相同值
 # 同步间隔: 默认 5 分钟；可选仅手动、1/5/15/30 分、1/6/12 时、1 天
 ```
 
-远程服务器同样启动该进程（建议 HTTPS 反代），扩展填写 `https://你的域名` 即可。
+远程服务器同样启动该进程（必须使用 HTTPS 反代），扩展填写 `https://你的域名` 即可。
 
 > **说明：** Token 在扩展侧始终可选。只有服务端用环境变量 `TOKEN=...` 启动时才会校验；`/health` 会返回 `authRequired: true/false`。
 
 
 
-## 7.1 同步选择策略
+## 7.1 服务器同步与本地离线
 
-实现位置：`loadData()` 函数内的 `syncSelection` 分支（[src/js/storage.js](file:///Users/x/code/homepage/src/js/storage.js#L200-L276)）
+- `storage.local` 是本机完整工作副本，服务器只保存同步投影。
+- 启动时先加载本地数据，再由同步引擎通过 HTTP 拉取并合并，不再按 `lastUpdated` 选择 `storage.sync` 数据。
+- 服务器不可用时保留本地修改，写入 outbox，恢复连接后自动重试。
+- 备份、上传图标和自定义背景仍只保存在本机。
 
-- 本地与同步同时存在时按 `lastUpdated` 选最新。
-- 只有一侧有数据时直接使用。
-- 数据加载后会执行一次去重修复。
-
-## 7.2 同步数据清洗（`sanitizeForSync`）
-
-实现位置：[src/js/storage.js](file:///Users/x/code/homepage/src/js/storage.js#L330-L380)
-
-写 `storage.sync` 前会去除高体积字段（`SYNC_ITEM_QUOTA = 7500` 字节阈值）：
-
-- `backups` 清空
-- `backgroundCustom` 清空（自定义背景）
-- 过长上传图标改为自动（`ICON_DATA_MAX_LENGTH` 阈值）
-
-## 7.3 配额与降级处理
+## 7.2 本地配额处理
 
 | 场景 | 处理函数 | 位置 |
 |------|---------|------|
-| 同步超限自动降级 | `saveData()` 内的 quota 检查 | [src/js/storage.js](file:///Users/x/code/homepage/src/js/storage.js#L382-L437) |
 | 本地写入 quota 错误逐级清理 | `handleQuotaError()` | [src/js/storage.js](file:///Users/x/code/homepage/src/js/storage.js#L439-L506) |
 
 清理顺序：
@@ -401,8 +389,7 @@ PORT=8787 npm run sync-server
 2. 清理上传图标（`iconType: upload` 改为 `auto`）
 3. 清理自定义背景（`backgroundCustom` 清空）
 
-同步目标大小阈值：`7500` bytes（Chrome sync 单条限制约 8KB）。
-超限：自动关闭同步（`syncEnabled = false`），回退本地存储。
+服务器投影由 HTTP 服务校验大小和 hash；同步失败不会清空本机数据。
 
 ## 8. 图标与背景
 

@@ -121,6 +121,10 @@ describe("toSyncDocument", () => {
     });
     const doc = toSyncDocument(data, { deviceId: "dev_a", docId: "doc1", revision: 1 });
     assert.equal(doc.settings.theme, "dark");
+    assert.equal(doc.settings.syncEnabled, undefined);
+    assert.equal(doc.settings.syncTransport, undefined);
+    assert.equal(doc.settings.syncServerUrl, undefined);
+    assert.equal(doc.settings.syncInterval, undefined);
     assert.equal(doc.settings.syncServerToken, undefined);
     assert.deepEqual(doc.settingsMeta.theme, { updatedAt: 3000, updatedBy: "dev_a" });
     assert.equal(doc.settingsMeta.syncServerToken, undefined);

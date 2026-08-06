@@ -164,9 +164,8 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // token via query for simple local testing
-  const queryToken = url.searchParams.get("token") || "";
-  const authOk = checkAuth(req) || (TOKEN && queryToken === TOKEN);
+  // Token 只允许通过 Authorization 请求头传输，避免出现在 URL、日志和代理记录中。
+  const authOk = checkAuth(req);
   if (url.pathname.startsWith("/v1/") && !authOk) {
     unauthorized(res);
     return;

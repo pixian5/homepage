@@ -48,6 +48,23 @@ sudo scripts/setup-sync-server.sh
 
 远程服务器应使用 HTTPS 反向代理，Node 服务只监听内网端口。例如 Nginx/Caddy 负责 TLS，Node 服务监听 `127.0.0.1:8787`。Token 只通过 `Authorization: Bearer` 请求头发送，不写入仓库或 URL。
 
+## Caddy 独立端口部署
+
+如果服务器的 `80/443` 已被其他代理程序占用，可以让 Caddy 单独监听 `58443`，不影响现有服务。Caddy 使用 ACME 证书副本，反向代理到 Homepage：
+
+```caddyfile
+{
+    auto_https off
+}
+
+:58443 {
+    tls /etc/caddy/certs/sbbz.tech.fullchain.cer /etc/caddy/certs/sbbz.tech.key
+    reverse_proxy 127.0.0.1:8787
+}
+```
+
+证书目录和 Caddy 配置由服务器部署脚本之外的运维步骤管理。DNS 应将 `sf.sbbz.tech` 的 A 记录指向服务器公网 IP；扩展中的服务器 URL 使用 `https://sf.sbbz.tech:58443`。现有 `bz/xbz` 继续保留在 `80/443`。
+
 服务器数据文件必须纳入独立备份。恢复备份前应停止 Node 进程，避免并发覆盖。
 
 ## 运行语义

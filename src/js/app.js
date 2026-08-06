@@ -43,6 +43,7 @@ import {
 import { exportSyncBundle, importSyncBundle } from "./sync_bundle.js";
 import {
   flushOutbox,
+  getPendingConflict,
   getSyncStatus,
   initSyncEngine,
   onSyncEnabledChanged,

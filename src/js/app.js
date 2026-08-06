@@ -3531,6 +3531,7 @@ function openSettingsModal() {
   $("btnSyncNow")?.addEventListener("click", async () => {
     const btn = $("btnSyncNow");
     if (btn) btn.disabled = true;
+    toast(t("settings.sync.state.syncing"));
     try {
       // 立即同步前先把表单里的同步配置写入 data（避免只改了 UI 未保存）
       const prevEnabled = !!data.settings.syncEnabled;

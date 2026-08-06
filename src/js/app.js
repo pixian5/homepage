@@ -1450,18 +1450,24 @@ function resetSettingsClockBaseline(source = data) {
 }
 
 async function stampSettingsClockBeforePersist() {
-  if (!data?.settings) return [];
-  if (!_settingsClockBaseline) {
-    resetSettingsClockBaseline(data);
+  try {
+    if (!data?.settings) return [];
+    if (!_settingsClockBaseline) {
+      resetSettingsClockBaseline(data);
+      return [];
+    }
+    const deviceId = await getOrCreateDeviceId();
+    const changed = stampChangedSyncSettings(data, _settingsClockBaseline, { deviceId });
+    if (changed.length) {
+      debugLog("settings_clock", { changed });
+      resetSettingsClockBaseline(data);
+    }
+    return changed;
+  } catch (e) {
+    // 设置时钟只服务于跨设备合并，不能阻塞本地保存或新标签页启动。
+    console.warn("settings clock skipped", e);
     return [];
   }
-  const deviceId = await getOrCreateDeviceId();
-  const changed = stampChangedSyncSettings(data, _settingsClockBaseline, { deviceId });
-  if (changed.length) {
-    debugLog("settings_clock", { changed });
-    resetSettingsClockBaseline(data);
-  }
-  return changed;
 }
 
 /**

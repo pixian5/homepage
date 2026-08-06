@@ -34,7 +34,7 @@ PORT=8787 TOKEN="$SYNC_TOKEN" DATA_FILE=/var/lib/homepage-sync/state.json npm ru
 在服务器上从仓库执行：
 
 ```bash
-sudo scripts/setup-sync-server.sh --token '请替换为随机长密钥'
+sudo scripts/setup-sync-server.sh
 ```
 
 脚本会创建：
@@ -44,7 +44,7 @@ sudo scripts/setup-sync-server.sh --token '请替换为随机长密钥'
 - `/etc/homepage-sync/homepage-sync.env`：权限 `600` 的 Token 和运行参数
 - `/etc/systemd/system/homepage-sync.service`：自动重启和开机启动
 
-不希望安装时启动服务可加 `--no-start`；只查看计划可用 `--dry-run`。更新服务代码时重新执行同一脚本即可，数据目录和 Token 会保留。
+脚本默认使用 Token `qqq77777`，也可以通过 `--token` 或 `SYNC_TOKEN` 覆盖。不希望安装时启动服务可加 `--no-start`；只查看计划可用 `--dry-run`。更新服务代码时重新执行同一脚本即可，数据目录会保留。
 
 远程服务器应使用 HTTPS 反向代理，Node 服务只监听内网端口。例如 Nginx/Caddy 负责 TLS，Node 服务监听 `127.0.0.1:8787`。Token 只通过 `Authorization: Bearer` 请求头发送，不写入仓库或 URL。
 

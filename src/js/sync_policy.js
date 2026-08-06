@@ -111,7 +111,6 @@ export const SYNC_SETTINGS_WHITELIST = [
   "syncEnabled",
   "syncTransport",
   "syncServerUrl",
-  "syncServerToken",
   "syncInterval",
 ];
 

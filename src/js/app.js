@@ -56,6 +56,7 @@ import { httpHealth, httpPullState } from "./sync_http_transport.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
 import { normalizeSyncInterval, SYNC_INTERVAL_OPTIONS, syncBytesBudgetLevel } from "./sync_policy.js";
 import { estimateSyncProjectionBytes } from "./sync_projection.js";
+import { stampChangedSyncSettings } from "./sync_settings.js";
 import { attachVisitTracking, getVisitHistoryItems, recordVisit } from "./visit-history.js";
 
 const $ = (id) => document.getElementById(id);
@@ -357,7 +358,8 @@ const I18N = {
     "settings.sync.testServer": "测试连接",
     "settings.sync.testOk": "服务器可用",
     "settings.sync.testFail": "连接失败：{reason}",
-    "settings.sync.unauthorized": "鉴权失败：当前服务器启用了 TOKEN，扩展 Token 需与之一致；若希望留空，请用不带 TOKEN 的方式启动同步服务",
+    "settings.sync.unauthorized":
+      "鉴权失败：当前服务器启用了 TOKEN，扩展 Token 需与之一致；若希望留空，请用不带 TOKEN 的方式启动同步服务",
     "settings.sync.now": "立即同步",
     "settings.sync.nowOk": "同步完成",
     "settings.sync.state.off": "未启用",
@@ -542,7 +544,8 @@ const I18N = {
     "settings.sync.testServer": "測試連線",
     "settings.sync.testOk": "伺服器可用",
     "settings.sync.testFail": "連線失敗：{reason}",
-    "settings.sync.unauthorized": "鑑權失敗：目前伺服器啟用了 TOKEN，擴充 Token 需一致；若要留空，請用不帶 TOKEN 的方式啟動同步服務",
+    "settings.sync.unauthorized":
+      "鑑權失敗：目前伺服器啟用了 TOKEN，擴充 Token 需一致；若要留空，請用不帶 TOKEN 的方式啟動同步服務",
     "settings.sync.now": "立即同步",
     "settings.sync.nowOk": "同步完成",
     "settings.sync.state.off": "未啟用",
@@ -680,8 +683,7 @@ const I18N = {
     "settings.sync.testServer": "Test connection",
     "settings.sync.testOk": "Server OK",
     "settings.sync.testFail": "Connection failed: {reason}",
-    "settings.sync.unauthorized":
-      "Auth failed: server has TOKEN set; leave empty only if server runs without TOKEN",
+    "settings.sync.unauthorized": "Auth failed: server has TOKEN set; leave empty only if server runs without TOKEN",
     "settings.sync.now": "Sync now",
     "settings.sync.nowOk": "Sync complete",
     "settings.sync.state.off": "Off",
@@ -698,8 +700,7 @@ const I18N = {
     "settings.sync.conflict.done": "Conflict resolved",
     "settings.sync.exportFile": "Export to file",
     "settings.sync.importFile": "Import from file",
-    "settings.sync.safariHint":
-      "Safari: browser-account sync is limited; prefer a sync bundle between devices.",
+    "settings.sync.safariHint": "Safari: browser-account sync is limited; prefer a sync bundle between devices.",
     "settings.openMode": "Link Open Mode",
     "settings.maxBackups": "Max backups (0 = disabled)",
     "settings.iconRetry": "Retry failed icons (daily)",
@@ -1081,6 +1082,7 @@ async function reloadFromStorage() {
       console.warn("reload pullNow failed", e);
     }
   }
+  resetSettingsClockBaseline(data);
   const newTs = Number(data?.lastUpdated || 0);
   // merge 提示由 engine onMerged 负责；此处仅非 sync 粗提示
   if (!wasSync && newTs > prevLocalTs && prevLocalTs > 0 && !prevPending) {
@@ -1472,6 +1474,26 @@ function ensureAutoBackupBeforePersist() {
 
 /** 串行化 persist，避免多路 fire-and-forget 互相覆盖 */
 let _persistChain = Promise.resolve();
+let _settingsClockBaseline = null;
+
+function resetSettingsClockBaseline(source = data) {
+  _settingsClockBaseline = deepClone(source?.settings || {});
+}
+
+async function stampSettingsClockBeforePersist() {
+  if (!data?.settings) return [];
+  if (!_settingsClockBaseline) {
+    resetSettingsClockBaseline(data);
+    return [];
+  }
+  const deviceId = await getOrCreateDeviceId();
+  const changed = stampChangedSyncSettings(data, _settingsClockBaseline, { deviceId });
+  if (changed.length) {
+    debugLog("settings_clock", { changed });
+    resetSettingsClockBaseline(data);
+  }
+  return changed;
+}
 
 /**
  * 不需要等待结果的保存入口：吞掉异常，避免 unhandledrejection 触发全页红条。
@@ -1499,6 +1521,7 @@ async function persistData() {
       });
       // 本地权威：始终先写 local；同步改走投影分片 engine
       const changed = dedupeData(data);
+      const settingsClockChanged = await stampSettingsClockBeforePersist();
       let warning = null;
       let err = null;
       const err1 = await saveData(data, false);
@@ -1514,6 +1537,9 @@ async function persistData() {
       }
       if (changed) {
         debugLog("persist_dedupe", { changed });
+      }
+      if (settingsClockChanged.length) {
+        debugLog("persist_settings_clock", { settingsClockChanged });
       }
       if (shouldDebugPersist()) {
         const verify = await loadDataFromArea(false);
@@ -3578,7 +3604,8 @@ function openSettingsModal() {
         await onSyncEnabledChanged(true);
         const st = getSyncStatus();
         if (String(st.lastError || "").includes("unauthorized")) toast(t("settings.sync.unauthorized"), "error");
-        else if (st.status === "error" && st.lastError) toast(t("settings.sync.testFail", { reason: st.lastError }), "error");
+        else if (st.status === "error" && st.lastError)
+          toast(t("settings.sync.testFail", { reason: st.lastError }), "error");
         else if (st.status === "quota") toast(t("settings.sync.state.quota"), "warning");
         else toast(t("settings.sync.nowOk"));
       } else {
@@ -3657,6 +3684,7 @@ function openSettingsModal() {
       pushBackup();
       data = result.state;
       if (!data.settings) data.settings = {};
+      resetSettingsClockBaseline(data);
       // 保持用户当前同步开关
       await persistData();
       render();
@@ -3704,6 +3732,7 @@ function openSettingsModal() {
       pushBackup();
       data = result.state;
       if (!data.settings) data.settings = {};
+      resetSettingsClockBaseline(data);
       await persistData();
       render();
       processPendingIconFetches();
@@ -4800,6 +4829,7 @@ async function init() {
     onMerged: async (_next, stats) => {
       // merge 成功几乎总会 applied；仅当远端 revision 推进，或用户选了「用云端」才提示
       if (stats?.applied) {
+        resetSettingsClockBaseline(data);
         if (stats.remoteNewer || stats.choice === "remote") {
           toast(t("toast.syncOverwritten"), "warning");
         }
@@ -4845,6 +4875,7 @@ async function init() {
     await saveData(data, false);
   }
   syncBackupBaseline(data);
+  resetSettingsClockBaseline(data);
   debugLog("init_ready", {
     groups: data.groups?.length || 0,
     nodes: Object.keys(data.nodes || {}).length,

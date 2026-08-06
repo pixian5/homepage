@@ -9,6 +9,7 @@ import {
   SYNC_SETTINGS_WHITELIST,
   SYNC_TITLE_MAX_CHARS,
 } from "./sync_policy.js";
+import { normalizeSettingsClock, projectSettingsClock } from "./sync_settings.js";
 
 function projAsNum(v, fallback = 0) {
   const n = Number(v);
@@ -189,6 +190,7 @@ export function toSyncDocument(data, ctx) {
     writtenAt: now,
     contentHash: "",
     settings,
+    settingsMeta: projectSettingsClock(data, settings),
     groups,
     nodes,
     placements,
@@ -320,6 +322,7 @@ export function syncDocumentToHomepageShape(doc) {
       docId: doc?.docId,
       revision: projAsNum(doc?.revision),
       contentHash: doc?.contentHash,
+      settingsClock: normalizeSettingsClock(doc?.settingsMeta),
     },
   };
 }

@@ -16,13 +16,13 @@ import {
 } from "./sync_outbox.js";
 import { packSyncDocument, SYNC_META_KEY, syncShardKeys, unpackSyncDocument } from "./sync_pack.js";
 import {
+  normalizeSyncInterval,
   SYNC_OUTBOX_MAX_ATTEMPTS,
   SYNC_PULL_DEBOUNCE_MS,
   SYNC_PUSH_DEBOUNCE_MS,
   SYNC_REVISION_RETRY,
   SYNC_SHARD_KEY_PREFIX,
   SYNC_STATE_KEY,
-  normalizeSyncInterval,
   syncBytesBudgetLevel,
   syncIntervalToMs,
 } from "./sync_policy.js";

@@ -107,8 +107,7 @@ private extension ViewController {
             return
         }
 
-        NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Safari.app"))
-        showManualInstructionsAlert()
+        NSApp.terminate(self)
     }
 
     @discardableResult
@@ -122,12 +121,5 @@ private extension ViewController {
         return error == nil
     }
 
-    func showManualInstructionsAlert() {
-        let alert = NSAlert()
-        alert.messageText = "请手动打开 Safari 扩展设置"
-        alert.informativeText = "如果按钮没有自动跳转，请打开 Safari，然后进入“设置 -> 扩展”，启用“我的首页”。"
-        alert.addButton(withTitle: "知道了")
-        alert.runModal()
-    }
 }
 #endif

@@ -6,6 +6,7 @@
 import { dedupeData } from "./data-utils.js";
 import { deepClone } from "./storage.js";
 import { syncDocumentToHomepageShape, toSyncDocument } from "./sync_projection.js";
+import { mergeSettingsByClock, normalizeSettingsClock } from "./sync_settings.js";
 
 function mergeAsNum(v, fallback = 0) {
   const n = Number(v);
@@ -321,16 +322,17 @@ export function mergeHomepage(localData, remoteDoc, ctx = {}) {
     }
   }
 
-  // settings：白名单已在投影中；简单 key 级 LWW 用 remote.writtenAt vs local.lastUpdated
+  // settings：使用 per-key clock 合并，避免远端书签更新携带旧设置覆盖本机较新设置。
   const localSettings = { ...(localData?.settings || {}) };
   const remoteSettings = { ...(remoteShape.settings || {}) };
   const remoteWritten = mergeAsNum(remoteDoc.writtenAt);
   const localWritten = mergeAsNum(localData?.lastUpdated);
-  const mergedSettings = { ...localSettings };
-  for (const [k, v] of Object.entries(remoteSettings)) {
-    if (remoteWritten >= localWritten) mergedSettings[k] = v;
-    else if (mergedSettings[k] === undefined) mergedSettings[k] = v;
-  }
+  const { settings: mergedSettings, settingsClock } = mergeSettingsByClock(
+    localSettings,
+    remoteSettings,
+    localData?._syncMeta?.settingsClock,
+    remoteShape?._syncMeta?.settingsClock,
+  );
   // syncEnabled 以本地开关为准（避免远端关同步锁死）
   if (Object.hasOwn(localSettings, "syncEnabled")) {
     mergedSettings.syncEnabled = localSettings.syncEnabled;
@@ -348,6 +350,13 @@ export function mergeHomepage(localData, remoteDoc, ctx = {}) {
     nodes: visibleNodes,
     backups: Array.isArray(localData?.backups) ? deepClone(localData.backups) : [],
     lastUpdated: Math.max(localWritten, remoteWritten, now),
+    _syncMeta: {
+      ...(localData?._syncMeta && typeof localData._syncMeta === "object" ? deepClone(localData._syncMeta) : {}),
+      docId: remoteDoc.docId,
+      revision: mergeAsNum(remoteDoc.revision),
+      contentHash: remoteDoc.contentHash,
+      settingsClock: normalizeSettingsClock(settingsClock),
+    },
   };
 
   // 安全闸门：本地未删除的活跃 id 必须仍在

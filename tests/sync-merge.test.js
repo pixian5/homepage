@@ -3,7 +3,12 @@ import { describe, it } from "node:test";
 import { exportSyncBundle, importSyncBundle } from "../src/js/sync_bundle.js";
 import { _setDeviceIdForTests, createDocId } from "../src/js/sync_ids.js";
 import { mergeHomepage, mergeNode, mergePlacements, newerField } from "../src/js/sync_merge.js";
-import { SYNC_TOTAL_SOFT_BYTES, normalizeSyncInterval, syncBytesBudgetLevel, syncIntervalToMs } from "../src/js/sync_policy.js";
+import {
+  normalizeSyncInterval,
+  SYNC_TOTAL_SOFT_BYTES,
+  syncBytesBudgetLevel,
+  syncIntervalToMs,
+} from "../src/js/sync_policy.js";
 import { estimateSyncProjectionBytes, hashSyncDocument, toSyncDocument } from "../src/js/sync_projection.js";
 
 function baseData(overrides = {}) {
@@ -95,6 +100,30 @@ describe("toSyncDocument", () => {
     assert.equal(doc.settings.backgroundCustom, "");
     assert.ok(doc.placements.some((p) => p.nodeId === "n1" && p.parentKind === "group"));
     assert.equal(hashSyncDocument(doc), doc.contentHash);
+  });
+
+  it("projects settings clocks but never projects sync server token", () => {
+    const data = baseData({
+      settings: {
+        language: "zh-CN",
+        syncEnabled: true,
+        syncTransport: "http",
+        syncServerUrl: "https://sync.example",
+        syncServerToken: "secret-token",
+        theme: "dark",
+      },
+      _syncMeta: {
+        settingsClock: {
+          theme: { updatedAt: 3000, updatedBy: "dev_a" },
+          syncServerToken: { updatedAt: 4000, updatedBy: "dev_a" },
+        },
+      },
+    });
+    const doc = toSyncDocument(data, { deviceId: "dev_a", docId: "doc1", revision: 1 });
+    assert.equal(doc.settings.theme, "dark");
+    assert.equal(doc.settings.syncServerToken, undefined);
+    assert.deepEqual(doc.settingsMeta.theme, { updatedAt: 3000, updatedBy: "dev_a" });
+    assert.equal(doc.settingsMeta.syncServerToken, undefined);
   });
 
   it("estimateSyncProjectionBytes returns positive size", () => {
@@ -208,6 +237,94 @@ describe("mergeHomepage", () => {
     const result = mergeHomepage(local, remote, { deviceId: "dev_a" });
     assert.equal(result.ok, true);
     assert.equal(result.state.nodes.n1.title, "RemoteTitle");
+  });
+
+  it("remote bookmark update does not overwrite a newer local setting", () => {
+    const local = baseData({
+      settings: { language: "zh-CN", syncEnabled: true, showSearch: true, theme: "dark" },
+      _syncMeta: {
+        settingsClock: {
+          theme: { updatedAt: 3000, updatedBy: "dev_a" },
+        },
+      },
+    });
+    const remoteData = baseData({
+      settings: { language: "zh-CN", syncEnabled: true, showSearch: true, theme: "light" },
+      _syncMeta: {
+        settingsClock: {
+          theme: { updatedAt: 1000, updatedBy: "dev_b" },
+        },
+      },
+      nodes: {
+        n1: {
+          id: "n1",
+          type: "item",
+          title: "RemoteTitle",
+          url: "https://a.example/",
+          iconType: "auto",
+          iconData: "",
+          color: "",
+          updatedAt: 5000,
+          titleUpdatedAt: 5000,
+          updatedBy: "dev_b",
+          createdAt: 1000,
+        },
+      },
+      lastUpdated: 5000,
+    });
+    const remote = toSyncDocument(remoteData, { deviceId: "dev_b", docId: "doc1", revision: 5, writtenAt: 5000 });
+    const result = mergeHomepage(local, remote, { deviceId: "dev_a" });
+    assert.equal(result.ok, true);
+    assert.equal(result.state.nodes.n1.title, "RemoteTitle");
+    assert.equal(result.state.settings.theme, "dark");
+    assert.deepEqual(result.state._syncMeta.settingsClock.theme, { updatedAt: 3000, updatedBy: "dev_a" });
+  });
+
+  it("newer remote setting clock wins only for that setting", () => {
+    const local = baseData({
+      settings: { language: "zh-CN", syncEnabled: true, showSearch: true, theme: "dark", fontSize: 16 },
+      _syncMeta: {
+        settingsClock: {
+          theme: { updatedAt: 1000, updatedBy: "dev_a" },
+          fontSize: { updatedAt: 4000, updatedBy: "dev_a" },
+        },
+      },
+    });
+    const remoteData = baseData({
+      settings: { language: "zh-CN", syncEnabled: true, showSearch: true, theme: "light", fontSize: 12 },
+      _syncMeta: {
+        settingsClock: {
+          theme: { updatedAt: 5000, updatedBy: "dev_b" },
+          fontSize: { updatedAt: 1000, updatedBy: "dev_b" },
+        },
+      },
+      lastUpdated: 5000,
+    });
+    const remote = toSyncDocument(remoteData, { deviceId: "dev_b", docId: "doc1", revision: 6, writtenAt: 5000 });
+    const result = mergeHomepage(local, remote, { deviceId: "dev_a" });
+    assert.equal(result.ok, true);
+    assert.equal(result.state.settings.theme, "light");
+    assert.equal(result.state.settings.fontSize, 16);
+  });
+
+  it("legacy remote settings without clocks only fill missing keys", () => {
+    const local = baseData({
+      settings: { language: "zh-CN", syncEnabled: true, showSearch: true, theme: "dark" },
+      _syncMeta: {
+        settingsClock: {
+          theme: { updatedAt: 3000, updatedBy: "dev_a" },
+        },
+      },
+    });
+    const remoteData = baseData({
+      settings: { language: "zh-CN", syncEnabled: true, showSearch: false, theme: "light" },
+      lastUpdated: 8000,
+    });
+    const remote = toSyncDocument(remoteData, { deviceId: "dev_b", docId: "doc1", revision: 7, writtenAt: 8000 });
+    const result = mergeHomepage(local, remote, { deviceId: "dev_a" });
+    assert.equal(result.ok, true);
+    assert.equal(result.state.settings.theme, "dark");
+    assert.equal(result.state.settings.showSearch, true);
   });
 
   it("purged rejects older live from other side", () => {

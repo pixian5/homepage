@@ -209,7 +209,13 @@ const RECENT_LIMIT = 24;
 
 const DEFAULT_TILE_SIZE = 150;
 const DEFAULT_BASE_FONT = 13;
-const TOAST_DURATION_MS = 5000;
+const DEFAULT_TOAST_DURATION_SECONDS = 5;
+
+function getToastDurationMs() {
+  const seconds = Number(data?.settings?.toastDuration);
+  const normalized = Number.isFinite(seconds) ? Math.min(60, Math.max(1, seconds)) : DEFAULT_TOAST_DURATION_SECONDS;
+  return normalized * 1000;
+}
 const TOOLTIP_DELAY_MS = 200;
 const UNDO_TIMEOUT_MS = 10000;
 const STORAGE_RELOAD_DELAY_MS = 120;
@@ -326,6 +332,7 @@ const I18N = {
     "settings.theme.light": "浅色",
     "settings.theme.dark": "深色",
     "settings.fontSize": "字体大小",
+    "settings.toastDuration": "Toast 显示秒数",
     "settings.defaultGroup": "浏览网页时插件保存网页到分组",
     "settings.lastAddedGroup": "上次添加的分组",
     "settings.hideSidebar": "完全隐藏侧边栏",
@@ -509,6 +516,7 @@ const I18N = {
     "settings.theme.light": "淺色",
     "settings.theme.dark": "深色",
     "settings.fontSize": "字體大小",
+    "settings.toastDuration": "Toast 顯示秒數",
     "settings.defaultGroup": "瀏覽網頁時插件保存網頁到分組",
     "settings.lastAddedGroup": "上次新增的分組",
     "settings.hideSidebar": "完全隱藏側邊欄",
@@ -644,6 +652,7 @@ const I18N = {
     "settings.theme.light": "Light",
     "settings.theme.dark": "Dark",
     "settings.fontSize": "Font Size",
+    "settings.toastDuration": "Toast duration (seconds)",
     "settings.defaultGroup": "Save web pages to group from extension",
     "settings.lastAddedGroup": "Last added group",
     "settings.hideSidebar": "Hide sidebar completely",
@@ -1255,7 +1264,7 @@ function toast(message, actionLabelOrType, actionOrType, type) {
     el.appendChild(btn);
   }
   elements.toastContainer?.appendChild(el);
-  setTimeout(() => el.remove(), TOAST_DURATION_MS);
+  setTimeout(() => el.remove(), getToastDurationMs());
 }
 
 function listenForExternalToast() {
@@ -3347,6 +3356,10 @@ function openSettingsModal() {
         <span class="inline-label">${t("settings.fontSize")}</span>
         <input id="settingFontSize" type="number" min="10" max="24" class="inline-number" />
       </div>
+      <div class="row-inline">
+        <span class="inline-label">${t("settings.toastDuration")}</span>
+        <input id="settingToastDuration" type="number" min="1" max="60" step="1" class="inline-number" />
+      </div>
     </div>
 
     <div class="section">
@@ -3479,6 +3492,10 @@ function openSettingsModal() {
   $("settingKeyboard").checked = data.settings.keyboardNav;
   $("settingTheme").value = data.settings.theme || "system";
   $("settingFontSize").value = data.settings.fontSize || 13;
+  $("settingToastDuration").value = Math.min(
+    60,
+    Math.max(1, Number(data.settings.toastDuration) || DEFAULT_TOAST_DURATION_SECONDS),
+  );
   $("settingLanguage").value = currentLang();
   $("settingSync").checked = data.settings.syncEnabled;
   data.settings.syncTransport = "http";
@@ -3841,6 +3858,10 @@ function openSettingsModal() {
       data.settings.tooltipEnabled = $("settingTooltip").checked;
       data.settings.keyboardNav = $("settingKeyboard").checked;
       data.settings.fontSize = Number($("settingFontSize").value) || data.settings.fontSize;
+      data.settings.toastDuration = Math.min(
+        60,
+        Math.max(1, Math.round(Number($("settingToastDuration").value) || DEFAULT_TOAST_DURATION_SECONDS)),
+      );
       data.settings.theme = $("settingTheme").value;
       data.settings.language = normalizeLanguage($("settingLanguage").value) || detectPreferredLanguage();
       const selectedDefaultGroupId = $("settingDefaultGroupId").value;

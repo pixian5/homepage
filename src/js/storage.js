@@ -65,6 +65,7 @@ const DEFAULT_SETTINGS = {
   fixedCols: 8,
   gridDensity: "standard",
   fontSize: 13,
+  toastDuration: 5,
   tooltipEnabled: true,
   emptyHintDisabled: false,
   backgroundType: "bing",

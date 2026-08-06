@@ -111,6 +111,7 @@ describe("storage", async () => {
     assert.ok(data.groups.length > 0);
     assert.ok(data.settings.language);
     assert.equal(data.settings.syncTransport, "http");
+    assert.equal(data.settings.toastDuration, 5);
     assert.equal(typeof data.nodes, "object");
     assert.ok(Array.isArray(data.backups));
   });

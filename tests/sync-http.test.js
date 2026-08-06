@@ -98,4 +98,12 @@ describe("sync_http_transport + server", () => {
     assert.equal(res.ok, false);
     assert.equal(res.reason, "unauthorized");
   });
+
+  it("includes the endpoint in a network error", async () => {
+    const unavailable = "http://127.0.0.1:1";
+    const res = await httpHealth({ baseUrl: unavailable, token: TOKEN });
+    assert.equal(res.ok, false);
+    assert.equal(res.reason, "network_error");
+    assert.match(res.error || "", /http:\/\/127\.0\.0\.1:1\/health/);
+  });
 });

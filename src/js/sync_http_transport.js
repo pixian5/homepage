@@ -63,7 +63,8 @@ export async function httpPullState(cfg) {
     const revision = Number(body.revision || doc.revision) || 0;
     return { ok: true, doc, revision, etag };
   } catch (e) {
-    return { ok: false, reason: "network_error", error: e?.message || String(e) };
+    const detail = e?.name === "AbortError" ? "请求超时（10 秒）" : e?.message || String(e);
+    return { ok: false, reason: "network_error", error: `${detail} · ${url}` };
   }
 }
 
@@ -119,7 +120,8 @@ export async function httpPushState(cfg, doc, opts = {}) {
       etag: res.headers.get("ETag") || body.etag || "",
     };
   } catch (e) {
-    return { ok: false, reason: "network_error", error: e?.message || String(e) };
+    const detail = e?.name === "AbortError" ? "请求超时（10 秒）" : e?.message || String(e);
+    return { ok: false, reason: "network_error", error: `${detail} · ${url}` };
   }
 }
 
@@ -137,6 +139,7 @@ export async function httpHealth(cfg) {
     const body = await res.json().catch(() => ({}));
     return { ok: true, body };
   } catch (e) {
-    return { ok: false, reason: "network_error", error: e?.message || String(e) };
+    const detail = e?.name === "AbortError" ? "请求超时（10 秒）" : e?.message || String(e);
+    return { ok: false, reason: "network_error", error: `${detail} · ${joinUrl(baseUrl, "/health")}` };
   }
 }

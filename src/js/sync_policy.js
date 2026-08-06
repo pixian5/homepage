@@ -88,6 +88,7 @@ export const SYNC_SETTINGS_WHITELIST = [
   "fixedLayout",
   "fixedCols",
   "fontSize",
+  "toastDuration",
   "theme",
   "tooltipEnabled",
   "keyboardNav",

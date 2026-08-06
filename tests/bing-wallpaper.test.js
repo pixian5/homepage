@@ -47,6 +47,25 @@ describe("bing-wallpaper", async () => {
     assert.equal(result.failed, true);
   });
 
+  it("uses the extension background when page fetch is blocked", async () => {
+    global.fetch = async () => {
+      throw new Error("cors blocked");
+    };
+    global.chrome.runtime.sendMessage = (_message, callback) => {
+      callback({
+        ok: true,
+        url: "https://www.bing.com/th?id=background",
+        dataUrl: "data:image/jpeg;base64,background",
+      });
+      return undefined;
+    };
+
+    const result = await getBingWallpaper();
+    assert.equal(result.dataUrl, "data:image/jpeg;base64,background");
+    assert.equal(result.url, "https://www.bing.com/th?id=background");
+    global.chrome.runtime.sendMessage = undefined;
+  });
+
   it("fetches and caches new wallpaper on success", async () => {
     global.fetch = async (url) => {
       if (url.includes("HPImageArchive")) {

@@ -6,7 +6,10 @@ import {
   createItemNode,
   dedupeData,
   isSafeCssColor,
+  markGroupDeleted,
+  markNodeDeleted,
   moveNodeInList,
+  pruneSyncTombstones,
   repairHomepageData,
 } from "./data-utils.js";
 import {
@@ -1508,6 +1511,7 @@ async function persistData() {
       });
       // 本地权威：始终先写 local；同步改走投影分片 engine
       const changed = dedupeData(data);
+      const tombstonesPruned = pruneSyncTombstones(data);
       const settingsClockChanged = await stampSettingsClockBeforePersist();
       let warning = null;
       let err = null;
@@ -1524,6 +1528,9 @@ async function persistData() {
       }
       if (changed) {
         debugLog("persist_dedupe", { changed });
+      }
+      if (tombstonesPruned) {
+        debugLog("persist_tombstones_pruned", { tombstonesPruned });
       }
       if (settingsClockChanged.length) {
         debugLog("persist_settings_clock", { settingsClockChanged });
@@ -2162,6 +2169,7 @@ function finishTouchDrag() {
       if (next !== list) {
         if (inFolder) container.children = next;
         else container.nodes = next;
+        touchPlacementContainer(container);
         queuePersist();
         render();
       }
@@ -2315,6 +2323,7 @@ function handleDropOnTile(targetId, x, y) {
     } else {
       container.nodes = next;
     }
+    touchPlacementContainer(container);
     queuePersist();
     render();
     return;
@@ -2350,6 +2359,7 @@ function handleDropOnTile(targetId, x, y) {
       next.splice(Math.max(0, Math.min(insertIndex, next.length)), 0, folderId);
       container.nodes = next;
     }
+    touchPlacementContainer(container);
     queuePersist();
     render();
     toast(t("folder.created"));
@@ -2360,6 +2370,7 @@ function handleDropOnTile(targetId, x, y) {
   removeNodeFromLocation(sourceId);
   targetNode.children = targetNode.children || [];
   targetNode.children.push(sourceId);
+  touchPlacementContainer(targetNode);
   queuePersist();
   render();
   toast(t("folder.added"));
@@ -2375,6 +2386,7 @@ function dissolveFolder(folderId) {
     const idx = group.nodes.indexOf(folderId);
     if (idx < 0) continue;
     group.nodes.splice(idx, 1, ...children);
+    touchPlacementContainer(group);
     replaced = true;
     break;
   }
@@ -2384,6 +2396,7 @@ function dissolveFolder(folderId) {
       const idx = node.children.indexOf(folderId);
       if (idx < 0) continue;
       node.children.splice(idx, 1, ...children);
+      touchPlacementContainer(node);
       replaced = true;
       break;
     }
@@ -2391,8 +2404,9 @@ function dissolveFolder(folderId) {
   if (!replaced) {
     const group = getActiveGroup();
     group.nodes.push(...children);
+    touchPlacementContainer(group);
   }
-  delete data.nodes[folderId];
+  markNodeDeleted(data, folderId);
   queuePersist();
   render();
   toast(t("folder.dissolved"));
@@ -2400,13 +2414,28 @@ function dissolveFolder(folderId) {
 
 function removeNodeFromLocation(id) {
   for (const group of data.groups) {
-    group.nodes = group.nodes.filter((nid) => nid !== id);
+    const next = group.nodes.filter((nid) => nid !== id);
+    if (next.length !== group.nodes.length) {
+      group.nodes = next;
+      touchPlacementContainer(group);
+    }
   }
   for (const node of Object.values(data.nodes)) {
     if (node.type === "folder" && Array.isArray(node.children)) {
-      node.children = node.children.filter((nid) => nid !== id);
+      const next = node.children.filter((nid) => nid !== id);
+      if (next.length !== node.children.length) {
+        node.children = next;
+        touchPlacementContainer(node);
+      }
     }
   }
+}
+
+function touchPlacementContainer(container) {
+  if (!container || typeof container !== "object") return;
+  container.updatedAt = Date.now();
+  // 投影时为空会自动写入当前设备 ID，保证同一时间的并发变更可确定裁决。
+  container.updatedBy = "";
 }
 
 function moveGroupBefore(sourceId, targetId) {
@@ -2424,7 +2453,10 @@ function moveGroupToIndex(sourceId, index) {
   ids.splice(safeIndex, 0, sourceId);
   ids.forEach((id, idx) => {
     const group = data.groups.find((g) => g.id === id);
-    if (group) group.order = idx;
+    if (group) {
+      group.order = idx;
+      touchPlacementContainer(group);
+    }
   });
   queuePersist();
   render();
@@ -2434,6 +2466,7 @@ function renameGroup(group) {
   const name = prompt(t("group.promptName"), group.name);
   if (!name) return;
   group.name = name.trim();
+  touchPlacementContainer(group);
   queuePersist();
   render();
 }
@@ -2452,8 +2485,9 @@ function deleteGroup(group) {
   }
   for (const id of toDelete) {
     removeNodeFromLocation(id);
-    delete data.nodes[id];
+    markNodeDeleted(data, id);
   }
+  markGroupDeleted(data, group);
   data.groups = data.groups.filter((g) => g.id !== group.id);
   if (activeGroupId === group.id) activeGroupId = data.groups[0].id;
   dedupeData(data);
@@ -2492,13 +2526,7 @@ function deleteNodes(ids) {
 
   for (const id of expanded) {
     removeNodeFromLocation(id);
-    const node = data.nodes[id];
-    if (node) {
-      // 保留不可见墓碑，避免另一台设备用旧存活节点把删除操作复活。
-      const deletedAt = Date.now();
-      node.deletedAt = deletedAt;
-      node.updatedAt = deletedAt;
-    }
+    markNodeDeleted(data, id);
   }
   dedupeData(data);
 
@@ -2520,7 +2548,10 @@ function undoDelete() {
   pendingDeletion = null;
   // 先恢复节点实体
   for (const [id, node] of Object.entries(deletedNodes || {})) {
-    data.nodes[id] = node;
+    data.nodes[id] = { ...node, updatedAt: Date.now(), updatedBy: "" };
+    delete data.nodes[id].deletedAt;
+    delete data.nodes[id].purgedAt;
+    if (data._syncMeta?.nodeTombstones) delete data._syncMeta.nodeTombstones[id];
   }
   // 再按原位置回插引用（倒序插入以尽量保持相对顺序）
   const sorted = [...(placements || [])].sort((a, b) => b.index - a.index);
@@ -2532,6 +2563,7 @@ function undoDelete() {
       if (!group.nodes.includes(p.id)) {
         const idx = Math.max(0, Math.min(p.index, group.nodes.length));
         group.nodes.splice(idx, 0, p.id);
+        touchPlacementContainer(group);
       }
     } else if (p.kind === "folder") {
       const folder = data.nodes[p.folderId];
@@ -2540,6 +2572,7 @@ function undoDelete() {
       if (!folder.children.includes(p.id)) {
         const idx = Math.max(0, Math.min(p.index, folder.children.length));
         folder.children.splice(idx, 0, p.id);
+        touchPlacementContainer(folder);
       }
     }
   }
@@ -2834,9 +2867,11 @@ function openAddModal() {
 
     if (openFolderId) {
       data.nodes[openFolderId].children.push(node.id);
+      touchPlacementContainer(data.nodes[openFolderId]);
     } else {
       const targetGroup = getActiveGroup();
       targetGroup.nodes.push(node.id);
+      touchPlacementContainer(targetGroup);
       if (activeGroupId === RECENT_GROUP_ID) {
         activeGroupId = targetGroup.id;
       }
@@ -3792,6 +3827,8 @@ function openSettingsModal() {
     if (!confirm(t("confirm.clearCards"))) return;
     pushBackup();
     const preservedSettings = deepClone(data.settings || {});
+    for (const id of Object.keys(data.nodes || {})) markNodeDeleted(data, id);
+    for (const group of data.groups || []) markGroupDeleted(data, group);
     const groupId = `grp_${Date.now()}`;
     data.nodes = {};
     data.groups = [{ id: groupId, name: t("group.default"), order: 0, nodes: [] }];
@@ -4106,7 +4143,7 @@ async function openImportModal() {
           if (!node || node.type === "folder") continue;
           const safe = normalizeUrl(node.url);
           if (!safe) {
-            delete data.nodes[id];
+            markNodeDeleted(data, id);
             for (const g of data.groups || []) {
               if (Array.isArray(g.nodes)) g.nodes = g.nodes.filter((nid) => nid !== id);
             }
@@ -4221,6 +4258,7 @@ function openImportUrlModal() {
       data.nodes[node.id] = node;
       group.nodes.push(node.id);
     }
+    touchPlacementContainer(group);
     data.settings.lastActiveGroupId = group.id;
     await persistData();
     closeWithCleanup();
@@ -4269,7 +4307,7 @@ function openBackupModal() {
           if (!node || node.type === "folder") continue;
           const safe = normalizeUrl(node.url);
           if (!safe) {
-            delete restoredData.nodes[id];
+            markNodeDeleted(restoredData, id);
             for (const g of restoredData.groups || []) {
               if (Array.isArray(g.nodes)) g.nodes = g.nodes.filter((nid) => nid !== id);
             }
@@ -4798,7 +4836,10 @@ async function init() {
     setData: (next) => {
       data = next;
     },
-    saveLocal: async (next) => saveData(next, false),
+    saveLocal: async (next) => {
+      pruneSyncTombstones(next);
+      return saveData(next, false);
+    },
     createSafetySnapshot: async () => {
       try {
         pushBackup();
@@ -5284,6 +5325,7 @@ function bindEvents() {
       return;
     }
     group.nodes = next;
+    touchPlacementContainer(group);
     queuePersist();
     render();
     dragState = null;
@@ -5303,6 +5345,7 @@ function bindEvents() {
       return;
     }
     folder.children = next;
+    touchPlacementContainer(folder);
     queuePersist();
     render();
     dragState = null;

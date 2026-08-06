@@ -8,6 +8,7 @@ import {
   SYNC_ICON_DATA_MAX_CHARS,
   SYNC_SETTINGS_WHITELIST,
   SYNC_TITLE_MAX_CHARS,
+  SYNC_TOMBSTONE_TTL_MS,
 } from "./sync_policy.js";
 import { normalizeSettingsClock, projectSettingsClock } from "./sync_settings.js";
 
@@ -73,9 +74,20 @@ export function toSyncDocument(data, ctx) {
     settings.backgroundCustom = "";
   }
 
+  const tombstoneCutoff = now - SYNC_TOMBSTONE_TTL_MS;
+  const isExpiredTombstone = (value) => {
+    const at = projAsNum(value?.deletedAt || value?.purgedAt);
+    return at > 0 && at < tombstoneCutoff;
+  };
+
   const groups = [];
-  for (const g of data?.groups || []) {
+  const groupEntries = [...(data?.groups || [])];
+  for (const tombstone of data?._syncMeta?.groupTombstones || []) {
+    if (tombstone?.id && !groupEntries.some((group) => group?.id === tombstone.id)) groupEntries.push(tombstone);
+  }
+  for (const g of groupEntries) {
     if (!g?.id) continue;
+    if ((g.deletedAt || g.purgedAt) && isExpiredTombstone(g)) continue;
     if (g.deletedAt || g.purgedAt) {
       groups.push({
         id: projAsStr(g.id),
@@ -100,8 +112,13 @@ export function toSyncDocument(data, ctx) {
   const nodes = [];
   const placements = [];
 
-  for (const [id, node] of Object.entries(data?.nodes || {})) {
+  const nodeEntries = new Map(Object.entries(data?.nodes || {}));
+  for (const [id, tombstone] of Object.entries(data?._syncMeta?.nodeTombstones || {})) {
+    if (!nodeEntries.has(id)) nodeEntries.set(id, tombstone);
+  }
+  for (const [id, node] of nodeEntries) {
     if (!node || typeof node !== "object") continue;
+    if ((node.deletedAt || node.purgedAt) && isExpiredTombstone(node)) continue;
     const nid = projAsStr(id);
     const updatedAt = projAsNum(node.updatedAt, projAsNum(data?.lastUpdated, now));
     const updatedBy = projAsStr(node.updatedBy || deviceId);

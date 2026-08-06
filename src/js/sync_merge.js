@@ -299,8 +299,12 @@ export function mergeHomepage(localData, remoteDoc, ctx = {}) {
     if (n.type === "folder") n.children = [];
   }
   const activeGroups = [];
+  const mergedGroupTombstones = [];
   for (const g of groupById.values()) {
-    if (g.deletedAt || g.purgedAt) continue;
+    if (g.deletedAt || g.purgedAt) {
+      mergedGroupTombstones.push(deepClone(g));
+      continue;
+    }
     g.nodes = [];
     activeGroups.push(g);
   }
@@ -353,6 +357,7 @@ export function mergeHomepage(localData, remoteDoc, ctx = {}) {
       revision: mergeAsNum(remoteDoc.revision),
       contentHash: remoteDoc.contentHash,
       settingsClock: normalizeSettingsClock(settingsClock),
+      groupTombstones: mergedGroupTombstones,
     },
   };
 

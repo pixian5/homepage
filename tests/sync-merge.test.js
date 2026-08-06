@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { markNodeDeleted } from "../src/js/data-utils.js";
 import { exportSyncBundle, importSyncBundle } from "../src/js/sync_bundle.js";
 import { _setDeviceIdForTests, createDocId } from "../src/js/sync_ids.js";
 import { mergeHomepage, mergeNode, mergePlacements, newerField } from "../src/js/sync_merge.js";
@@ -130,6 +131,16 @@ describe("toSyncDocument", () => {
     assert.equal(doc.settingsMeta.syncServerToken, undefined);
   });
 
+  it("projects invisible group tombstones", () => {
+    const data = baseData({
+      _syncMeta: {
+        groupTombstones: [{ id: "g0", name: "Deleted", order: 0, updatedAt: 3000, deletedAt: 3000 }],
+      },
+    });
+    const doc = toSyncDocument(data, { deviceId: "dev_a", docId: "doc1", revision: 1, writtenAt: 4000 });
+    assert.ok(doc.groups.some((group) => group.id === "g0" && group.deletedAt === 3000));
+  });
+
   it("estimateSyncProjectionBytes returns positive size", () => {
     const n = estimateSyncProjectionBytes(baseData());
     assert.ok(n > 50);
@@ -240,6 +251,56 @@ describe("mergeHomepage", () => {
     assert.equal(result.ok, true);
     assert.equal(result.state.nodes.n1.deletedAt, 3000);
     assert.equal(result.state.groups[0].nodes.includes("n1"), false);
+  });
+
+  it("keeps a deleted node deleted after the receiving device syncs it back", () => {
+    const deletedOnChrome = baseData();
+    markNodeDeleted(deletedOnChrome, "n1", 3000);
+    deletedOnChrome.groups[0].nodes = [];
+    deletedOnChrome.groups[0].updatedAt = 3000;
+    const chromeDoc = toSyncDocument(deletedOnChrome, {
+      deviceId: "chrome",
+      docId: "doc1",
+      revision: 2,
+      writtenAt: 3000,
+    });
+
+    const firefoxResult = mergeHomepage(baseData(), chromeDoc, { deviceId: "firefox", now: 4000 });
+    assert.equal(firefoxResult.ok, true);
+    assert.equal(firefoxResult.state.nodes.n1.deletedAt, 3000);
+    assert.equal(firefoxResult.state.groups[0].nodes.includes("n1"), false);
+
+    const firefoxDoc = toSyncDocument(firefoxResult.state, {
+      deviceId: "firefox",
+      docId: "doc1",
+      revision: 3,
+      writtenAt: 4000,
+    });
+    assert.ok(firefoxDoc.nodes.some((node) => node.id === "n1" && node.deletedAt === 3000));
+
+    const chromeResult = mergeHomepage(deletedOnChrome, firefoxDoc, { deviceId: "chrome", now: 5000 });
+    assert.equal(chromeResult.ok, true);
+    assert.equal(chromeResult.state.nodes.n1.deletedAt, 3000);
+    assert.equal(chromeResult.state.groups[0].nodes.includes("n1"), false);
+  });
+
+  it("keeps a deleted group tombstone when the remote still has the old group", () => {
+    const local = baseData({
+      groups: [],
+      nodes: {},
+      _syncMeta: {
+        groupTombstones: [{ id: "g1", name: "默认", order: 0, updatedAt: 3000, deletedAt: 3000, nodes: [] }],
+      },
+      lastUpdated: 3000,
+    });
+    const remote = toSyncDocument(baseData(), { deviceId: "dev_b", docId: "doc1", revision: 2, writtenAt: 2000 });
+    const result = mergeHomepage(local, remote, { deviceId: "dev_a", now: 4000 });
+    assert.equal(result.ok, true);
+    assert.equal(
+      result.state.groups.some((group) => group.id === "g1"),
+      false,
+    );
+    assert.equal(result.state._syncMeta.groupTombstones[0].id, "g1");
   });
 
   it("newer title wins on same node", () => {

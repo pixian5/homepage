@@ -8,8 +8,11 @@ import {
   createItemNode,
   dedupeData,
   isSafeCssColor,
+  markGroupDeleted,
+  markNodeDeleted,
   moveNodeInList,
   pickLatestData,
+  pruneSyncTombstones,
   repairHomepageData,
 } from "../src/js/data-utils.js";
 
@@ -249,6 +252,44 @@ describe("data-utils", () => {
       };
       const ids = collectNodeSubtreeIds(data, "f1");
       assert.deepStrictEqual(new Set(ids), new Set(["f1", "f2", "n1", "n2"]));
+    });
+  });
+
+  describe("sync tombstones", () => {
+    it("moves deleted nodes and groups out of the visible data", () => {
+      const data = {
+        groups: [{ id: "g1", name: "A", nodes: ["n1"] }],
+        nodes: { n1: { id: "n1", type: "item", title: "A" } },
+      };
+      markNodeDeleted(data, "n1", 1000);
+      markGroupDeleted(data, data.groups[0], 1000);
+
+      assert.equal(data.nodes.n1, undefined);
+      assert.equal(data._syncMeta.nodeTombstones.n1.deletedAt, 1000);
+      assert.equal(data._syncMeta.groupTombstones[0].deletedAt, 1000);
+    });
+
+    it("prunes only expired tombstones", () => {
+      const now = 10_000_000_000;
+      const data = {
+        nodes: {
+          old: { id: "old", type: "item", deletedAt: now - 60 * 24 * 60 * 60 * 1000 - 1 },
+          recent: { id: "recent", type: "item", deletedAt: now - 1 },
+        },
+        _syncMeta: {
+          groupTombstones: [
+            { id: "old-group", deletedAt: now - 60 * 24 * 60 * 60 * 1000 - 1 },
+            { id: "recent-group", deletedAt: now - 1 },
+          ],
+        },
+      };
+      assert.equal(pruneSyncTombstones(data, now), true);
+      assert.equal(data.nodes.old, undefined);
+      assert.ok(data.nodes.recent);
+      assert.deepEqual(
+        data._syncMeta.groupTombstones.map((group) => group.id),
+        ["recent-group"],
+      );
     });
   });
 

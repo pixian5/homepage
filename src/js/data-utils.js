@@ -9,6 +9,7 @@
  */
 
 import { deepClone } from "./storage.js";
+import { SYNC_TOMBSTONE_TTL_MS } from "./sync_policy.js";
 
 let _itemSeq = 0;
 
@@ -165,6 +166,64 @@ export function collectNodeSubtreeIds(input, rootId) {
     }
   }
   return result;
+}
+
+function ensureSyncMeta(data) {
+  if (!data._syncMeta || typeof data._syncMeta !== "object") data._syncMeta = {};
+  return data._syncMeta;
+}
+
+/** 将节点移到不可见墓碑层，避免删除后被远端旧数据复活。 */
+export function markNodeDeleted(data, id, deletedAt = Date.now()) {
+  const node = data?.nodes?.[id] || data?._syncMeta?.nodeTombstones?.[id];
+  if (!node) return null;
+  const meta = ensureSyncMeta(data);
+  if (!meta.nodeTombstones || typeof meta.nodeTombstones !== "object") meta.nodeTombstones = {};
+  const tombstone = { ...deepClone(node), updatedAt: deletedAt, deletedAt };
+  delete data.nodes[id];
+  meta.nodeTombstones[id] = tombstone;
+  return tombstone;
+}
+
+/** 将分组移到不可见墓碑层；界面仍只使用 data.groups 中的活动分组。 */
+export function markGroupDeleted(data, group, deletedAt = Date.now()) {
+  if (!group?.id) return null;
+  const meta = ensureSyncMeta(data);
+  const list = Array.isArray(meta.groupTombstones) ? meta.groupTombstones : [];
+  const tombstone = { ...deepClone(group), nodes: [], updatedAt: deletedAt, deletedAt };
+  meta.groupTombstones = [...list.filter((item) => item?.id !== group.id), tombstone];
+  return tombstone;
+}
+
+/** 清理超过保留期的墓碑，避免长期删除操作撑爆同步额度。 */
+export function pruneSyncTombstones(data, now = Date.now()) {
+  let changed = false;
+  const cutoff = now - SYNC_TOMBSTONE_TTL_MS;
+  const isExpired = (item) =>
+    Number(item?.deletedAt || item?.purgedAt || 0) > 0 && Number(item.deletedAt || item.purgedAt) < cutoff;
+  for (const [id, node] of Object.entries(data?.nodes || {})) {
+    if ((node?.deletedAt || node?.purgedAt) && isExpired(node)) {
+      delete data.nodes[id];
+      changed = true;
+    }
+  }
+  const meta = data?._syncMeta;
+  if (meta?.nodeTombstones && typeof meta.nodeTombstones === "object") {
+    for (const [id, node] of Object.entries(meta.nodeTombstones)) {
+      if (isExpired(node)) {
+        delete meta.nodeTombstones[id];
+        changed = true;
+      }
+    }
+  }
+  if (Array.isArray(meta?.groupTombstones)) {
+    const next = meta.groupTombstones.filter((group) => !isExpired(group));
+    if (next.length !== meta.groupTombstones.length) {
+      meta.groupTombstones = next;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 /**

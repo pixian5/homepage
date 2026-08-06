@@ -17,6 +17,7 @@ const files = [
   "bing-wallpaper.js",
   "visit-history.js",
   "sync_policy.js",
+  "sync_settings.js",
   "sync_ids.js",
   "sync_projection.js",
   "sync_merge.js",

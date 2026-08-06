@@ -84,6 +84,7 @@ describe("bundle-firefox", () => {
         "bing-wallpaper.js",
         "visit-history.js",
         "sync_policy.js",
+        "sync_settings.js",
         "sync_ids.js",
         "sync_projection.js",
         "sync_merge.js",
@@ -139,6 +140,7 @@ describe("bundle-firefox", () => {
         "bing-wallpaper.js",
         "visit-history.js",
         "sync_policy.js",
+        "sync_settings.js",
         "sync_ids.js",
         "sync_projection.js",
         "sync_merge.js",
@@ -154,6 +156,7 @@ describe("bundle-firefox", () => {
     assert.ok(!output.includes("sharedNormalizeUrl"), "import alias must not survive classic bundle");
     // normalizeUrl must exist as a function from shared-utils
     assert.match(output, /function normalizeUrl\s*\(/);
+    assert.match(output, /function normalizeSettingsClock\s*\(/);
   });
 
   it("patchHtml throws when script tag missing", async () => {

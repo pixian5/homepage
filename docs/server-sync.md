@@ -13,7 +13,7 @@
 - 原子写入 JSON 状态文件
 - 可选 Bearer Token 鉴权
 
-当前没有单独的一键安装脚本。服务器只需要 Node.js，直接从项目运行即可。
+仓库提供一键创建脚本：[scripts/setup-sync-server.sh](../scripts/setup-sync-server.sh)。它只适用于 Ubuntu/systemd 服务器，不会把服务器 Token、数据文件或客户端 `dist/` 产物写入仓库。
 
 ## 本机启动
 
@@ -30,6 +30,21 @@ PORT=8787 TOKEN="$SYNC_TOKEN" DATA_FILE=/var/lib/homepage-sync/state.json npm ru
 扩展设置中填写服务器 URL 和同一个 Token，然后启用同步。
 
 ## 远程部署
+
+在服务器上从仓库执行：
+
+```bash
+sudo scripts/setup-sync-server.sh --token '请替换为随机长密钥'
+```
+
+脚本会创建：
+
+- `/opt/homepage-sync/sync-server.mjs`：服务代码
+- `/var/lib/homepage-sync/homepage-sync-state.json`：同步数据
+- `/etc/homepage-sync/homepage-sync.env`：权限 `600` 的 Token 和运行参数
+- `/etc/systemd/system/homepage-sync.service`：自动重启和开机启动
+
+不希望安装时启动服务可加 `--no-start`；只查看计划可用 `--dry-run`。更新服务代码时重新执行同一脚本即可，数据目录和 Token 会保留。
 
 远程服务器应使用 HTTPS 反向代理，Node 服务只监听内网端口。例如 Nginx/Caddy 负责 TLS，Node 服务监听 `127.0.0.1:8787`。Token 只通过 `Authorization: Bearer` 请求头发送，不写入仓库或 URL。
 

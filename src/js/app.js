@@ -42,6 +42,7 @@ import {
 } from "./storage.js";
 import { exportSyncBundle, importSyncBundle } from "./sync_bundle.js";
 import {
+  cancelScheduledPush,
   flushOutbox,
   getPendingConflict,
   getSyncStatus,
@@ -3567,6 +3568,8 @@ function openSettingsModal() {
       }
       // 落盘配置（仅 local），再触发同步
       await persistData();
+      // persistData 的变更防抖与下面的手动 pull + push 是同一次操作，只保留后者。
+      cancelScheduledPush();
       // 间隔可能刚在表单里改过
       refreshSyncInterval();
       const serverChanged = prevUrl !== cfg.url || prevToken !== cfg.token || prevEnabled !== cfg.enabled;
@@ -3879,15 +3882,8 @@ function openSettingsModal() {
       data.settings.syncServerToken = ($("settingSyncServerToken")?.value || "").trim();
       const serverChanged = prevUrl !== data.settings.syncServerUrl || prevToken !== data.settings.syncServerToken;
       const intervalChanged = prevInterval !== data.settings.syncInterval;
-      if (prevSyncEnabled !== data.settings.syncEnabled || (data.settings.syncEnabled && serverChanged)) {
-        void onSyncEnabledChanged(data.settings.syncEnabled);
-      } else if (data.settings.syncEnabled && intervalChanged) {
-        refreshSyncInterval();
-      }
-      // 间隔/同步开关变更后刷新状态行，避免「点了没反应」
-      if (intervalChanged || prevSyncEnabled !== data.settings.syncEnabled) {
-        void refreshSyncStatusLine();
-      }
+      const connectionChanged =
+        prevSyncEnabled !== data.settings.syncEnabled || (data.settings.syncEnabled && serverChanged);
       data.settings.openMode = $("settingOpenMode").value || "current";
       const nextMaxBackups = Number($("settingBackup").value) || 0;
       if (nextMaxBackups > 0 && data.backups.length > nextMaxBackups) {
@@ -3912,6 +3908,14 @@ function openSettingsModal() {
       applyTheme();
       applyStaticI18n();
       await persistData();
+      if (connectionChanged) {
+        // persistData 会为本地写入安排防抖 push；首次同步已自行 pull + push，避免重复写远端。
+        cancelScheduledPush();
+        await onSyncEnabledChanged(data.settings.syncEnabled);
+      } else if (data.settings.syncEnabled && intervalChanged) {
+        refreshSyncInterval();
+      }
+      if (intervalChanged || connectionChanged) void refreshSyncStatusLine();
       render();
       loadBackground();
       if (toastOnSave) toast(t("settings.saved"));
@@ -4863,11 +4867,16 @@ async function init() {
   await consumeSaveToast();
   if (data.settings.syncEnabled) {
     refreshSyncInterval();
-    // 首屏已经使用本地数据渲染；网络同步放到后台，避免远端延迟阻塞新标签页打开。
+    const interval = normalizeSyncInterval(data.settings.syncInterval);
+    // 首屏已经使用本地数据渲染；周期同步开启时才后台拉取。
+    // off 表示只在手动操作或本地变更时同步，不应因打开新标签页访问云端。
     void (async () => {
       try {
-        const pull = await pullNow("init");
-        if (pull?.needPush) await pushNow("init_need_push");
+        if (interval !== "off") {
+          const pull = await pullNow("init");
+          if (pull?.needPush) await pushNow("init_need_push");
+        }
+        // 离线时由本地变更产生的待发送项仍可在打开页面后重试。
         await flushOutbox();
         render();
       } catch (e) {

@@ -462,6 +462,13 @@ export function schedulePush() {
   }, SYNC_PUSH_DEBOUNCE_MS);
 }
 
+/** 取消尚未执行的本地变更防抖推送（手动/首次同步会自行写入）。 */
+export function cancelScheduledPush() {
+  if (!_pushTimer) return;
+  clearTimeout(_pushTimer);
+  _pushTimer = null;
+}
+
 /**
  * 刷新 outbox 到期项
  */

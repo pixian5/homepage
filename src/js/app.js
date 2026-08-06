@@ -4832,15 +4832,18 @@ async function init() {
   retryFailedIconsIfDue(data.settings);
   await consumeSaveToast();
   if (data.settings.syncEnabled) {
-    try {
-      const pull = await pullNow("init");
-      if (pull?.needPush) await pushNow("init_need_push");
-      await flushOutbox();
-      render();
-    } catch (e) {
-      console.warn("init sync failed", e);
-    }
     refreshSyncInterval();
+    // 首屏已经使用本地数据渲染；网络同步放到后台，避免远端延迟阻塞新标签页打开。
+    void (async () => {
+      try {
+        const pull = await pullNow("init");
+        if (pull?.needPush) await pushNow("init_need_push");
+        await flushOutbox();
+        render();
+      } catch (e) {
+        console.warn("init sync failed", e);
+      }
+    })();
   }
 }
 

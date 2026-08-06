@@ -50,6 +50,7 @@ import {
   pullNow,
   pushNow,
   refreshSyncInterval,
+  resolveDocConflict,
   schedulePush,
 } from "./sync_engine.js";
 import { httpHealth, httpPullState } from "./sync_http_transport.js";

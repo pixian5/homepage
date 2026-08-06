@@ -49,7 +49,3 @@ npm run check
 npm test
 SKIP_BUMP=1 npm run build
 ```
-
-## 本机壁纸
-
-每日 Bing 壁纸不经过同步服务，始终缓存在当前设备的 `storage.local`。客户端会依次尝试 `www.bing.com`、`cn.bing.com` 与 `global.bing.com`；请求失败时保留已有壁纸缓存，不把该缓存同步到服务器。

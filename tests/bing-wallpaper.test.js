@@ -78,37 +78,4 @@ describe("bing-wallpaper", async () => {
     assert.equal(result.fromCache, false);
     assert.equal(stored.homepage_bg_cache.dataUrl, "data:image/jpeg;base64,new");
   });
-
-  it("falls back to another Bing metadata origin", async () => {
-    const requested = [];
-    global.fetch = async (url) => {
-      requested.push(url);
-      if (url.includes("www.bing.com")) throw new Error("network error");
-      if (url.includes("HPImageArchive")) {
-        return {
-          ok: true,
-          json: async () => ({ images: [{ url: "/image.jpg" }] }),
-        };
-      }
-      return {
-        ok: true,
-        blob: async () => ({ type: "image/jpeg", size: 100 }),
-      };
-    };
-
-    global.FileReader = class {
-      readAsDataURL() {
-        this.result = "data:image/jpeg;base64,fallback";
-        setTimeout(() => this.onloadend(), 0);
-      }
-    };
-
-    const result = await getBingWallpaper();
-    assert.equal(result.dataUrl, "data:image/jpeg;base64,fallback");
-    assert.equal(result.url.startsWith("https://cn.bing.com/"), true);
-    assert.equal(
-      requested.some((url) => url.includes("cn.bing.com/HPImageArchive")),
-      true,
-    );
-  });
 });

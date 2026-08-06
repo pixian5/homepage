@@ -1073,8 +1073,18 @@ body {
   line-height: 1.35;
 }
 .settings-sync-actions {
+  display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+.settings-sync-actions .icon-btn {
+  flex: 1 1 190px;
+  min-width: min(100%, 190px);
+  height: auto;
+  min-height: var(--control-height);
+  line-height: 1.3;
+  white-space: normal;
+  text-align: center;
 }
 
 .settings-sync-http{margin:8px 0;padding:8px 0;border-top:1px solid rgba(127,127,127,.2);}

@@ -101,6 +101,25 @@ const html = (strings, ...values) => {
   }
   return result;
 };
+
+/** 执行异步按钮操作时统一显示进行中文案，并在结束后恢复。 */
+async function runWithButtonState(button, busyLabel, operation) {
+  if (!button || button.disabled) return undefined;
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.textContent = busyLabel;
+  try {
+    return await operation();
+  } finally {
+    if (button.isConnected) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = originalLabel;
+    }
+  }
+}
+
 const rafThrottle = (fn) => {
   let scheduled = false;
   let lastArgs = null;
@@ -314,6 +333,8 @@ const I18N = {
     "settings.action.clearCards": "删除所有分组、卡片",
     "settings.action.refreshIcons": "刷新所有图标",
     "settings.action.refreshingIcons": "刷新中",
+    "settings.action.exporting": "导出中",
+    "settings.action.clearing": "清空中",
     "settings.showSearch": "显示顶部搜索框",
     "settings.searchEngine": "搜索引擎",
     "settings.searchEngine.custom": "自定义",
@@ -366,6 +387,7 @@ const I18N = {
     "settings.sync.interval.12h": "12 小时",
     "settings.sync.interval.1d": "1 天",
     "settings.sync.testServer": "测试连接",
+    "settings.sync.testing": "测试中",
     "settings.sync.testOk": "服务器可用",
     "settings.sync.testFail": "连接失败：{reason}",
     "settings.sync.unauthorized":
@@ -386,6 +408,10 @@ const I18N = {
     "settings.sync.conflict.done": "冲突已处理",
     "settings.sync.exportFile": "导出到文件",
     "settings.sync.importFile": "从文件导入",
+    "settings.sync.exporting": "导出中",
+    "settings.sync.importing": "导入中",
+    "settings.sync.exportingFile": "导出文件中",
+    "settings.sync.importingFile": "导入文件中",
     "settings.openMode": "网页打开方式",
     "settings.maxBackups": "最大备份数量（0 表示不备份）",
     "settings.iconRetry": "重新获取失败图标（每天）",
@@ -498,6 +524,8 @@ const I18N = {
     "settings.action.clearCards": "刪除所有分組、卡片",
     "settings.action.refreshIcons": "重新整理所有圖示",
     "settings.action.refreshingIcons": "重新整理中",
+    "settings.action.exporting": "匯出中",
+    "settings.action.clearing": "清空中",
     "settings.showSearch": "顯示頂部搜尋框",
     "settings.searchEngine": "搜尋引擎",
     "settings.searchEngine.custom": "自訂",
@@ -550,6 +578,7 @@ const I18N = {
     "settings.sync.interval.12h": "12 小時",
     "settings.sync.interval.1d": "1 天",
     "settings.sync.testServer": "測試連線",
+    "settings.sync.testing": "測試中",
     "settings.sync.testOk": "伺服器可用",
     "settings.sync.testFail": "連線失敗：{reason}",
     "settings.sync.unauthorized":
@@ -570,6 +599,10 @@ const I18N = {
     "settings.sync.conflict.done": "衝突已處理",
     "settings.sync.exportFile": "匯出到檔案",
     "settings.sync.importFile": "從檔案匯入",
+    "settings.sync.exporting": "匯出中",
+    "settings.sync.importing": "匯入中",
+    "settings.sync.exportingFile": "匯出檔案中",
+    "settings.sync.importingFile": "匯入檔案中",
     "settings.openMode": "網頁開啟方式",
     "settings.maxBackups": "最大備份數量（0 代表不備份）",
     "settings.iconRetry": "重新取得失敗圖示（每日）",
@@ -634,6 +667,8 @@ const I18N = {
     "settings.action.clearCards": "Delete All Groups/Cards",
     "settings.action.refreshIcons": "Refresh All Icons",
     "settings.action.refreshingIcons": "Refreshing…",
+    "settings.action.exporting": "Exporting…",
+    "settings.action.clearing": "Clearing…",
     "settings.showSearch": "Show Top Search",
     "settings.searchEngine": "Search Engine",
     "settings.searchEngine.custom": "Custom",
@@ -687,6 +722,7 @@ const I18N = {
     "settings.sync.interval.12h": "12 hours",
     "settings.sync.interval.1d": "1 day",
     "settings.sync.testServer": "Test connection",
+    "settings.sync.testing": "Testing…",
     "settings.sync.testOk": "Server OK",
     "settings.sync.testFail": "Connection failed: {reason}",
     "settings.sync.unauthorized": "Auth failed: server has TOKEN set; leave empty only if server runs without TOKEN",
@@ -706,6 +742,10 @@ const I18N = {
     "settings.sync.conflict.done": "Conflict resolved",
     "settings.sync.exportFile": "Export to file",
     "settings.sync.importFile": "Import from file",
+    "settings.sync.exporting": "Exporting…",
+    "settings.sync.importing": "Importing…",
+    "settings.sync.exportingFile": "Exporting file…",
+    "settings.sync.importingFile": "Importing file…",
     "settings.openMode": "Link Open Mode",
     "settings.maxBackups": "Max backups (0 = disabled)",
     "settings.iconRetry": "Retry failed icons (daily)",
@@ -3548,48 +3588,59 @@ function openSettingsModal() {
   const tokenInput = $("settingSyncServerToken");
   if (tokenInput) tokenInput.value = data.settings.syncServerToken || "";
   $("btnSyncTestServer")?.addEventListener("click", async () => {
-    const cfg = applySyncSettingsFromForm();
-    const baseUrl = cfg.url;
-    const token = cfg.token;
-    if (!baseUrl) {
-      toast(t("settings.sync.testFail", { reason: "no_url" }), "error");
-      return;
-    }
-    // 先 health（可达性 + 是否需要鉴权），再 pull state（404 表示空库也算鉴权通过）
-    const health = await httpHealth({ baseUrl, token });
-    if (!health.ok && health.reason === "network_error") {
-      toast(
-        t("settings.sync.testFail", {
-          reason: `network_error · ${health.error || "服务未启动？"}`,
-        }),
-        "error",
-      );
-      return;
-    }
-    const pull = await httpPullState({ baseUrl, token });
-    if (pull.reason === "unauthorized") {
-      const need = health?.body?.authRequired === true;
-      toast(
-        need || !token
-          ? t("settings.sync.unauthorized")
-          : t("settings.sync.testFail", { reason: "unauthorized · Token 不正确" }),
-        "error",
-      );
-      return;
-    }
-    if (pull.ok || pull.reason === "no_remote") {
-      toast(t("settings.sync.testOk"));
-      return;
-    }
-    const detail = [pull.reason, pull.error, pull.status != null ? `HTTP ${pull.status}` : ""]
-      .filter(Boolean)
-      .join(" · ");
-    toast(t("settings.sync.testFail", { reason: detail || health.reason || "error" }), "error");
+    const btn = $("btnSyncTestServer");
+    await runWithButtonState(btn, t("settings.sync.testing"), async () => {
+      const cfg = applySyncSettingsFromForm();
+      const baseUrl = cfg.url;
+      const token = cfg.token;
+      if (!baseUrl) {
+        toast(t("settings.sync.testFail", { reason: "no_url" }), "error");
+        return;
+      }
+      // 先 health（可达性 + 是否需要鉴权），再 pull state（404 表示空库也算鉴权通过）
+      const health = await httpHealth({ baseUrl, token });
+      if (!health.ok && health.reason === "network_error") {
+        toast(
+          t("settings.sync.testFail", {
+            reason: `network_error · ${health.error || "服务未启动？"}`,
+          }),
+          "error",
+        );
+        return;
+      }
+      const pull = await httpPullState({ baseUrl, token });
+      if (pull.reason === "unauthorized") {
+        const need = health?.body?.authRequired === true;
+        toast(
+          need || !token
+            ? t("settings.sync.unauthorized")
+            : t("settings.sync.testFail", { reason: "unauthorized · Token 不正确" }),
+          "error",
+        );
+        return;
+      }
+      if (pull.ok || pull.reason === "no_remote") {
+        toast(t("settings.sync.testOk"));
+        return;
+      }
+      const detail = [pull.reason, pull.error, pull.status != null ? `HTTP ${pull.status}` : ""]
+        .filter(Boolean)
+        .join(" · ");
+      toast(t("settings.sync.testFail", { reason: detail || health.reason || "error" }), "error");
+    }).catch((e) => {
+      console.warn("sync server test failed", e);
+      toast(t("settings.sync.testFail", { reason: e?.message || "error" }), "error");
+    });
   });
   void refreshSyncStatusLine();
   $("btnSyncNow")?.addEventListener("click", async () => {
     const btn = $("btnSyncNow");
-    if (btn) btn.disabled = true;
+    const originalLabel = btn?.textContent || t("settings.sync.now");
+    if (btn) {
+      btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
+      btn.textContent = t("settings.sync.state.syncing");
+    }
     toast(t("settings.sync.state.syncing"));
     try {
       // 立即同步前先把表单里的同步配置写入 data（避免只改了 UI 未保存）
@@ -3664,68 +3715,78 @@ function openSettingsModal() {
       toast(t("settings.sync.importFail", { reason: e?.message || "sync" }), "error");
     } finally {
       const live = $("btnSyncNow");
-      if (live) live.disabled = false;
+      if (live) {
+        live.disabled = false;
+        live.removeAttribute("aria-busy");
+        live.textContent = originalLabel;
+      }
     }
   });
   $("btnSyncExportBundle")?.addEventListener("click", async () => {
-    try {
-      const deviceId = await getOrCreateDeviceId();
-      const bundle = exportSyncBundle(data, {
-        deviceId,
-        docId: createDocId(),
-        platform: /firefox/i.test(navigator.userAgent)
-          ? "firefox"
-          : /safari/i.test(navigator.userAgent) && !/chrome|crios|android/i.test(navigator.userAgent)
-            ? "safari"
-            : "chrome",
-      });
-      await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
-      toast(t("settings.sync.exportOk"));
-    } catch (e) {
-      toast(t("settings.sync.importFail", { reason: e?.message || "export" }), "error");
-    }
+    await runWithButtonState($("btnSyncExportBundle"), t("settings.sync.exporting"), async () => {
+      try {
+        const deviceId = await getOrCreateDeviceId();
+        const bundle = exportSyncBundle(data, {
+          deviceId,
+          docId: createDocId(),
+          platform: /firefox/i.test(navigator.userAgent)
+            ? "firefox"
+            : /safari/i.test(navigator.userAgent) && !/chrome|crios|android/i.test(navigator.userAgent)
+              ? "safari"
+              : "chrome",
+        });
+        await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
+        toast(t("settings.sync.exportOk"));
+      } catch (e) {
+        toast(t("settings.sync.importFail", { reason: e?.message || "export" }), "error");
+      }
+    });
   });
   $("btnSyncImportBundle")?.addEventListener("click", async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      const bundle = JSON.parse(text);
-      const deviceId = await getOrCreateDeviceId();
-      const result = importSyncBundle(data, bundle, { deviceId });
-      if (!result.ok) {
-        toast(t("settings.sync.importFail", { reason: result.reason || "merge" }), "error");
-        return;
+    await runWithButtonState($("btnSyncImportBundle"), t("settings.sync.importing"), async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        const bundle = JSON.parse(text);
+        const deviceId = await getOrCreateDeviceId();
+        const result = importSyncBundle(data, bundle, { deviceId });
+        if (!result.ok) {
+          toast(t("settings.sync.importFail", { reason: result.reason || "merge" }), "error");
+          return;
+        }
+        pushBackup();
+        data = result.state;
+        if (!data.settings) data.settings = {};
+        resetSettingsClockBaseline(data);
+        // 保持用户当前同步开关
+        await persistData();
+        render();
+        processPendingIconFetches();
+        toast(t("settings.sync.importOk"));
+        void refreshSyncStatusLine();
+      } catch (e) {
+        toast(t("settings.sync.importFail", { reason: e?.message || "parse" }), "error");
       }
-      pushBackup();
-      data = result.state;
-      if (!data.settings) data.settings = {};
-      resetSettingsClockBaseline(data);
-      // 保持用户当前同步开关
-      await persistData();
-      render();
-      processPendingIconFetches();
-      toast(t("settings.sync.importOk"));
-      void refreshSyncStatusLine();
-    } catch (e) {
-      toast(t("settings.sync.importFail", { reason: e?.message || "parse" }), "error");
-    }
+    });
   });
 
   $("btnSyncResolveConflict")?.addEventListener("click", () => openSyncConflictModal());
   $("btnSyncExportFile")?.addEventListener("click", async () => {
-    try {
-      const deviceId = await getOrCreateDeviceId();
-      const st = getSyncStatus();
-      const bundle = exportSyncBundle(data, {
-        deviceId,
-        docId: st.docId || createDocId(),
-        platform: detectExtensionPlatform(),
-      });
-      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-      downloadJsonFile(`homepage-sync-${stamp}.json`, bundle);
-      toast(t("settings.sync.exportOk"));
-    } catch (e) {
-      toast(t("settings.sync.importFail", { reason: e?.message || "export" }), "error");
-    }
+    await runWithButtonState($("btnSyncExportFile"), t("settings.sync.exportingFile"), async () => {
+      try {
+        const deviceId = await getOrCreateDeviceId();
+        const st = getSyncStatus();
+        const bundle = exportSyncBundle(data, {
+          deviceId,
+          docId: st.docId || createDocId(),
+          platform: detectExtensionPlatform(),
+        });
+        const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+        downloadJsonFile(`homepage-sync-${stamp}.json`, bundle);
+        toast(t("settings.sync.exportOk"));
+      } catch (e) {
+        toast(t("settings.sync.importFail", { reason: e?.message || "export" }), "error");
+      }
+    });
   });
   $("btnSyncImportFile")?.addEventListener("click", () => {
     $("syncImportFileInput")?.click();
@@ -3734,27 +3795,29 @@ function openSettingsModal() {
     const file = e.target?.files?.[0];
     e.target.value = "";
     if (!file) return;
-    try {
-      const text = await file.text();
-      const bundle = JSON.parse(text);
-      const deviceId = await getOrCreateDeviceId();
-      const result = importSyncBundle(data, bundle, { deviceId });
-      if (!result.ok) {
-        toast(t("settings.sync.importFail", { reason: result.reason || "merge" }), "error");
-        return;
+    await runWithButtonState($("btnSyncImportFile"), t("settings.sync.importingFile"), async () => {
+      try {
+        const text = await file.text();
+        const bundle = JSON.parse(text);
+        const deviceId = await getOrCreateDeviceId();
+        const result = importSyncBundle(data, bundle, { deviceId });
+        if (!result.ok) {
+          toast(t("settings.sync.importFail", { reason: result.reason || "merge" }), "error");
+          return;
+        }
+        pushBackup();
+        data = result.state;
+        if (!data.settings) data.settings = {};
+        resetSettingsClockBaseline(data);
+        await persistData();
+        render();
+        processPendingIconFetches();
+        toast(t("settings.sync.importOk"));
+        void refreshSyncStatusLine();
+      } catch (err) {
+        toast(t("settings.sync.importFail", { reason: err?.message || "parse" }), "error");
       }
-      pushBackup();
-      data = result.state;
-      if (!data.settings) data.settings = {};
-      resetSettingsClockBaseline(data);
-      await persistData();
-      render();
-      processPendingIconFetches();
-      toast(t("settings.sync.importOk"));
-      void refreshSyncStatusLine();
-    } catch (err) {
-      toast(t("settings.sync.importFail", { reason: err?.message || "parse" }), "error");
-    }
+    });
   });
 
   $("settingOpenMode").value = data.settings.openMode || "current";
@@ -3802,48 +3865,55 @@ function openSettingsModal() {
     if (settingsOpen) openSettingsModal();
   });
 
-  $("btnExport").addEventListener("click", () => exportJsonToClipboard());
+  $("btnExport").addEventListener("click", async () => {
+    await runWithButtonState($("btnExport"), t("settings.action.exporting"), () => exportJsonToClipboard());
+  });
   $("btnImport").addEventListener("click", () => openImportModal());
   $("btnImportUrl").addEventListener("click", () => openImportUrlModal());
   $("btnBackupManage").addEventListener("click", () => openBackupModal());
   $("btnClearData").addEventListener("click", async () => {
     if (!confirm(t("confirm.clearData"))) return;
-    const keepLanguage = currentLang();
-    // 必须在重置前记下是否开过同步，否则 defaultData 会把 syncEnabled 置 false，云端清不掉
-    const prevSync = !!data?.settings?.syncEnabled;
-    await clearData(false);
-    if (prevSync) await clearData(true);
-    data = defaultData();
-    data.settings.language = keepLanguage;
-    data.settings.syncEnabled = false;
-    if (data.groups?.[0]) data.groups[0].name = t("group.default");
-    activeGroupId = data.groups[0].id;
-    await persistData();
-    closeModal();
-    render();
-    toast(t("toast.cleared"));
+    await runWithButtonState($("btnClearData"), t("settings.action.clearing"), async () => {
+      const keepLanguage = currentLang();
+      // 必须在重置前记下是否开过同步，否则 defaultData 会把 syncEnabled 置 false，云端清不掉
+      const prevSync = !!data?.settings?.syncEnabled;
+      await clearData(false);
+      if (prevSync) await clearData(true);
+      data = defaultData();
+      data.settings.language = keepLanguage;
+      data.settings.syncEnabled = false;
+      if (data.groups?.[0]) data.groups[0].name = t("group.default");
+      activeGroupId = data.groups[0].id;
+      await persistData();
+      closeModal();
+      render();
+      toast(t("toast.cleared"));
+    });
   });
   $("btnClearCards").addEventListener("click", async () => {
     if (!confirm(t("confirm.clearCards"))) return;
-    pushBackup();
-    const preservedSettings = deepClone(data.settings || {});
-    for (const id of Object.keys(data.nodes || {})) markNodeDeleted(data, id);
-    for (const group of data.groups || []) markGroupDeleted(data, group);
-    const groupId = `grp_${Date.now()}`;
-    data.nodes = {};
-    data.groups = [{ id: groupId, name: t("group.default"), order: 0, nodes: [] }];
-    data.settings = preservedSettings;
-    activeGroupId = groupId;
-    await persistData();
-    closeModal();
-    render();
-    toast(t("toast.cardsCleared"));
+    await runWithButtonState($("btnClearCards"), t("settings.action.clearing"), async () => {
+      pushBackup();
+      const preservedSettings = deepClone(data.settings || {});
+      for (const id of Object.keys(data.nodes || {})) markNodeDeleted(data, id);
+      for (const group of data.groups || []) markGroupDeleted(data, group);
+      const groupId = `grp_${Date.now()}`;
+      data.nodes = {};
+      data.groups = [{ id: groupId, name: t("group.default"), order: 0, nodes: [] }];
+      data.settings = preservedSettings;
+      activeGroupId = groupId;
+      await persistData();
+      closeModal();
+      render();
+      toast(t("toast.cardsCleared"));
+    });
   });
   $("btnRefreshIcons").addEventListener("click", async () => {
     const btn = $("btnRefreshIcons");
     if (!btn || btn.disabled) return;
     const originalLabel = t("settings.action.refreshIcons");
     btn.disabled = true;
+    btn.setAttribute("aria-busy", "true");
     btn.textContent = t("settings.action.refreshingIcons");
     try {
       await refreshAllIcons(Object.values(data.nodes || {}));
@@ -3857,6 +3927,7 @@ function openSettingsModal() {
       const live = $("btnRefreshIcons");
       if (live) {
         live.disabled = false;
+        live.removeAttribute("aria-busy");
         live.textContent = originalLabel;
       }
     }

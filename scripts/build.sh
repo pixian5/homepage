@@ -407,10 +407,13 @@ install_safari_app() {
   fi
 
   echo "[install] App copied successfully"
-  echo "[install] Launching app to register extension..."
-  open "$dest_app"
-
-  sleep 3
+  if [[ "${SAFARI_LAUNCH_AFTER_BUILD:-0}" == "1" ]]; then
+    echo "[install] Launching app to register extension..."
+    open "$dest_app"
+    sleep 3
+  else
+    echo "[install] Skip launching Safari app (set SAFARI_LAUNCH_AFTER_BUILD=1 to launch)"
+  fi
 
   # Xcode 构建时会将 build-output 里的 .app 注册到 LaunchServices，
   # 安装到 /Applications 后如果不注销源路径，Safari 扩展列表会出现重复条目。

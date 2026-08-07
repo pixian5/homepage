@@ -90,8 +90,12 @@ if [[ -n "${PROJECT_FILE}" ]]; then
   APP_PATH="${SAFARI_BUILD_DIR}/Build/Products/${SAFARI_XCODE_CONFIGURATION}/${SAFARI_APP_NAME}.app"
   if [[ -d "${APP_PATH}" ]]; then
     post_sign_safari_app "${APP_PATH}" "${SAFARI_XCODE_CONFIGURATION}"
-    open "${APP_PATH}"
-    echo "[build] launched: ${APP_PATH}"
+    if [[ "${SAFARI_LAUNCH_AFTER_BUILD:-0}" == "1" ]]; then
+      open "${APP_PATH}"
+      echo "[build] launched: ${APP_PATH}"
+    else
+      echo "[build] skip launching Safari app (set SAFARI_LAUNCH_AFTER_BUILD=1 to launch)"
+    fi
   fi
 fi
 

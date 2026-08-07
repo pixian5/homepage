@@ -30,6 +30,7 @@
 
 html {
   background: transparent;
+  min-width: 280px;
 }
 * {
   box-sizing: border-box;
@@ -40,8 +41,8 @@ body {
   font-family: "Avenir Next", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   background: var(--bg);
   color: var(--text);
-  width: 260px;
-  max-width: 100vw;
+  width: 280px;
+  min-width: 280px;
   max-height: 680px;
   overflow-y: auto;
   font-size: 13px;
@@ -77,6 +78,7 @@ body {
   text-align: left;
   cursor: pointer;
   font: inherit;
+  white-space: nowrap;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -334,9 +336,6 @@ body {
 }
 
 @media (max-width: 420px) {
-  body {
-    width: 100vw;
-  }
   .bookmark-layout {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -472,9 +472,6 @@ async function init() {
     return;
   }
   void openBookmarkSidebar(tab, data);
-  if (data?.settings?.fontSize) {
-    document.body.style.fontSize = `${data.settings.fontSize}px`;
-  }
   document.body.classList.remove("hidden");
   document.getElementById("btnOpenSidebar")?.addEventListener("click", () => {
     void openBookmarkSidebar(tab, data);

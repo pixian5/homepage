@@ -2,6 +2,7 @@
  * 扩展后台：记录最近访问（Safari 无 history API 时的回退数据源）
  * Chrome/Firefox 也加载，作为 history 的补充无害。
  */
+import { createItemNode } from "./data-utils.js";
 import { initVisitTrackingInBackground } from "./visit-history.js";
 
 const BING_API_URL = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1";
@@ -41,6 +42,34 @@ async function fetchBingWallpaper(language) {
 
 if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === "homepage_add_bookmark_to_folder") {
+      const tab = _sender?.tab;
+      const folderId = String(message.folderId || "");
+      const url = String(tab?.url || "");
+      if (!folderId || !/^https?:\/\//i.test(url)) {
+        sendResponse({ ok: false, error: "invalid_url" });
+        return false;
+      }
+      chrome.storage.local.get("homepage_data", (result) => {
+        const data = result?.homepage_data;
+        const container = data?.groups?.find((group) => group.id === folderId) || data?.nodes?.[folderId];
+        if (!data?.nodes || !container || (container.type && container.type !== "folder")) {
+          sendResponse({ ok: false, error: "no_folder" });
+          return;
+        }
+        const node = createItemNode({ url, title: tab.title || url, iconType: "auto", iconPending: true });
+        data.nodes[node.id] = node;
+        if (Array.isArray(container.nodes)) container.nodes.push(node.id);
+        else {
+          if (!Array.isArray(container.children)) container.children = [];
+          container.children.push(node.id);
+        }
+        container.updatedAt = Date.now();
+        data.lastUpdated = Date.now();
+        chrome.storage.local.set({ homepage_data: data }, () => sendResponse({ ok: !chrome.runtime.lastError }));
+      });
+      return true;
+    }
     if (message?.type === "homepage_open_bookmark") {
       const url = String(message.url || "");
       const settings = message.settings || {};

@@ -42,7 +42,10 @@
     style.textContent = `
       #${ROOT_ID}{position:fixed;inset:0;z-index:2147483646;pointer-events:none;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",sans-serif;color:#e7eef8}
       #${ROOT_ID} *{box-sizing:border-box}
-      #${ROOT_ID} .hp-side{position:fixed;top:0;bottom:0;width:min(310px,88vw);padding:12px;background:#141b26f2;border:1px solid #ffffff20;box-shadow:0 8px 32px #0006;pointer-events:auto;display:flex;flex-direction:column;gap:8px}
+      #${ROOT_ID} .hp-edge{position:fixed;top:42%;width:34px;height:72px;padding:4px 2px;background:#141b26f2;border:1px solid #ffffff25;color:#e7eef8;cursor:pointer;pointer-events:auto;writing-mode:vertical-rl;font:12px sans-serif}
+      #${ROOT_ID} .hp-edge-left{left:0;border-radius:0 7px 7px 0}#${ROOT_ID} .hp-edge-right{right:0;border-radius:7px 0 0 7px}
+      #${ROOT_ID} .hp-side{position:fixed;top:0;bottom:0;width:min(310px,88vw);padding:12px;background:#141b26f2;border:1px solid #ffffff20;box-shadow:0 8px 32px #0006;pointer-events:auto;display:none;flex-direction:column;gap:8px}
+      #${ROOT_ID} .hp-side.hp-open{display:flex}
       #${ROOT_ID} .hp-left{left:0}#${ROOT_ID} .hp-right{right:0}
       #${ROOT_ID} .hp-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:700;color:#fff;font-size:14px}
       #${ROOT_ID} .hp-close{width:26px;height:26px;border:1px solid #ffffff25;border-radius:6px;background:transparent;color:#b8c5d4;font-size:19px;line-height:1;cursor:pointer}
@@ -53,6 +56,8 @@
       #${ROOT_ID} .hp-title{font-weight:600}.hp-url,#${ROOT_ID} .hp-path,#${ROOT_ID} .hp-empty{color:#9fb0c4;font-size:11px}
       #${ROOT_ID} .hp-folders{border-top:1px solid #ffffff20;padding-top:8px;max-height:180px;overflow:auto;display:flex;flex-wrap:wrap;gap:5px}
       #${ROOT_ID} .hp-folder{width:auto;max-width:100%;padding:5px 7px;color:#cdd8e5}
+      #${ROOT_ID} .hp-add{width:100%;padding:7px;border:1px solid #ffffff25;border-radius:6px;background:#ffffff0d;color:#e7eef8;text-align:left;cursor:pointer;font:inherit}
+      #${ROOT_ID} .hp-add-folders{display:flex;flex-wrap:wrap;gap:4px;max-height:150px;overflow:auto}
       #${ROOT_ID} .hp-hidden{display:none}
     `;
     (document.head || document.documentElement).appendChild(style);
@@ -66,7 +71,7 @@
     }
   }
 
-  function render(data) {
+  function render(data, openSide = null, openAdd = false) {
     ensureStyle();
     document.getElementById(ROOT_ID)?.remove();
     const root = document.createElement("div");
@@ -87,6 +92,29 @@
         head.appendChild(close);
       }
       panel.appendChild(head);
+      if (side === "left") {
+        const add = document.createElement("button");
+        add.className = "hp-add";
+        add.textContent = "添加书签";
+        add.addEventListener("click", () => {
+          panel.querySelector(".hp-add-folders")?.classList.toggle("hp-hidden");
+        });
+        panel.appendChild(add);
+        const addFolders = document.createElement("div");
+        addFolders.className = `hp-add-folders${openAdd ? "" : " hp-hidden"}`;
+        for (const folder of folders) {
+          const folderButton = document.createElement("button");
+          folderButton.className = "hp-folder";
+          folderButton.textContent = folder.path.join(" / ");
+          folderButton.addEventListener("click", () => {
+            try {
+              api?.runtime?.sendMessage?.({ type: "homepage_add_bookmark_to_folder", folderId: folder.id });
+            } catch (_) {}
+          });
+          addFolders.appendChild(folderButton);
+        }
+        panel.appendChild(addFolders);
+      }
       const list = document.createElement("div");
       list.className = "hp-list";
       const fillList = (visibleItems) => {
@@ -124,15 +152,27 @@
         foldersBox.appendChild(button);
       }
       panel.appendChild(foldersBox);
+      if (openSide === side) panel.classList.add("hp-open");
       return panel;
     };
-    root.append(makeSide("left", false), makeSide("right", true));
+    const leftButton = document.createElement("button");
+    leftButton.className = "hp-edge hp-edge-left";
+    leftButton.textContent = "书签";
+    const rightButton = document.createElement("button");
+    rightButton.className = "hp-edge hp-edge-right";
+    rightButton.textContent = "书签";
+    const leftPanel = makeSide("left", false);
+    const rightPanel = makeSide("right", true);
+    leftButton.addEventListener("click", () => leftPanel.classList.toggle("hp-open"));
+    rightButton.addEventListener("click", () => rightPanel.classList.toggle("hp-open"));
+    root.append(leftButton, rightButton, leftPanel, rightPanel);
     document.documentElement.appendChild(root);
   }
 
   api?.runtime?.onMessage?.addListener?.((message, _sender, sendResponse) => {
-    if (message?.type !== "homepage_open_bookmark_sidebar") return false;
-    render(message.data || {});
+    if (message?.type === "homepage_open_bookmark_sidebar") render(message.data || {});
+    else if (message?.type === "homepage_open_add_bookmark_panel") render(message.data || {}, "left", true);
+    else return false;
     sendResponse?.({ ok: true });
     return true;
   });

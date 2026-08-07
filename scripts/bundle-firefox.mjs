@@ -28,7 +28,7 @@ const files = [
   "sync_engine.js",
   "app.js",
 ];
-const backgroundFiles = ["shared-utils.js", "visit-history.js", "background.js"];
+const backgroundFiles = ["shared-utils.js", "data-utils.js", "visit-history.js", "background.js"];
 
 export function stripImports(code) {
   return code.replace(/^\s*import[\s\S]*?;\s*/gm, "");

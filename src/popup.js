@@ -330,14 +330,6 @@ function renderBookmarkFolderMenu(data, tab) {
   };
   menu.replaceChildren();
   for (const folder of folders.filter((entry) => entry.depth === 0)) appendFolder(folder, menu);
-  parent.addEventListener("mouseenter", () => {
-    document.documentElement.style.minWidth = "780px";
-    document.body.style.width = "780px";
-  });
-  parent.addEventListener("mouseleave", () => {
-    document.documentElement.style.minWidth = "280px";
-    document.body.style.width = "280px";
-  });
 }
 
 /**

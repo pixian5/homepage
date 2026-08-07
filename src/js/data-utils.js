@@ -8,10 +8,136 @@
  * @typedef {import('./types.js').Settings} Settings
  */
 
-import { deepClone } from "./storage.js";
 import { SYNC_TOMBSTONE_TTL_MS } from "./sync_policy.js";
 
 let _itemSeq = 0;
+const cloneValue = (value) =>
+  typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
+
+export const ALL_BOOKMARKS_GROUP_ID = "grp_all";
+const GROUP_PROXY_FOLDER_PREFIX = "fld_group_";
+
+export function getGroupProxyFolderId(groupId) {
+  return `${GROUP_PROXY_FOLDER_PREFIX}${String(groupId || "")}`;
+}
+
+export function isAllBookmarksGroup(groupOrId) {
+  return String(typeof groupOrId === "object" ? groupOrId?.id || "" : groupOrId || "") === ALL_BOOKMARKS_GROUP_ID;
+}
+
+export function isLinkedGroupFolder(node) {
+  return !!(
+    node?.type === "folder" &&
+    node.systemGroupFolder === true &&
+    typeof node.linkedGroupId === "string" &&
+    node.linkedGroupId
+  );
+}
+
+export function getLinkedGroup(data, nodeOrId) {
+  const node = typeof nodeOrId === "string" ? data?.nodes?.[nodeOrId] : nodeOrId;
+  if (!isLinkedGroupFolder(node)) return null;
+  return (data?.groups || []).find((group) => group?.id === node.linkedGroupId && !isAllBookmarksGroup(group)) || null;
+}
+
+/**
+ * 确保固定“全部”分组及每个普通分组对应的代理文件夹存在。
+ * 代理文件夹不复制 children；运行时通过 linkedGroupId 直接读写普通分组的 nodes。
+ */
+export function ensureAllBookmarksGroup(data, name = "全部") {
+  if (!data || typeof data !== "object") return false;
+  let changed = false;
+  if (!Array.isArray(data.groups)) {
+    data.groups = [];
+    changed = true;
+  }
+  if (!data.nodes || typeof data.nodes !== "object" || Array.isArray(data.nodes)) {
+    data.nodes = {};
+    changed = true;
+  }
+
+  let allGroup = data.groups.find((group) => isAllBookmarksGroup(group));
+  if (!allGroup) {
+    allGroup = { id: ALL_BOOKMARKS_GROUP_ID, name, order: -1, nodes: [], systemAllGroup: true };
+    data.groups.unshift(allGroup);
+    changed = true;
+  }
+  if (!Array.isArray(allGroup.nodes)) {
+    allGroup.nodes = [];
+    changed = true;
+  }
+  if (allGroup.name !== name || allGroup.order !== -1 || allGroup.systemAllGroup !== true) {
+    allGroup.name = name;
+    allGroup.order = -1;
+    allGroup.systemAllGroup = true;
+    changed = true;
+  }
+
+  const ordinaryGroups = data.groups.filter((group) => group?.id && !isAllBookmarksGroup(group));
+  const validProxyIds = new Set();
+  for (const group of ordinaryGroups) {
+    const proxyId = getGroupProxyFolderId(group.id);
+    validProxyIds.add(proxyId);
+    let proxy = data.nodes[proxyId];
+    if (!proxy || !isLinkedGroupFolder(proxy)) {
+      proxy = {
+        id: proxyId,
+        type: "folder",
+        title: String(group.name || "未命名"),
+        children: [],
+        linkedGroupId: group.id,
+        systemGroupFolder: true,
+        createdAt: Number(group.createdAt || group.updatedAt || Date.now()),
+        updatedAt: Number(group.updatedAt || Date.now()),
+      };
+      data.nodes[proxyId] = proxy;
+      changed = true;
+    }
+    if (
+      proxy.title !== String(group.name || "未命名") ||
+      proxy.linkedGroupId !== group.id ||
+      proxy.systemGroupFolder !== true ||
+      !Array.isArray(proxy.children) ||
+      proxy.children.length
+    ) {
+      proxy.title = String(group.name || "未命名");
+      proxy.linkedGroupId = group.id;
+      proxy.systemGroupFolder = true;
+      proxy.children = [];
+      changed = true;
+    }
+    if (!allGroup.nodes.includes(proxyId)) {
+      allGroup.nodes.push(proxyId);
+      changed = true;
+    }
+  }
+
+  const seen = new Set();
+  const nextAllNodes = [];
+  for (const id of allGroup.nodes) {
+    if (!data.nodes[id] || seen.has(id)) {
+      changed = true;
+      continue;
+    }
+    const node = data.nodes[id];
+    if (isLinkedGroupFolder(node) && !validProxyIds.has(id)) {
+      delete data.nodes[id];
+      changed = true;
+      continue;
+    }
+    seen.add(id);
+    nextAllNodes.push(id);
+  }
+  allGroup.nodes = nextAllNodes;
+
+  for (const [id, node] of Object.entries(data.nodes)) {
+    if (isLinkedGroupFolder(node) && !validProxyIds.has(id)) {
+      delete data.nodes[id];
+      changed = true;
+    }
+  }
+  return changed;
+}
 
 /**
  * 创建普通卡片节点
@@ -179,7 +305,7 @@ export function markNodeDeleted(data, id, deletedAt = Date.now()) {
   if (!node) return null;
   const meta = ensureSyncMeta(data);
   if (!meta.nodeTombstones || typeof meta.nodeTombstones !== "object") meta.nodeTombstones = {};
-  const tombstone = { ...deepClone(node), updatedAt: deletedAt, deletedAt };
+  const tombstone = { ...cloneValue(node), updatedAt: deletedAt, deletedAt };
   delete data.nodes[id];
   meta.nodeTombstones[id] = tombstone;
   return tombstone;
@@ -190,7 +316,7 @@ export function markGroupDeleted(data, group, deletedAt = Date.now()) {
   if (!group?.id) return null;
   const meta = ensureSyncMeta(data);
   const list = Array.isArray(meta.groupTombstones) ? meta.groupTombstones : [];
-  const tombstone = { ...deepClone(group), nodes: [], updatedAt: deletedAt, deletedAt };
+  const tombstone = { ...cloneValue(group), nodes: [], updatedAt: deletedAt, deletedAt };
   meta.groupTombstones = [...list.filter((item) => item?.id !== group.id), tombstone];
   return tombstone;
 }
@@ -300,7 +426,7 @@ export function dedupeData(input) {
  * @returns {HomepageData | object}
  */
 export function cloneDataSnapshot(source) {
-  return deepClone(source || {});
+  return cloneValue(source || {});
 }
 
 /**
@@ -380,6 +506,8 @@ export function repairHomepageData(input, defaultSettings = {}) {
     validGroups.push({ ...group, id, nodes });
   }
   data.groups = validGroups;
+
+  ensureAllBookmarksGroup(data);
 
   if (typeof data.lastUpdated !== "number" || !Number.isFinite(data.lastUpdated)) {
     data.lastUpdated = Number(data.lastUpdated) || 0;

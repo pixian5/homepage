@@ -3,6 +3,8 @@
  * 分组是顶层书签文件夹，folder 节点可以继续嵌套 folder 节点。
  */
 
+import { ALL_BOOKMARKS_GROUP_ID, isLinkedGroupFolder } from "./data-utils.js";
+
 function byOrder(left, right) {
   return (
     Number(left?.order || 0) - Number(right?.order || 0) ||
@@ -23,6 +25,7 @@ export function collectBookmarkFolders(data) {
   const folders = [];
   const visited = new Set();
   const groups = [...(data?.groups || [])].filter((group) => group?.id).sort(byOrder);
+  const allGroup = groups.find((group) => group.id === ALL_BOOKMARKS_GROUP_ID);
 
   const visit = (id, groupId, parentId, depth, path) => {
     if (!id || visited.has(`${groupId}:${id}`)) return;
@@ -36,6 +39,42 @@ export function collectBookmarkFolders(data) {
       visit(childId, groupId, node.id || id, depth + 1, nextPath);
     }
   };
+
+  if (allGroup) {
+    const allName = nodeLabel({ title: allGroup.name || "全部" });
+    folders.push({
+      id: allGroup.id,
+      kind: "group",
+      name: allName,
+      depth: 0,
+      path: [allName],
+      groupId: allGroup.id,
+      parentId: "",
+    });
+    for (const nodeId of Array.isArray(allGroup.nodes) ? allGroup.nodes : []) {
+      const node = data?.nodes?.[nodeId];
+      if (isLinkedGroupFolder(node)) {
+        const linkedGroup = groups.find((group) => group.id === node.linkedGroupId);
+        if (!linkedGroup) continue;
+        const groupName = nodeLabel({ title: linkedGroup.name });
+        folders.push({
+          id: node.id || nodeId,
+          kind: "folder",
+          name: groupName,
+          depth: 1,
+          path: [allName, groupName],
+          groupId: linkedGroup.id,
+          parentId: allGroup.id,
+        });
+        for (const childId of Array.isArray(linkedGroup.nodes) ? linkedGroup.nodes : []) {
+          visit(childId, linkedGroup.id, node.id || nodeId, 2, [allName, groupName]);
+        }
+      } else {
+        visit(nodeId, allGroup.id, allGroup.id, 1, [allName]);
+      }
+    }
+    return folders;
+  }
 
   for (const group of groups) {
     const groupName = nodeLabel({ title: group.name }) || "默认";
@@ -64,6 +103,7 @@ export function collectBookmarkItems(data) {
   const items = new Map();
   const visited = new Set();
   const groups = [...(data?.groups || [])].filter((group) => group?.id).sort(byOrder);
+  const allGroup = groups.find((group) => group.id === ALL_BOOKMARKS_GROUP_ID);
 
   const visit = (id, groupId, path) => {
     if (!id || visited.has(`${groupId}:${id}`)) return;
@@ -86,6 +126,26 @@ export function collectBookmarkItems(data) {
     const nextPath = [...path, nodeLabel(node)];
     for (const childId of Array.isArray(node.children) ? node.children : []) visit(childId, groupId, nextPath);
   };
+
+  if (allGroup) {
+    const allName = nodeLabel({ title: allGroup.name || "全部" });
+    for (const nodeId of Array.isArray(allGroup.nodes) ? allGroup.nodes : []) {
+      const node = data?.nodes?.[nodeId];
+      if (isLinkedGroupFolder(node)) {
+        const linkedGroup = groups.find((group) => group.id === node.linkedGroupId);
+        if (!linkedGroup) continue;
+        const groupName = nodeLabel({ title: linkedGroup.name });
+        for (const childId of Array.isArray(linkedGroup.nodes) ? linkedGroup.nodes : []) {
+          visit(childId, linkedGroup.id, [allName, groupName]);
+        }
+      } else {
+        visit(nodeId, allGroup.id, [allName]);
+      }
+    }
+    return [...items.values()].sort(
+      (left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id),
+    );
+  }
 
   for (const group of groups) {
     const groupName = nodeLabel({ title: group.name }) || "默认";

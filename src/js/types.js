@@ -49,6 +49,8 @@
  * @property {boolean} [iconPending]
  * @property {number} createdAt
  * @property {number} updatedAt
+ * @property {string} [linkedGroupId]
+ * @property {boolean} [systemGroupFolder]
  */
 
 /**

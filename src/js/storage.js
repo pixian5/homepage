@@ -6,7 +6,7 @@
  * @typedef {import('./types.js').IconCacheEntry} IconCacheEntry
  */
 
-import { repairHomepageData } from "./data-utils.js";
+import { ensureAllBookmarksGroup, repairHomepageData } from "./data-utils.js";
 import {
   detectPreferredLanguage,
   estimateBytes,
@@ -104,7 +104,7 @@ function nowTs() {
 function createDefaultData() {
   const language = detectPreferredLanguage(STORAGE_SUPPORTED_LANGUAGES);
   const groupId = `grp_${nowTs()}`;
-  return {
+  const data = {
     schemaVersion: 1,
     settings: { ...DEFAULT_SETTINGS, language },
     groups: [{ id: groupId, name: getDefaultGroupNameByLanguage(language), order: 0, nodes: [] }],
@@ -112,6 +112,8 @@ function createDefaultData() {
     backups: [],
     lastUpdated: nowTs(),
   };
+  ensureAllBookmarksGroup(data);
+  return data;
 }
 
 function isQuotaError(err) {

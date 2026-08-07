@@ -1,10 +1,16 @@
 import { getBingWallpaper } from "./bing-wallpaper.js";
 import {
+  ALL_BOOKMARKS_GROUP_ID,
   buildBackupFingerprint,
   cloneDataSnapshot,
   collectNodeSubtreeIds,
   createItemNode,
   dedupeData,
+  ensureAllBookmarksGroup,
+  getGroupProxyFolderId,
+  getLinkedGroup,
+  isAllBookmarksGroup,
+  isLinkedGroupFolder,
   isSafeCssColor,
   markGroupDeleted,
   markNodeDeleted,
@@ -1550,7 +1556,8 @@ async function persistData() {
         autoBackedUp,
       });
       // 本地权威：始终先写 local；同步改走投影分片 engine
-      const changed = dedupeData(data);
+      const allGroupRepaired = ensureAllBookmarksGroup(data);
+      const changed = dedupeData(data) || allGroupRepaired;
       const tombstonesPruned = pruneSyncTombstones(data);
       const settingsClockChanged = await stampSettingsClockBeforePersist();
       let warning = null;
@@ -1605,10 +1612,26 @@ function getActiveGroup() {
   return data.groups.find((g) => g.id === activeGroupId) || data.groups[0];
 }
 
+function getFolderPlacementContainer(folderId) {
+  const folder = data.nodes[folderId];
+  return getLinkedGroup(data, folder) || folder || null;
+}
+
+function getPlacementList(container) {
+  if (!container) return [];
+  return Array.isArray(container.nodes) ? container.nodes : Array.isArray(container.children) ? container.children : [];
+}
+
+function setPlacementList(container, list) {
+  if (!container) return;
+  if (Array.isArray(container.nodes)) container.nodes = list;
+  else container.children = list;
+}
+
 function getCurrentNodes() {
   if (activeGroupId === RECENT_GROUP_ID) return recentItems;
   const group = getActiveGroup();
-  const nodeIds = openFolderId ? data.nodes[openFolderId]?.children || [] : group.nodes;
+  const nodeIds = openFolderId ? getPlacementList(getFolderPlacementContainer(openFolderId)) : group.nodes;
   return nodeIds.map((id) => data.nodes[id]).filter(Boolean);
 }
 
@@ -1635,14 +1658,15 @@ function renderGroups() {
   [...data.groups]
     .sort((a, b) => a.order - b.order)
     .forEach((group, idx) => {
+      const fixedAllGroup = isAllBookmarksGroup(group);
       const btn = document.createElement("button");
-      btn.className = `group-tab draggable ${group.id === activeGroupId ? "active" : ""}`;
+      btn.className = `group-tab${fixedAllGroup ? "" : " draggable"} ${group.id === activeGroupId ? "active" : ""}`;
       btn.dataset.label = group.name;
       btn.setAttribute("aria-label", group.name);
       btn.textContent = data.settings.sidebarCollapsed ? "" : group.name;
       btn.dataset.short = String(idx + 1);
       btn.dataset.groupId = group.id;
-      btn.draggable = true;
+      btn.draggable = !fixedAllGroup;
       btn.addEventListener("click", (e) => {
         if (Date.now() < suppressTouchClickUntil) {
           e.preventDefault();
@@ -1656,9 +1680,10 @@ function renderGroups() {
       });
       btn.addEventListener("contextmenu", (e) => {
         e.preventDefault();
-        openGroupContextMenu(e.clientX, e.clientY, group);
+        if (!fixedAllGroup) openGroupContextMenu(e.clientX, e.clientY, group);
       });
       btn.addEventListener("dragstart", () => {
+        if (fixedAllGroup) return;
         draggingGroupId = group.id;
         btn.classList.add("dragging");
       });
@@ -1685,7 +1710,7 @@ function renderGroups() {
       btn.addEventListener(
         "touchstart",
         (e) => {
-          if (e.touches.length !== 1) return;
+          if (e.touches.length !== 1 || fixedAllGroup) return;
           const touch = e.touches[0];
           beginTouchLongPress("group", group.id, btn, touch.clientX, touch.clientY);
         },
@@ -1953,7 +1978,8 @@ function openFolder(folderId) {
   elements.folderOverlay.removeAttribute("inert");
   elements.folderOverlay.classList.remove("hidden");
   elements.folderOverlay.setAttribute("aria-hidden", "false");
-  elements.folderTitle.textContent = data.nodes[folderId]?.title || t("folder.defaultTitle");
+  const folder = data.nodes[folderId];
+  elements.folderTitle.textContent = getLinkedGroup(data, folder)?.name || folder?.title || t("folder.defaultTitle");
   render();
   elements.folderGrid.focus({ preventScroll: true });
 }
@@ -1966,6 +1992,12 @@ function findParentFolderId(folderId) {
       return node.id;
     }
   }
+  if (activeGroupId === ALL_BOOKMARKS_GROUP_ID) {
+    const linkedParent = data.groups.find(
+      (group) => !isAllBookmarksGroup(group) && Array.isArray(group.nodes) && group.nodes.includes(folderId),
+    );
+    if (linkedParent) return getGroupProxyFolderId(linkedParent.id);
+  }
   return "";
 }
 
@@ -1973,7 +2005,8 @@ function closeFolder() {
   const parentId = findParentFolderId(openFolderId);
   if (parentId) {
     openFolderId = parentId;
-    elements.folderTitle.textContent = data.nodes[parentId]?.title || t("folder.defaultTitle");
+    const parent = data.nodes[parentId];
+    elements.folderTitle.textContent = getLinkedGroup(data, parent)?.name || parent?.title || t("folder.defaultTitle");
     render();
     return;
   }
@@ -1989,12 +2022,13 @@ function closeFolder() {
 }
 
 function toggleSelect(id, index, range) {
+  if (isLinkedGroupFolder(data.nodes[id])) return;
   const nodes = getCurrentNodes();
   if (range && lastSelectedIndex !== null) {
     const start = Math.min(lastSelectedIndex, index);
     const end = Math.max(lastSelectedIndex, index);
     for (let i = start; i <= end; i++) {
-      if (nodes[i]) selectedIds.add(nodes[i].id);
+      if (nodes[i] && !isLinkedGroupFolder(nodes[i])) selectedIds.add(nodes[i].id);
     }
   } else {
     if (selectedIds.has(id)) selectedIds.delete(id);
@@ -2202,13 +2236,12 @@ function finishTouchDrag() {
       handleDropOnTile(targetId, x, y);
     } else if (activeGroupId !== RECENT_GROUP_ID) {
       const inFolder = !!openFolderId;
-      const container = inFolder ? data.nodes[openFolderId] : getActiveGroup();
-      const list = inFolder ? container.children || [] : container.nodes;
+      const container = inFolder ? getFolderPlacementContainer(openFolderId) : getActiveGroup();
+      const list = getPlacementList(container);
       const grid = inFolder ? elements.folderGrid : elements.grid;
       const next = moveNodeInList(list, sourceId, getDropIndex(grid, x, y));
       if (next !== list) {
-        if (inFolder) container.children = next;
-        else container.nodes = next;
+        setPlacementList(container, next);
         touchPlacementContainer(container);
         queuePersist();
         render();
@@ -2265,6 +2298,8 @@ function openContextMenu(x, y, node) {
     actions.push({ label: t("context.openCurrent"), fn: () => openUrl(normalizeUrl(node.url)) });
     actions.push({ label: t("context.openNew"), fn: () => openUrl(normalizeUrl(node.url), "new") });
     actions.push({ label: t("context.openBackground"), fn: () => openUrl(normalizeUrl(node.url), "background") });
+  } else if (isLinkedGroupFolder(node)) {
+    actions.push({ label: t("context.openFolder"), fn: () => openFolder(node.id) });
   } else {
     actions.push({ label: t("context.openFolder"), fn: () => openFolder(node.id) });
     actions.push({ label: t("context.dissolveFolder"), fn: () => dissolveFolder(node.id) });
@@ -2347,10 +2382,11 @@ function handleDropOnTile(targetId, x, y) {
   const targetNode = data.nodes[targetId];
   const sourceNode = data.nodes[sourceId];
   if (!targetNode || !sourceNode) return;
+  if (isLinkedGroupFolder(sourceNode) && isDropOnIcon(targetId, x, y)) return;
 
   const inFolder = !!openFolderId;
-  const container = inFolder ? data.nodes[openFolderId] : getActiveGroup();
-  const list = inFolder ? container.children || [] : container.nodes;
+  const container = inFolder ? getFolderPlacementContainer(openFolderId) : getActiveGroup();
+  const list = getPlacementList(container);
   const droppedOnIcon = isDropOnIcon(targetId, x, y);
 
   if (!droppedOnIcon) {
@@ -2358,11 +2394,7 @@ function handleDropOnTile(targetId, x, y) {
     const next = moveNodeInList(list, sourceId, insertIndex);
     if (next === list) return;
     pushBackup();
-    if (inFolder) {
-      container.children = next;
-    } else {
-      container.nodes = next;
-    }
+    setPlacementList(container, next);
     touchPlacementContainer(container);
     queuePersist();
     render();
@@ -2391,9 +2423,9 @@ function handleDropOnTile(targetId, x, y) {
     data.nodes[folderId] = folder;
 
     if (inFolder) {
-      const next = (container.children || []).filter((nid) => nid !== sourceId && nid !== targetId);
+      const next = getPlacementList(container).filter((nid) => nid !== sourceId && nid !== targetId);
       next.splice(Math.max(0, Math.min(insertIndex, next.length)), 0, folderId);
-      container.children = next;
+      setPlacementList(container, next);
     } else {
       const next = container.nodes.filter((nid) => nid !== sourceId && nid !== targetId);
       next.splice(Math.max(0, Math.min(insertIndex, next.length)), 0, folderId);
@@ -2408,9 +2440,11 @@ function handleDropOnTile(targetId, x, y) {
 
   pushBackup();
   removeNodeFromLocation(sourceId);
-  targetNode.children = targetNode.children || [];
-  targetNode.children.push(sourceId);
-  touchPlacementContainer(targetNode);
+  const targetContainer = getFolderPlacementContainer(targetId);
+  const targetList = getPlacementList(targetContainer);
+  targetList.push(sourceId);
+  setPlacementList(targetContainer, targetList);
+  touchPlacementContainer(targetContainer);
   queuePersist();
   render();
   toast(t("folder.added"));
@@ -2418,7 +2452,7 @@ function handleDropOnTile(targetId, x, y) {
 
 function dissolveFolder(folderId) {
   const folder = data.nodes[folderId];
-  if (folder?.type !== "folder") return;
+  if (folder?.type !== "folder" || isLinkedGroupFolder(folder)) return;
   const children = Array.isArray(folder.children) ? folder.children.slice() : [];
   pushBackup();
   let replaced = false;
@@ -2479,7 +2513,9 @@ function touchPlacementContainer(container) {
 }
 
 function moveGroupBefore(sourceId, targetId) {
+  if (isAllBookmarksGroup(sourceId) || isAllBookmarksGroup(targetId)) return;
   const targetIndex = [...data.groups]
+    .filter((group) => !isAllBookmarksGroup(group))
     .sort((a, b) => a.order - b.order)
     .map((g) => g.id)
     .indexOf(targetId);
@@ -2487,7 +2523,11 @@ function moveGroupBefore(sourceId, targetId) {
 }
 
 function moveGroupToIndex(sourceId, index) {
-  const ordered = [...data.groups].sort((a, b) => a.order - b.order).map((g) => g.id);
+  if (isAllBookmarksGroup(sourceId)) return;
+  const ordered = [...data.groups]
+    .filter((group) => !isAllBookmarksGroup(group))
+    .sort((a, b) => a.order - b.order)
+    .map((g) => g.id);
   const ids = ordered.filter((id) => id !== sourceId);
   const safeIndex = Math.max(0, Math.min(index, ids.length));
   ids.splice(safeIndex, 0, sourceId);
@@ -2503,16 +2543,19 @@ function moveGroupToIndex(sourceId, index) {
 }
 
 function renameGroup(group) {
+  if (isAllBookmarksGroup(group)) return;
   const name = prompt(t("group.promptName"), group.name);
   if (!name) return;
   group.name = name.trim();
   touchPlacementContainer(group);
+  ensureAllBookmarksGroup(data);
   queuePersist();
   render();
 }
 
 function deleteGroup(group) {
-  if (data.groups.length <= 1) {
+  if (isAllBookmarksGroup(group)) return;
+  if (data.groups.filter((item) => !isAllBookmarksGroup(item)).length <= 1) {
     toast(t("group.keepOne"), "warning");
     return;
   }
@@ -2527,6 +2570,9 @@ function deleteGroup(group) {
     removeNodeFromLocation(id);
     markNodeDeleted(data, id);
   }
+  const proxyId = getGroupProxyFolderId(group.id);
+  removeNodeFromLocation(proxyId);
+  markNodeDeleted(data, proxyId);
   markGroupDeleted(data, group);
   data.groups = data.groups.filter((g) => g.id !== group.id);
   if (activeGroupId === group.id) activeGroupId = data.groups[0].id;
@@ -2536,6 +2582,7 @@ function deleteGroup(group) {
 }
 
 function deleteNodes(ids) {
+  ids = ids.filter((id) => !isLinkedGroupFolder(data.nodes[id]));
   if (!ids.length) return;
   if (activeGroupId === RECENT_GROUP_ID) return;
   pushBackup();
@@ -2906,8 +2953,11 @@ function openAddModal() {
     data.nodes[node.id] = node;
 
     if (openFolderId) {
-      data.nodes[openFolderId].children.push(node.id);
-      touchPlacementContainer(data.nodes[openFolderId]);
+      const targetContainer = getFolderPlacementContainer(openFolderId);
+      const targetList = getPlacementList(targetContainer);
+      targetList.push(node.id);
+      setPlacementList(targetContainer, targetList);
+      touchPlacementContainer(targetContainer);
     } else {
       const targetGroup = getActiveGroup();
       targetGroup.nodes.push(node.id);
@@ -4865,7 +4915,7 @@ function selectTilesInBox(grid, x1, y1, x2, y2) {
   qsa(".tile", grid).forEach((tile) => {
     const rect = tile.getBoundingClientRect();
     const hit = rect.left < right && rect.right > left && rect.top < bottom && rect.bottom > top;
-    if (hit) selectedIds.add(tile.dataset.id);
+    if (hit && !isLinkedGroupFolder(data.nodes[tile.dataset.id])) selectedIds.add(tile.dataset.id);
   });
 }
 
@@ -5005,6 +5055,7 @@ async function init() {
 }
 
 function render() {
+  ensureAllBookmarksGroup(data);
   applyStaticI18n();
   applySidebarState();
   renderGroups();
@@ -5015,6 +5066,7 @@ function render() {
   elements.emptyHintToggle.checked = data.settings.emptyHintDisabled;
   elements.btnSelectAll.classList.toggle("hidden", !selectionMode);
   elements.btnBatchDelete.textContent = selectionMode ? t("context.delete") : t("toolbar.batchDelete");
+  elements.btnFolderDissolve.classList.toggle("hidden", isLinkedGroupFolder(data.nodes[openFolderId]));
   updateOpenModeButton();
 }
 
@@ -5052,6 +5104,7 @@ function bindEvents() {
   elements.btnAddGroup.addEventListener("click", () => {
     const groupId = `grp_${Date.now()}`;
     data.groups.push({ id: groupId, name: t("group.new"), order: data.groups.length, nodes: [] });
+    ensureAllBookmarksGroup(data);
     activeGroupId = groupId;
     data.settings.lastActiveGroupId = activeGroupId;
     queuePersist();
@@ -5108,7 +5161,7 @@ function bindEvents() {
     if (!selectionMode) return;
     const grid = openFolderId ? elements.folderGrid : elements.grid;
     qsa(".tile", grid).forEach((tile) => {
-      selectedIds.add(tile.dataset.id);
+      if (!isLinkedGroupFolder(data.nodes[tile.dataset.id])) selectedIds.add(tile.dataset.id);
     });
     updateSelectionStyles();
   });
@@ -5407,15 +5460,15 @@ function bindEvents() {
     e.preventDefault();
     if (!dragState || !openFolderId) return;
     const sourceId = dragState.id;
-    const folder = data.nodes[openFolderId];
+    const folder = getFolderPlacementContainer(openFolderId);
     const index = getDropIndex(elements.folderGrid, e.clientX, e.clientY);
-    const list = folder.children || [];
+    const list = getPlacementList(folder);
     const next = moveNodeInList(list, sourceId, index);
     if (next === list) {
       dragState = null;
       return;
     }
-    folder.children = next;
+    setPlacementList(folder, next);
     touchPlacementContainer(folder);
     queuePersist();
     render();

@@ -233,7 +233,7 @@ describe("storage", async () => {
     const loaded = await loadDataFromArea(false);
     assert.ok(loaded);
     assert.equal(loaded.lastUpdated, 123);
-    assert.deepEqual(loaded.groups[0].nodes, []);
+    assert.deepEqual(loaded.groups.find((group) => group.id === "g1").nodes, []);
   });
 
   it("evictIconCacheLRU preserves attempts on failed entries", () => {

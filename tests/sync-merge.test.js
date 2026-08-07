@@ -10,7 +10,12 @@ import {
   syncBytesBudgetLevel,
   syncIntervalToMs,
 } from "../src/js/sync_policy.js";
-import { estimateSyncProjectionBytes, hashSyncDocument, toSyncDocument } from "../src/js/sync_projection.js";
+import {
+  estimateSyncProjectionBytes,
+  hashSyncDocument,
+  syncDocumentToHomepageShape,
+  toSyncDocument,
+} from "../src/js/sync_projection.js";
 
 function baseData(overrides = {}) {
   return {
@@ -129,6 +134,34 @@ describe("toSyncDocument", () => {
     assert.equal(doc.settings.syncServerToken, undefined);
     assert.deepEqual(doc.settingsMeta.theme, { updatedAt: 3000, updatedBy: "dev_a" });
     assert.equal(doc.settingsMeta.syncServerToken, undefined);
+  });
+
+  it("roundtrips linked group folder metadata", () => {
+    const data = baseData({
+      groups: [
+        { id: "grp_all", name: "全部", order: -1, nodes: ["proxy"], updatedAt: 1000 },
+        { id: "g1", name: "工作", order: 0, nodes: ["n1"], updatedAt: 1000 },
+      ],
+      nodes: {
+        ...baseData().nodes,
+        proxy: {
+          id: "proxy",
+          type: "folder",
+          title: "工作",
+          children: [],
+          linkedGroupId: "g1",
+          systemGroupFolder: true,
+          updatedAt: 1000,
+        },
+      },
+    });
+    const doc = toSyncDocument(data, { deviceId: "dev_a", docId: "doc1", revision: 1 });
+    const proxy = doc.nodes.find((node) => node.id === "proxy");
+    assert.equal(proxy.linkedGroupId, "g1");
+    assert.equal(proxy.systemGroupFolder, true);
+    const restored = syncDocumentToHomepageShape(doc);
+    assert.equal(restored.nodes.proxy.linkedGroupId, "g1");
+    assert.equal(restored.nodes.proxy.systemGroupFolder, true);
   });
 
   it("projects invisible group tombstones", () => {

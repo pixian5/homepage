@@ -4,6 +4,7 @@
   window.__homepageBookmarkSidebarInstalled = true;
   const ROOT_ID = "homepage-bookmark-sidebar-root";
   const STYLE_ID = "homepage-bookmark-sidebar-style";
+  const ALL_GROUP_ID = "grp_all";
   const api = globalThis.browser || globalThis.chrome;
 
   const label = (node) => String(node?.title || node?.url || "未命名").trim() || "未命名";
@@ -36,19 +37,54 @@
       for (const child of Array.isArray(node.children) ? node.children : [])
         visit(child, groupId, nextPath, depth + 1, node.id || id);
     };
-    for (const group of groups) {
-      if (!group?.id) continue;
-      const groupName = String(group.name || "默认");
+    const allGroup = groups.find((group) => group?.id === ALL_GROUP_ID);
+    if (allGroup) {
+      const allName = String(allGroup.name || "全部");
       folders.push({
-        id: group.id,
-        title: groupName,
-        path: [groupName],
+        id: allGroup.id,
+        title: allName,
+        path: [allName],
         depth: 0,
-        groupId: group.id,
+        groupId: allGroup.id,
         parentId: "",
         group: true,
       });
-      for (const id of Array.isArray(group.nodes) ? group.nodes : []) visit(id, group.id, [groupName], 1, group.id);
+      for (const id of Array.isArray(allGroup.nodes) ? allGroup.nodes : []) {
+        const node = data?.nodes?.[id];
+        if (node?.systemGroupFolder === true && node.linkedGroupId) {
+          const linkedGroup = groups.find((group) => group?.id === node.linkedGroupId);
+          if (!linkedGroup) continue;
+          const groupName = String(linkedGroup.name || "默认");
+          folders.push({
+            id: node.id || id,
+            title: groupName,
+            path: [allName, groupName],
+            depth: 1,
+            groupId: linkedGroup.id,
+            parentId: allGroup.id,
+          });
+          for (const childId of Array.isArray(linkedGroup.nodes) ? linkedGroup.nodes : []) {
+            visit(childId, linkedGroup.id, [allName, groupName], 2, node.id || id);
+          }
+        } else {
+          visit(id, allGroup.id, [allName], 1, allGroup.id);
+        }
+      }
+    } else {
+      for (const group of groups) {
+        if (!group?.id) continue;
+        const groupName = String(group.name || "默认");
+        folders.push({
+          id: group.id,
+          title: groupName,
+          path: [groupName],
+          depth: 0,
+          groupId: group.id,
+          parentId: "",
+          group: true,
+        });
+        for (const id of Array.isArray(group.nodes) ? group.nodes : []) visit(id, group.id, [groupName], 1, group.id);
+      }
     }
     return { folders, items };
   };

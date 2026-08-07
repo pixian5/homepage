@@ -135,6 +135,8 @@ export function toSyncDocument(data, ctx) {
         updatedBy,
         deletedAt: node.deletedAt ? projAsNum(node.deletedAt) : undefined,
         purgedAt: node.purgedAt ? projAsNum(node.purgedAt) : undefined,
+        linkedGroupId: node.type === "folder" ? projAsStr(node.linkedGroupId || "") : undefined,
+        systemGroupFolder: node.type === "folder" ? node.systemGroupFolder === true : undefined,
       });
       continue;
     }
@@ -145,6 +147,8 @@ export function toSyncDocument(data, ctx) {
         type: "folder",
         title: truncateTitle(node.title || ""),
         ...icon,
+        linkedGroupId: projAsStr(node.linkedGroupId || ""),
+        systemGroupFolder: node.systemGroupFolder === true,
         updatedAt,
         updatedBy,
       });
@@ -266,6 +270,8 @@ export function syncDocumentToHomepageShape(doc) {
         iconType: n.iconType || "auto",
         iconData: n.iconData || "",
         color: n.color || "",
+        linkedGroupId: n.linkedGroupId || "",
+        systemGroupFolder: n.systemGroupFolder === true,
         updatedAt: projAsNum(n.updatedAt),
         updatedBy: projAsStr(n.updatedBy),
         deletedAt: n.deletedAt,

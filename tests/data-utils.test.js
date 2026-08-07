@@ -1,12 +1,16 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import {
+  ALL_BOOKMARKS_GROUP_ID,
   buildBackupFingerprint,
   buildBackupSettingsSnapshot,
   cloneDataSnapshot,
   collectNodeSubtreeIds,
   createItemNode,
   dedupeData,
+  ensureAllBookmarksGroup,
+  getGroupProxyFolderId,
+  getLinkedGroup,
   isSafeCssColor,
   markGroupDeleted,
   markNodeDeleted,
@@ -318,7 +322,10 @@ describe("data-utils", () => {
     it("coerces missing top-level fields to expected types", () => {
       const repaired = repairHomepageData({}, defaults);
       assert.strictEqual(repaired.schemaVersion, 1);
-      assert.deepStrictEqual(repaired.groups, []);
+      assert.deepStrictEqual(
+        repaired.groups.map((group) => group.id),
+        [ALL_BOOKMARKS_GROUP_ID],
+      );
       assert.deepStrictEqual(repaired.nodes, {});
       assert.deepStrictEqual(repaired.backups, []);
       assert.strictEqual(repaired.settings.showSearch, true);
@@ -336,8 +343,8 @@ describe("data-utils", () => {
         settings: {},
       };
       const repaired = repairHomepageData(data, defaults);
-      assert.deepStrictEqual(Object.keys(repaired.nodes), ["n1"]);
-      assert.deepStrictEqual(repaired.groups[0].nodes, ["n1"]);
+      assert.deepStrictEqual(Object.keys(repaired.nodes).sort(), [getGroupProxyFolderId("g1"), "n1"].sort());
+      assert.deepStrictEqual(repaired.groups.find((group) => group.id === "g1").nodes, ["n1"]);
     });
 
     it("coerces folder children to array", () => {
@@ -359,7 +366,7 @@ describe("data-utils", () => {
         settings: {},
       };
       const repaired = repairHomepageData(data, defaults);
-      assert.deepStrictEqual(repaired.groups[0].nodes, ["n1"]);
+      assert.deepStrictEqual(repaired.groups.find((group) => group.id === "g1").nodes, ["n1"]);
     });
 
     it("merges defaults under user settings without clobbering", () => {
@@ -401,6 +408,60 @@ describe("data-utils", () => {
       assert.equal(repaired.settings.backgroundColor, "#0b0f14");
       assert.equal(repaired.nodes.n1.iconType, "auto");
       assert.equal(repaired.nodes.n1.iconData, "");
+    });
+  });
+
+  describe("all bookmarks group", () => {
+    it("migrates old data into a fixed all group with linked group folders", () => {
+      const data = {
+        groups: [{ id: "g1", name: "工作", order: 0, nodes: ["n1"] }],
+        nodes: { n1: { id: "n1", type: "item", title: "首页" } },
+      };
+      assert.equal(ensureAllBookmarksGroup(data), true);
+      const allGroup = data.groups.find((group) => group.id === ALL_BOOKMARKS_GROUP_ID);
+      const proxyId = getGroupProxyFolderId("g1");
+      assert.equal(data.groups.sort((a, b) => a.order - b.order)[0].id, ALL_BOOKMARKS_GROUP_ID);
+      assert.deepEqual(allGroup.nodes, [proxyId]);
+      assert.equal(data.nodes[proxyId].linkedGroupId, "g1");
+      assert.strictEqual(
+        getLinkedGroup(data, proxyId),
+        data.groups.find((group) => group.id === "g1"),
+      );
+    });
+
+    it("preserves mixed direct bookmarks and linked group folders", () => {
+      const proxyId = getGroupProxyFolderId("g1");
+      const data = {
+        groups: [
+          { id: ALL_BOOKMARKS_GROUP_ID, name: "全部", order: -1, nodes: ["direct", proxyId] },
+          { id: "g1", name: "工作", order: 0, nodes: [] },
+        ],
+        nodes: {
+          direct: { id: "direct", type: "item", title: "直接书签" },
+          [proxyId]: {
+            id: proxyId,
+            type: "folder",
+            title: "工作",
+            children: [],
+            linkedGroupId: "g1",
+            systemGroupFolder: true,
+          },
+        },
+      };
+      assert.equal(ensureAllBookmarksGroup(data), true);
+      assert.equal(ensureAllBookmarksGroup(data), false);
+      assert.deepEqual(data.groups[0].nodes, ["direct", proxyId]);
+    });
+
+    it("is idempotent and removes proxies for deleted groups", () => {
+      const data = { groups: [{ id: "g1", name: "工作", order: 0, nodes: [] }], nodes: {} };
+      ensureAllBookmarksGroup(data);
+      assert.equal(ensureAllBookmarksGroup(data), false);
+      const proxyId = getGroupProxyFolderId("g1");
+      data.groups = data.groups.filter((group) => group.id !== "g1");
+      assert.equal(ensureAllBookmarksGroup(data), true);
+      assert.equal(data.nodes[proxyId], undefined);
+      assert.deepEqual(data.groups[0].nodes, []);
     });
   });
 

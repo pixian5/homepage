@@ -2,7 +2,7 @@
  * 扩展后台：记录最近访问（Safari 无 history API 时的回退数据源）
  * Chrome/Firefox 也加载，作为 history 的补充无害。
  */
-import { createItemNode } from "./data-utils.js";
+import { createItemNode, getLinkedGroup } from "./data-utils.js";
 import { initVisitTrackingInBackground } from "./visit-history.js";
 
 const BING_API_URL = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1";
@@ -52,7 +52,8 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
       }
       chrome.storage.local.get("homepage_data", (result) => {
         const data = result?.homepage_data;
-        const container = data?.groups?.find((group) => group.id === folderId) || data?.nodes?.[folderId];
+        const selected = data?.groups?.find((group) => group.id === folderId) || data?.nodes?.[folderId];
+        const container = getLinkedGroup(data, selected) || selected;
         if (!data?.nodes || !container || (container.type && container.type !== "folder")) {
           sendResponse({ ok: false, error: "no_folder" });
           return;

@@ -3,7 +3,7 @@
  * 吸收 Pass：字段时钟、空值不覆盖、墓碑、ID 保全、空远端拒绝
  */
 
-import { dedupeData } from "./data-utils.js";
+import { dedupeData, ensureAllBookmarksGroup } from "./data-utils.js";
 import { deepClone } from "./storage.js";
 import { syncDocumentToHomepageShape, toSyncDocument } from "./sync_projection.js";
 import { mergeSettingsByClock, normalizeSettingsClock } from "./sync_settings.js";
@@ -363,6 +363,7 @@ export function mergeHomepage(localData, remoteDoc, ctx = {}) {
 
   // 安全闸门：本地未删除的活跃 id 必须仍在
   const beforeIds = collectActiveIds(localData);
+  ensureAllBookmarksGroup(state);
   dedupeData(state);
   const afterIds = collectActiveIds(state);
   const missing = [];

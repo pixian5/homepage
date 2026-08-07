@@ -4,6 +4,7 @@ import {
   ALL_BOOKMARKS_GROUP_ID,
   buildBackupFingerprint,
   buildBackupSettingsSnapshot,
+  canMoveNodeToFolder,
   cloneDataSnapshot,
   collectNodeSubtreeIds,
   createItemNode,
@@ -16,6 +17,7 @@ import {
   markNodeDeleted,
   mergeRootBookmarkData,
   moveNodeInList,
+  moveNodeToFolder,
   pickLatestData,
   pruneSyncTombstones,
   repairHomepageData,
@@ -113,6 +115,50 @@ describe("data-utils", () => {
       const list = ["a", "b", "c"];
       moveNodeInList(list, "a", 2);
       assert.deepStrictEqual(list, ["a", "b", "c"]);
+    });
+  });
+
+  describe("moveNodeToFolder", () => {
+    it("moves a bookmark instead of copying it", () => {
+      const data = {
+        groups: [{ id: "root", nodes: ["item", "target"] }],
+        nodes: {
+          item: { id: "item", type: "item" },
+          target: { id: "target", type: "folder", children: [] },
+        },
+      };
+      assert.equal(moveNodeToFolder(data, "item", "target"), true);
+      assert.deepEqual(data.groups[0].nodes, ["target"]);
+      assert.deepEqual(data.nodes.target.children, ["item"]);
+    });
+
+    it("removes duplicate old references and rejects folder cycles", () => {
+      const data = {
+        groups: [{ id: "root", nodes: ["item", "parent"] }],
+        nodes: {
+          item: { id: "item", type: "item" },
+          parent: { id: "parent", type: "folder", children: ["child", "item"] },
+          child: { id: "child", type: "folder", children: [] },
+        },
+      };
+      assert.equal(moveNodeToFolder(data, "item", "child"), true);
+      assert.deepEqual(data.groups[0].nodes, ["parent"]);
+      assert.deepEqual(data.nodes.parent.children, ["child"]);
+      assert.deepEqual(data.nodes.child.children, ["item"]);
+      assert.equal(moveNodeToFolder(data, "parent", "child"), false);
+    });
+
+    it("checks invalid moves without changing data", () => {
+      const data = {
+        groups: [{ id: "root", nodes: ["parent"] }],
+        nodes: {
+          parent: { id: "parent", type: "folder", children: ["child"] },
+          child: { id: "child", type: "folder", children: [] },
+        },
+      };
+      const before = JSON.stringify(data);
+      assert.equal(canMoveNodeToFolder(data, "parent", "child"), false);
+      assert.equal(JSON.stringify(data), before);
     });
   });
 

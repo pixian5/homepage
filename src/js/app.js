@@ -2,6 +2,7 @@ import { getBingWallpaper } from "./bing-wallpaper.js";
 import {
   ALL_BOOKMARKS_GROUP_ID,
   buildBackupFingerprint,
+  canMoveNodeToFolder,
   cloneDataSnapshot,
   collectNodeSubtreeIds,
   createItemNode,
@@ -13,6 +14,7 @@ import {
   markNodeDeleted,
   mergeRootBookmarkData,
   moveNodeInList,
+  moveNodeToFolder,
   pruneSyncTombstones,
   repairHomepageData,
 } from "./data-utils.js";
@@ -1748,7 +1750,9 @@ function renderGroups() {
       });
     });
     btn.addEventListener("dragover", (e) => {
+      if (dragState && fixedAllGroup) return;
       e.preventDefault();
+      if (dragState) e.dataTransfer.dropEffect = "move";
       btn.classList.add("drop-target");
     });
     btn.addEventListener("dragleave", () => {
@@ -1756,7 +1760,13 @@ function renderGroups() {
     });
     btn.addEventListener("drop", (e) => {
       e.preventDefault();
+      e.stopPropagation();
       btn.classList.remove("drop-target");
+      if (dragState && !fixedAllGroup) {
+        moveDraggedNodeToSidebarFolder(dragState.id, group.id);
+        dragState = null;
+        return;
+      }
       if (!draggingGroupId || draggingGroupId === group.id) return;
       moveGroupBefore(draggingGroupId, group.id);
     });
@@ -2240,6 +2250,12 @@ function updateTouchDragTarget(x, y) {
       nextTarget.classList.add("touch-drop-target");
     }
     touchDragState.targetTile = nextTarget;
+    const hoverGroup = pointEl?.closest?.(".group-tab.draggable") || null;
+    if (touchDragState.targetGroupBtn && touchDragState.targetGroupBtn !== hoverGroup) {
+      touchDragState.targetGroupBtn.classList.remove("drop-target");
+    }
+    if (hoverGroup && hoverGroup !== touchDragState.targetGroupBtn) hoverGroup.classList.add("drop-target");
+    touchDragState.targetGroupBtn = hoverGroup;
     return;
   }
   if (touchDragState.mode === "group") {
@@ -2279,7 +2295,10 @@ function finishTouchDrag() {
     const x = touchDragState.x;
     const y = touchDragState.y;
 
-    if (targetId && targetId !== sourceId) {
+    const targetFolderId = touchDragState.targetGroupBtn?.dataset?.groupId || "";
+    if (targetFolderId) {
+      moveDraggedNodeToSidebarFolder(sourceId, targetFolderId);
+    } else if (targetId && targetId !== sourceId) {
       handleDropOnTile(targetId, x, y);
     } else if (activeGroupId !== RECENT_GROUP_ID) {
       const inFolder = !!openFolderId;
@@ -2543,6 +2562,17 @@ function removeNodeFromLocation(id) {
       }
     }
   }
+}
+
+function moveDraggedNodeToSidebarFolder(nodeId, folderId) {
+  if (!canMoveNodeToFolder(data, nodeId, folderId)) return false;
+  pushBackup();
+  if (!moveNodeToFolder(data, nodeId, folderId)) return false;
+  touchPlacementContainer(data.nodes[folderId]);
+  queuePersist();
+  render();
+  toast(t("folder.added"));
+  return true;
 }
 
 function touchPlacementContainer(container) {

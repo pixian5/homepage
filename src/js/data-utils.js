@@ -299,6 +299,37 @@ export function moveNodeInList(list, id, index) {
   return next;
 }
 
+/** 判断节点是否可以移动到指定文件夹，不修改输入数据。 */
+export function canMoveNodeToFolder(input, nodeId, folderId) {
+  const node = input?.nodes?.[nodeId];
+  const target = input?.nodes?.[folderId];
+  if (!node || target?.type !== "folder" || nodeId === folderId) return false;
+  if (node.type === "folder" && collectNodeSubtreeIds(input, nodeId).includes(folderId)) return false;
+  if (Array.isArray(target.children) && target.children.includes(nodeId)) return false;
+  return true;
+}
+
+/**
+ * 将节点移动到指定文件夹。节点先从所有旧父容器移除，因此不会产生复制或多父引用。
+ * @returns {boolean} 是否完成移动
+ */
+export function moveNodeToFolder(input, nodeId, folderId) {
+  if (!canMoveNodeToFolder(input, nodeId, folderId)) return false;
+  const target = input.nodes[folderId];
+
+  for (const group of input.groups || []) {
+    if (Array.isArray(group.nodes)) group.nodes = group.nodes.filter((id) => id !== nodeId);
+  }
+  for (const candidate of Object.values(input.nodes || {})) {
+    if (candidate?.type === "folder" && Array.isArray(candidate.children)) {
+      candidate.children = candidate.children.filter((id) => id !== nodeId);
+    }
+  }
+  if (!Array.isArray(target.children)) target.children = [];
+  target.children.push(nodeId);
+  return true;
+}
+
 /**
  * 收集从 roots 可达的全部节点 ID（含文件夹内子孙）。
  * @param {HomepageData | object} input

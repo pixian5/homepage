@@ -188,7 +188,7 @@ export function mergeRootBookmarkData(target, incoming) {
     rootIds.add(id);
     changed = true;
   }
-  return changed;
+  return dedupeData(target) || changed;
 }
 
 /**
@@ -409,6 +409,7 @@ export function pruneSyncTombstones(data, now = Date.now()) {
  * - 删除 groups 中引用了不存在的节点的 ID
  * - 删除 groups 中重复的节点 ID
  * - 删除 folders 中引用不存在或重复的子节点 ID
+ * - 每个节点只保留一个父位置，并切断文件夹循环引用
  * - 删除没有任何分组/文件夹引用的孤儿节点
  * @param {HomepageData | object} input
  * @returns {boolean} 是否发生了变化
@@ -417,42 +418,31 @@ export function dedupeData(input) {
   let changed = false;
   input.nodes = { ...(input.nodes || {}) };
 
-  for (const group of input.groups || []) {
-    const uniq = [];
-    const set = new Set();
-    for (const id of group.nodes || []) {
-      if (!input.nodes[id]) {
+  // 从根目录按显示顺序深度遍历。先遇到的位置获胜，因此本机已有位置在导入合并时优先保留。
+  const placed = new Set();
+  const normalizeList = (list) => {
+    const normalized = [];
+    for (const id of Array.isArray(list) ? list : []) {
+      const node = input.nodes[id];
+      if (!node || node.deletedAt || node.purgedAt || placed.has(id)) {
         changed = true;
         continue;
       }
-      if (set.has(id)) {
-        changed = true;
-        continue;
+      placed.add(id);
+      normalized.push(id);
+      if (node.type === "folder") {
+        const children = normalizeList(node.children);
+        if (!Array.isArray(node.children) || children.length !== node.children.length) changed = true;
+        node.children = children;
       }
-      set.add(id);
-      uniq.push(id);
     }
-    group.nodes = uniq;
-  }
+    return normalized;
+  };
 
-  for (const node of Object.values(input.nodes)) {
-    if (node.type === "folder" && Array.isArray(node.children)) {
-      const uniq = [];
-      const set = new Set();
-      for (const id of node.children) {
-        if (!input.nodes[id]) {
-          changed = true;
-          continue;
-        }
-        if (set.has(id)) {
-          changed = true;
-          continue;
-        }
-        set.add(id);
-        uniq.push(id);
-      }
-      node.children = uniq;
-    }
+  for (const group of input.groups || []) {
+    const nodes = normalizeList(group.nodes);
+    if (!Array.isArray(group.nodes) || nodes.length !== group.nodes.length) changed = true;
+    group.nodes = nodes;
   }
 
   // 孤儿 GC：只保留从任意 group.nodes 可达的节点

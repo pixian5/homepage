@@ -152,6 +152,22 @@ describe("data-utils", () => {
       assert.ok(data.nodes.n1);
     });
 
+    it("keeps only the first parent and removes folder cycles", () => {
+      const data = {
+        groups: [{ id: "g1", nodes: ["n1", "f1", "f2"] }],
+        nodes: {
+          n1: { id: "n1", type: "item" },
+          f1: { id: "f1", type: "folder", children: ["n1"] },
+          f2: { id: "f2", type: "folder", children: ["f2"] },
+        },
+      };
+
+      assert.equal(dedupeData(data), true);
+      assert.deepEqual(data.groups[0].nodes, ["n1", "f1", "f2"]);
+      assert.deepEqual(data.nodes.f1.children, []);
+      assert.deepEqual(data.nodes.f2.children, []);
+    });
+
     it("removes orphan nodes not reachable from any group", () => {
       const data = {
         groups: [{ id: "g1", nodes: ["n1"] }],
@@ -489,13 +505,14 @@ describe("data-utils", () => {
         groups: [{ id: ALL_BOOKMARKS_GROUP_ID, name: "全部", order: -1, nodes: ["local", "folder"] }],
         nodes: {
           local: { id: "local", type: "item", title: "本机" },
-          folder: { id: "folder", type: "folder", title: "本机文件夹", children: ["local"] },
+          folder: { id: "folder", type: "folder", title: "本机文件夹", children: [] },
         },
       };
       const incoming = {
-        groups: [{ id: ALL_BOOKMARKS_GROUP_ID, name: "全部", order: -1, nodes: ["folder", "remote"] }],
+        groups: [{ id: ALL_BOOKMARKS_GROUP_ID, name: "全部", order: -1, nodes: ["folder"] }],
         nodes: {
-          folder: { id: "folder", type: "folder", title: "云端文件夹", children: ["remote"] },
+          local: { id: "local", type: "item", title: "导入副本" },
+          folder: { id: "folder", type: "folder", title: "云端文件夹", children: ["local", "remote"] },
           remote: { id: "remote", type: "item", title: "导入" },
         },
       };
@@ -505,9 +522,10 @@ describe("data-utils", () => {
         target.groups.map((group) => group.id),
         [ALL_BOOKMARKS_GROUP_ID],
       );
-      assert.deepEqual(target.groups[0].nodes, ["local", "folder", "remote"]);
-      assert.deepEqual(target.nodes.folder.children, ["local", "remote"]);
+      assert.deepEqual(target.groups[0].nodes, ["local", "folder"]);
+      assert.deepEqual(target.nodes.folder.children, ["remote"]);
       assert.equal(target.nodes.folder.title, "本机文件夹");
+      assert.equal(target.nodes.local.title, "本机");
     });
   });
 

@@ -219,6 +219,69 @@ describe("mergeHomepage", () => {
     assert.ok(g.nodes.includes("n2"));
   });
 
+  it("keeps a moved node only in its newest parent", () => {
+    const local = baseData({
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["n1", "folder"], updatedAt: 1000 }],
+      nodes: {
+        ...baseData().nodes,
+        folder: { id: "folder", type: "folder", title: "工作", children: [], updatedAt: 1000 },
+      },
+    });
+    const remoteData = baseData({
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["folder"], updatedAt: 2000 }],
+      nodes: {
+        ...baseData().nodes,
+        folder: { id: "folder", type: "folder", title: "工作", children: ["n1"], updatedAt: 2100 },
+      },
+      lastUpdated: 2100,
+    });
+    const remote = toSyncDocument(remoteData, {
+      deviceId: "dev_b",
+      docId: "doc1",
+      revision: 2,
+      writtenAt: 2100,
+    });
+
+    const result = mergeHomepage(local, remote, { deviceId: "dev_a", now: 2200 });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.state.groups[0].nodes, ["folder"]);
+    assert.deepEqual(result.state.nodes.folder.children, ["n1"]);
+  });
+
+  it("produces the same order regardless of merge direction", () => {
+    const makeSide = (deviceId, nodeId) =>
+      baseData({
+        groups: [{ id: "grp_all", name: "全部", order: -1, nodes: [nodeId], updatedAt: 2000, updatedBy: deviceId }],
+        nodes: {
+          [nodeId]: {
+            id: nodeId,
+            type: "item",
+            title: nodeId,
+            url: `https://${nodeId}.example/`,
+            updatedAt: 2000,
+            updatedBy: deviceId,
+            createdAt: 2000,
+          },
+        },
+        lastUpdated: 2000,
+      });
+    const chrome = makeSide("chrome", "a");
+    const firefox = makeSide("firefox", "b");
+    const chromeDoc = toSyncDocument(chrome, { deviceId: "chrome", docId: "doc1", revision: 2, writtenAt: 2000 });
+    const firefoxDoc = toSyncDocument(firefox, {
+      deviceId: "firefox",
+      docId: "doc1",
+      revision: 2,
+      writtenAt: 2000,
+    });
+
+    const onChrome = mergeHomepage(chrome, firefoxDoc, { deviceId: "chrome", now: 2100 });
+    const onFirefox = mergeHomepage(firefox, chromeDoc, { deviceId: "firefox", now: 2100 });
+    assert.equal(onChrome.ok, true);
+    assert.equal(onFirefox.ok, true);
+    assert.deepEqual(onChrome.state.groups[0].nodes, onFirefox.state.groups[0].nodes);
+  });
+
   it("S4 delete tombstone wins over older live", () => {
     const local = baseData();
     const remoteData = baseData({
@@ -473,6 +536,28 @@ describe("mergePlacements", () => {
     const right = [{ nodeId: "n2", parentKind: "group", parentId: "g1", index: 1, updatedAt: 2, updatedBy: "b" }];
     const m = mergePlacements(left, right);
     assert.equal(m.length, 2);
+  });
+
+  it("selects one newest parent per node", () => {
+    const oldPlacement = {
+      nodeId: "n1",
+      parentKind: "group",
+      parentId: "grp_all",
+      index: 0,
+      updatedAt: 1000,
+      updatedBy: "a",
+    };
+    const movedPlacement = {
+      nodeId: "n1",
+      parentKind: "folder",
+      parentId: "folder",
+      index: 0,
+      updatedAt: 2000,
+      updatedBy: "b",
+    };
+
+    assert.deepEqual(mergePlacements([oldPlacement], [movedPlacement]), [movedPlacement]);
+    assert.deepEqual(mergePlacements([movedPlacement], [oldPlacement]), [movedPlacement]);
   });
 });
 

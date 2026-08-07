@@ -187,29 +187,39 @@ export function mergeGroup(left, right) {
 /**
  * placement key
  */
-function placementKey(p) {
-  return `${p.parentKind}:${p.parentId}:${p.nodeId}`;
+function comparePlacementVersion(left, right) {
+  const leftAt = mergeAsNum(left?.deletedAt || left?.updatedAt);
+  const rightAt = mergeAsNum(right?.deletedAt || right?.updatedAt);
+  if (leftAt !== rightAt) return leftAt - rightAt;
+  if (!!left?.deletedAt !== !!right?.deletedAt) return left?.deletedAt ? 1 : -1;
+  const by = mergeAsStr(left?.updatedBy).localeCompare(mergeAsStr(right?.updatedBy));
+  if (by) return by;
+  const parent = `${mergeAsStr(left?.parentKind)}:${mergeAsStr(left?.parentId)}`.localeCompare(
+    `${mergeAsStr(right?.parentKind)}:${mergeAsStr(right?.parentId)}`,
+  );
+  if (parent) return parent;
+  return mergeAsNum(left?.index) - mergeAsNum(right?.index);
+}
+
+function comparePlacementOrder(left, right) {
+  return (
+    mergeAsNum(left?.index) - mergeAsNum(right?.index) ||
+    mergeAsNum(right?.updatedAt) - mergeAsNum(left?.updatedAt) ||
+    mergeAsStr(left?.updatedBy).localeCompare(mergeAsStr(right?.updatedBy)) ||
+    mergeAsStr(left?.nodeId).localeCompare(mergeAsStr(right?.nodeId))
+  );
 }
 
 export function mergePlacements(leftList, rightList) {
   const map = new Map();
   const consider = (p) => {
     if (!p?.nodeId || !p?.parentId) return;
-    const key = placementKey(p);
-    const cur = map.get(key);
+    const cur = map.get(p.nodeId);
     if (!cur) {
-      map.set(key, { ...p });
+      map.set(p.nodeId, { ...p });
       return;
     }
-    const cAt = mergeAsNum(cur.deletedAt || cur.updatedAt);
-    const pAt = mergeAsNum(p.deletedAt || p.updatedAt);
-    if (pAt > cAt) map.set(key, { ...p });
-    else if (pAt === cAt) {
-      // 删除优先于同秒存活；否则 deviceId
-      if (p.deletedAt && !cur.deletedAt) map.set(key, { ...p });
-      else if (!p.deletedAt && cur.deletedAt) return;
-      else if (mergeAsStr(p.updatedBy) > mergeAsStr(cur.updatedBy)) map.set(key, { ...p });
-    }
+    if (comparePlacementVersion(p, cur) > 0) map.set(p.nodeId, { ...p });
   };
   for (const p of leftList || []) consider(p);
   for (const p of rightList || []) consider(p);
@@ -310,7 +320,7 @@ export function mergeHomepage(localData, remoteDoc, ctx = {}) {
   }
   const gmap = new Map(activeGroups.map((g) => [g.id, g]));
 
-  const placeSorted = placements.filter((p) => !p.deletedAt).sort((a, b) => mergeAsNum(a.index) - mergeAsNum(b.index));
+  const placeSorted = placements.filter((p) => !p.deletedAt).sort(comparePlacementOrder);
 
   for (const p of placeSorted) {
     const node = mergedNodes[p.nodeId];

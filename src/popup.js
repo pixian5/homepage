@@ -1,3 +1,4 @@
+import { collectBookmarkFolders } from "./js/bookmark-utils.js";
 import { createItemNode } from "./js/data-utils.js";
 import {
   detectPreferredLanguage,
@@ -272,9 +273,14 @@ async function openBookmarkSidebar(tab, data, side) {
   const response = await sendTabMessage(tab.id, { type: "homepage_open_bookmark_sidebar", data, side });
   if (response?.ok) return true;
   const api = getChromeApi();
-  if (!api?.scripting?.executeScript) return false;
+  const inject = api?.scripting?.executeScript
+    ? (done) => api.scripting.executeScript({ target: { tabId: tab.id }, files: ["js/bookmark-sidebar.js"] }, done)
+    : api?.tabs?.executeScript
+      ? (done) => api.tabs.executeScript(tab.id, { file: "js/bookmark-sidebar.js" }, done)
+      : null;
+  if (!inject) return false;
   return new Promise((resolve) => {
-    api.scripting.executeScript({ target: { tabId: tab.id }, files: ["js/bookmark-sidebar.js"] }, () => {
+    inject(() => {
       if (api.runtime?.lastError) return resolve(false);
       void sendTabMessage(tab.id, { type: "homepage_open_bookmark_sidebar", data, side }).then((res) =>
         resolve(!!res?.ok),
@@ -283,10 +289,55 @@ async function openBookmarkSidebar(tab, data, side) {
   });
 }
 
-async function openAddBookmarkPanel(tab, data) {
-  if (!tab?.id) return false;
-  const response = await sendTabMessage(tab.id, { type: "homepage_open_add_bookmark_panel", data });
-  return !!response?.ok;
+function renderBookmarkFolderMenu(data, tab) {
+  const menu = document.getElementById("bookmarkFolderMenu");
+  const parent = document.getElementById("addBookmarkMenu");
+  if (!menu || !parent) return;
+  const folders = collectBookmarkFolders(data);
+  const childrenOf = (folder) => folders.filter((entry) => entry.parentId === folder.id);
+  const appendFolder = (folder, host) => {
+    const row = document.createElement("div");
+    row.className = "menu-folder-row";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "menu-folder-button";
+    button.textContent = folder.name;
+    button.title = folder.path.join(" / ");
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const result = await saveToContainer(tab, folder.id, tab?.title || "");
+      if (result?.error) {
+        showPopupError(explainSaveError(result) || tr("saveFailed", popupLanguage));
+        return;
+      }
+      await showToastInTab(
+        tab,
+        tr("savedToGroup", popupLanguage, { name: result.groupName || tr("unnamed", popupLanguage) }),
+        result.fontSize,
+      );
+      window.close();
+    });
+    row.appendChild(button);
+    const children = childrenOf(folder);
+    if (children.length) {
+      row.classList.add("has-children");
+      const submenu = document.createElement("div");
+      submenu.className = "menu-submenu";
+      for (const child of children) appendFolder(child, submenu);
+      row.appendChild(submenu);
+    }
+    host.appendChild(row);
+  };
+  menu.replaceChildren();
+  for (const folder of folders.filter((entry) => entry.depth === 0)) appendFolder(folder, menu);
+  parent.addEventListener("mouseenter", () => {
+    document.documentElement.style.minWidth = "780px";
+    document.body.style.width = "780px";
+  });
+  parent.addEventListener("mouseleave", () => {
+    document.documentElement.style.minWidth = "280px";
+    document.body.style.width = "280px";
+  });
 }
 
 /**
@@ -300,7 +351,7 @@ async function openAddBookmarkPanel(tab, data) {
  * @param {string} customTitle
  * @returns {Promise<{groupId: string, groupName: string, fontSize: number} | null>}
  */
-async function _saveToContainer(tab, selectedContainerId, customTitle = "") {
+async function saveToContainer(tab, selectedContainerId, customTitle = "") {
   const url = normalizeUrl(tab?.url);
   if (!url) {
     await appendLog({ ts: Date.now(), stage: "invalid_url", raw: tab?.url || "" });
@@ -369,7 +420,7 @@ async function _saveToContainer(tab, selectedContainerId, customTitle = "") {
  * @param {number} fontSize
  * @returns {Promise<boolean>}
  */
-async function _showToastInTab(tab, message, fontSize) {
+async function showToastInTab(tab, message, fontSize) {
   const api = getChromeApi();
   if (!tab?.id) return false;
   const payload = { type: "homepage_show_toast", text: message, fontSize };
@@ -455,7 +506,7 @@ async function _showToastInTab(tab, message, fontSize) {
   }
 }
 
-function _explainSaveError(result) {
+function explainSaveError(result) {
   if (!result?.error) return "";
   if (result.error === "invalid_url") return tr("invalidUrl", popupLanguage);
   if (result.error === "no_data" || result.error === "no_group") return tr("noData", popupLanguage);
@@ -476,17 +527,14 @@ async function init() {
     return;
   }
   document.body.classList.remove("hidden");
-  document.getElementById("btnOpenLeftSidebar")?.addEventListener("click", () => {
-    void openBookmarkSidebar(tab, data, "left");
-    window.close();
+  renderBookmarkFolderMenu(data, tab);
+  document.getElementById("btnOpenLeftSidebar")?.addEventListener("click", async () => {
+    if (await openBookmarkSidebar(tab, data, "left")) window.close();
+    else showPopupError("无法在当前网页打开左侧书签栏");
   });
-  document.getElementById("btnOpenRightSidebar")?.addEventListener("click", () => {
-    void openBookmarkSidebar(tab, data, "right");
-    window.close();
-  });
-  document.getElementById("btnAddBookmark")?.addEventListener("click", () => {
-    void openAddBookmarkPanel(tab, data);
-    window.close();
+  document.getElementById("btnOpenRightSidebar")?.addEventListener("click", async () => {
+    if (await openBookmarkSidebar(tab, data, "right")) window.close();
+    else showPopupError("无法在当前网页打开右侧书签栏");
   });
 }
 

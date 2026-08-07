@@ -132,8 +132,10 @@ function applyPopupI18n(language) {
   }
   const empty = document.getElementById("empty");
   if (empty) empty.textContent = tr("noTab", language);
-  const openSidebar = document.getElementById("btnOpenSidebar");
-  if (openSidebar) openSidebar.textContent = language === "en" ? "Open bookmark sidebars" : "打开书签侧栏";
+  const openLeft = document.getElementById("btnOpenLeftSidebar");
+  if (openLeft) openLeft.textContent = language === "en" ? "Show bookmarks on left" : "在左侧栏显示所有书签";
+  const openRight = document.getElementById("btnOpenRightSidebar");
+  if (openRight) openRight.textContent = language === "en" ? "Show bookmarks on right" : "在右侧栏显示所有书签";
 }
 
 /**
@@ -265,16 +267,18 @@ function sendTabMessage(tabId, message) {
   });
 }
 
-async function openBookmarkSidebar(tab, data) {
+async function openBookmarkSidebar(tab, data, side) {
   if (!tab?.id) return false;
-  const response = await sendTabMessage(tab.id, { type: "homepage_open_bookmark_sidebar", data });
+  const response = await sendTabMessage(tab.id, { type: "homepage_open_bookmark_sidebar", data, side });
   if (response?.ok) return true;
   const api = getChromeApi();
   if (!api?.scripting?.executeScript) return false;
   return new Promise((resolve) => {
     api.scripting.executeScript({ target: { tabId: tab.id }, files: ["js/bookmark-sidebar.js"] }, () => {
       if (api.runtime?.lastError) return resolve(false);
-      void sendTabMessage(tab.id, { type: "homepage_open_bookmark_sidebar", data }).then((res) => resolve(!!res?.ok));
+      void sendTabMessage(tab.id, { type: "homepage_open_bookmark_sidebar", data, side }).then((res) =>
+        resolve(!!res?.ok),
+      );
     });
   });
 }
@@ -471,10 +475,13 @@ async function init() {
     showPopupError(tr("noData", popupLanguage));
     return;
   }
-  void openBookmarkSidebar(tab, data);
   document.body.classList.remove("hidden");
-  document.getElementById("btnOpenSidebar")?.addEventListener("click", () => {
-    void openBookmarkSidebar(tab, data);
+  document.getElementById("btnOpenLeftSidebar")?.addEventListener("click", () => {
+    void openBookmarkSidebar(tab, data, "left");
+    window.close();
+  });
+  document.getElementById("btnOpenRightSidebar")?.addEventListener("click", () => {
+    void openBookmarkSidebar(tab, data, "right");
     window.close();
   });
   document.getElementById("btnAddBookmark")?.addEventListener("click", () => {

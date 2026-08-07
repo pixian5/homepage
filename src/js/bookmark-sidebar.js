@@ -51,8 +51,6 @@
     style.textContent = `
       #${ROOT_ID}{position:fixed;inset:0;z-index:2147483646;pointer-events:none;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",sans-serif;color:#e7eef8}
       #${ROOT_ID} *{box-sizing:border-box}
-      #${ROOT_ID} .hp-edge{position:fixed;top:42%;width:34px;height:72px;padding:4px 2px;background:#141b26f2;border:1px solid #ffffff25;color:#e7eef8;cursor:pointer;pointer-events:auto;writing-mode:vertical-rl;font:12px sans-serif}
-      #${ROOT_ID} .hp-edge-left{left:0;border-radius:0 7px 7px 0}#${ROOT_ID} .hp-edge-right{right:0;border-radius:7px 0 0 7px}
       #${ROOT_ID} .hp-side{position:fixed;top:48px;width:min(310px,88vw);height:min(760px,calc(100vh - 96px));padding:8px;background:#141b26f7;border:1px solid #ffffff20;border-radius:8px;box-shadow:0 12px 36px #0007;pointer-events:auto;display:none;flex-direction:column;gap:6px;overflow:visible}
       #${ROOT_ID} .hp-side.hp-open{display:flex}
       #${ROOT_ID} .hp-left{left:38px}#${ROOT_ID} .hp-right{right:38px}
@@ -178,22 +176,14 @@
       if (openSide === side) panel.classList.add("hp-open");
       return panel;
     };
-    const leftButton = document.createElement("button");
-    leftButton.className = "hp-edge hp-edge-left";
-    leftButton.textContent = "书签";
-    const rightButton = document.createElement("button");
-    rightButton.className = "hp-edge hp-edge-right";
-    rightButton.textContent = "书签";
-    const leftPanel = makeSide("left", false);
+    const leftPanel = makeSide("left", true);
     const rightPanel = makeSide("right", true);
-    leftButton.addEventListener("click", () => leftPanel.classList.toggle("hp-open"));
-    rightButton.addEventListener("click", () => rightPanel.classList.toggle("hp-open"));
-    root.append(leftButton, rightButton, leftPanel, rightPanel);
+    root.append(leftPanel, rightPanel);
     document.documentElement.appendChild(root);
   }
 
   api?.runtime?.onMessage?.addListener?.((message, _sender, sendResponse) => {
-    if (message?.type === "homepage_open_bookmark_sidebar") render(message.data || {});
+    if (message?.type === "homepage_open_bookmark_sidebar") render(message.data || {}, message.side || "left");
     else if (message?.type === "homepage_open_add_bookmark_panel") render(message.data || {}, "left", true);
     else return false;
     sendResponse?.({ ok: true });

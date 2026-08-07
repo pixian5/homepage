@@ -1077,9 +1077,15 @@ body {
   flex-wrap: wrap;
   gap: 8px;
 }
+.modal .row-inline.settings-sync-actions {
+  flex-wrap: wrap;
+  width: 100%;
+  min-width: 0;
+}
 .settings-sync-actions .icon-btn {
   flex: 1 1 190px;
   min-width: min(100%, 190px);
+  max-width: 100%;
   height: auto;
   min-height: var(--control-height);
   line-height: 1.3;

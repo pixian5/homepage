@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { markNodeDeleted } from "../src/js/data-utils.js";
+import { markNodeDeleted, mergeRootBookmarkData } from "../src/js/data-utils.js";
 import { exportSyncBundle, importSyncBundle } from "../src/js/sync_bundle.js";
 import { _setDeviceIdForTests, createDocId } from "../src/js/sync_ids.js";
 import { mergeHomepage, mergeNode, mergePlacements, newerField } from "../src/js/sync_merge.js";
@@ -11,8 +11,10 @@ import {
   syncIntervalToMs,
 } from "../src/js/sync_policy.js";
 import {
+  collectPlacementSnapshot,
   estimateSyncProjectionBytes,
   hashSyncDocument,
+  stampChangedPlacementClock,
   syncDocumentToHomepageShape,
   toSyncDocument,
 } from "../src/js/sync_projection.js";
@@ -246,6 +248,76 @@ describe("mergeHomepage", () => {
     assert.equal(result.ok, true);
     assert.deepEqual(result.state.groups[0].nodes, ["folder"]);
     assert.deepEqual(result.state.nodes.folder.children, ["n1"]);
+  });
+
+  it("does not revive an old position when the stale parent has an unrelated newer edit", () => {
+    const item = baseData().nodes.n1;
+    const folder = { id: "folder", type: "folder", title: "工作", children: ["n1"], updatedAt: 2000 };
+    const local = baseData({
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["folder"], updatedAt: 2000 }],
+      nodes: { n1: item, folder },
+      lastUpdated: 2000,
+    });
+    const beforeMove = baseData({
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["n1", "folder"], updatedAt: 1000 }],
+      nodes: { n1: item, folder: { ...folder, children: [], updatedAt: 1000 } },
+    });
+    stampChangedPlacementClock(local, collectPlacementSnapshot(beforeMove), {
+      deviceId: "chrome",
+      now: 2000,
+    });
+
+    const stale = baseData({
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["n1", "folder", "other"], updatedAt: 3000 }],
+      nodes: {
+        n1: item,
+        folder: { ...folder, children: [], updatedAt: 1000 },
+        other: { id: "other", type: "item", title: "Other", url: "https://other.example/", updatedAt: 3000 },
+      },
+      lastUpdated: 3000,
+    });
+    stale._syncMeta = {
+      placementClock: {
+        n1: { parentKind: "group", parentId: "grp_all", index: 0, updatedAt: 1000, updatedBy: "firefox" },
+        folder: { parentKind: "group", parentId: "grp_all", index: 1, updatedAt: 1000, updatedBy: "firefox" },
+        other: { parentKind: "group", parentId: "grp_all", index: 2, updatedAt: 3000, updatedBy: "firefox" },
+      },
+    };
+    const remote = toSyncDocument(stale, { deviceId: "firefox", docId: "doc1", revision: 2, writtenAt: 3000 });
+    const result = mergeHomepage(local, remote, { deviceId: "chrome", now: 4000 });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.state.groups[0].nodes, ["folder", "other"]);
+    assert.deepEqual(result.state.nodes.folder.children, ["n1"]);
+    assert.equal(result.state._syncMeta.placementClock.n1.parentId, "folder");
+  });
+
+  it("merges newer fields for existing IDs while add-only import keeps local fields", () => {
+    const local = baseData();
+    const incoming = baseData({
+      nodes: { n1: { ...baseData().nodes.n1, title: "New", updatedAt: 5000, titleUpdatedAt: 5000 } },
+      lastUpdated: 5000,
+    });
+    const addOnly = structuredClone(local);
+    mergeRootBookmarkData(addOnly, structuredClone(incoming));
+    assert.equal(addOnly.nodes.n1.title, "A");
+
+    const remote = toSyncDocument(incoming, { deviceId: "import", docId: "doc-import", writtenAt: 5000 });
+    const merged = mergeHomepage(local, remote, { deviceId: "local", now: 6000 });
+    assert.equal(merged.state.nodes.n1.title, "New");
+  });
+
+  it("removes placement clocks for nodes that are no longer visible", () => {
+    const data = baseData({
+      _syncMeta: {
+        placementClock: {
+          n1: { parentKind: "group", parentId: "grp_all", index: 0, updatedAt: 1000, updatedBy: "dev_a" },
+          deleted: { parentKind: "group", parentId: "grp_all", index: 1, updatedAt: 1000, updatedBy: "dev_a" },
+        },
+      },
+    });
+    stampChangedPlacementClock(data, collectPlacementSnapshot(data), { deviceId: "dev_a", now: 2000 });
+    assert.deepEqual(Object.keys(data._syncMeta.placementClock), ["n1"]);
   });
 
   it("produces the same order regardless of merge direction", () => {

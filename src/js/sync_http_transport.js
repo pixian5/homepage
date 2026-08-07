@@ -22,7 +22,7 @@ function authHeaders(token) {
   return { Authorization: `Bearer ${t}` };
 }
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+async function syncHttpFetchWithTimeout(url, options = {}, timeoutMs = 10000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -41,7 +41,7 @@ export async function httpPullState(cfg) {
   if (!baseUrl) return { ok: false, reason: "no_url" };
   const url = joinUrl(baseUrl, "/v1/sync/state");
   try {
-    const res = await fetchWithTimeout(url, {
+    const res = await syncHttpFetchWithTimeout(url, {
       method: "GET",
       headers: {
         Accept: "application/json",
@@ -86,7 +86,7 @@ export async function httpPushState(cfg, doc, opts = {}) {
     if (opts.ifMatch) headers["If-Match"] = opts.ifMatch;
     if (opts.idempotencyKey) headers["Idempotency-Key"] = opts.idempotencyKey;
 
-    const res = await fetchWithTimeout(url, {
+    const res = await syncHttpFetchWithTimeout(url, {
       method: "PUT",
       headers,
       body: JSON.stringify(doc),
@@ -132,7 +132,7 @@ export async function httpHealth(cfg) {
   const baseUrl = String(cfg?.baseUrl || "").trim();
   if (!baseUrl) return { ok: false, reason: "no_url" };
   try {
-    const res = await fetchWithTimeout(joinUrl(baseUrl, "/health"), {
+    const res = await syncHttpFetchWithTimeout(joinUrl(baseUrl, "/health"), {
       headers: { Accept: "application/json", ...authHeaders(cfg.token) },
     });
     if (!res.ok) return { ok: false, reason: "http_error", status: res.status };

@@ -27,6 +27,49 @@ function truncateTitle(title) {
   return t.slice(0, SYNC_TITLE_MAX_CHARS);
 }
 
+export function collectPlacementSnapshot(data) {
+  const snapshot = {};
+  for (const group of data?.groups || []) {
+    if (!group?.id || group.deletedAt || group.purgedAt) continue;
+    for (const [index, nodeId] of (Array.isArray(group.nodes) ? group.nodes : []).entries()) {
+      if (!nodeId || snapshot[nodeId]) continue;
+      snapshot[nodeId] = { parentKind: "group", parentId: String(group.id), index };
+    }
+  }
+  for (const [folderId, node] of Object.entries(data?.nodes || {})) {
+    if (node?.type !== "folder" || node.deletedAt || node.purgedAt) continue;
+    for (const [index, nodeId] of (Array.isArray(node.children) ? node.children : []).entries()) {
+      if (!nodeId || snapshot[nodeId]) continue;
+      snapshot[nodeId] = { parentKind: "folder", parentId: folderId, index };
+    }
+  }
+  return snapshot;
+}
+
+export function stampChangedPlacementClock(data, baseline, { deviceId, now = Date.now() }) {
+  const current = collectPlacementSnapshot(data);
+  const previous = baseline && typeof baseline === "object" ? baseline : {};
+  const existingClock = data?._syncMeta?.placementClock || {};
+  const clock = {};
+  const changed = [];
+  for (const [nodeId, placement] of Object.entries(current)) {
+    const before = previous[nodeId];
+    if (
+      before?.parentKind === placement.parentKind &&
+      before?.parentId === placement.parentId &&
+      Number(before?.index) === placement.index
+    ) {
+      if (existingClock[nodeId]) clock[nodeId] = existingClock[nodeId];
+      continue;
+    }
+    clock[nodeId] = { ...placement, updatedAt: Number(now) || Date.now(), updatedBy: String(deviceId || "") };
+    changed.push(nodeId);
+  }
+  if (!data._syncMeta || typeof data._syncMeta !== "object") data._syncMeta = {};
+  data._syncMeta.placementClock = clock;
+  return changed;
+}
+
 function projectIcon(node) {
   const iconType = projAsStr(node.iconType || "auto");
   const iconData = projAsStr(node.iconData || "");
@@ -111,6 +154,7 @@ export function toSyncDocument(data, ctx) {
 
   const nodes = [];
   const placements = [];
+  const placementClock = data?._syncMeta?.placementClock || {};
 
   const nodeEntries = new Map(Object.entries(data?.nodes || {}));
   for (const [id, tombstone] of Object.entries(data?._syncMeta?.nodeTombstones || {})) {
@@ -175,8 +219,11 @@ export function toSyncDocument(data, ctx) {
         parentKind: "group",
         parentId: projAsStr(g.id),
         index,
-        updatedAt: projAsNum(g.updatedAt, projAsNum(data?.lastUpdated, now)),
-        updatedBy: projAsStr(g.updatedBy || deviceId),
+        updatedAt: projAsNum(
+          placementClock[nodeId]?.updatedAt,
+          projAsNum(g.updatedAt, projAsNum(data?.lastUpdated, now)),
+        ),
+        updatedBy: projAsStr(placementClock[nodeId]?.updatedBy || g.updatedBy || deviceId),
       });
     });
   }
@@ -192,8 +239,11 @@ export function toSyncDocument(data, ctx) {
         parentKind: "folder",
         parentId: projAsStr(id),
         index,
-        updatedAt: projAsNum(node.updatedAt, projAsNum(data?.lastUpdated, now)),
-        updatedBy: projAsStr(node.updatedBy || deviceId),
+        updatedAt: projAsNum(
+          placementClock[childId]?.updatedAt,
+          projAsNum(node.updatedAt, projAsNum(data?.lastUpdated, now)),
+        ),
+        updatedBy: projAsStr(placementClock[childId]?.updatedBy || node.updatedBy || deviceId),
       });
     });
   }
@@ -340,6 +390,20 @@ export function syncDocumentToHomepageShape(doc) {
       revision: projAsNum(doc?.revision),
       contentHash: doc?.contentHash,
       settingsClock: normalizeSettingsClock(doc?.settingsMeta),
+      placementClock: Object.fromEntries(
+        (doc?.placements || [])
+          .filter((placement) => placement?.nodeId && !placement.deletedAt)
+          .map((placement) => [
+            placement.nodeId,
+            {
+              parentKind: placement.parentKind,
+              parentId: placement.parentId,
+              index: projAsNum(placement.index),
+              updatedAt: projAsNum(placement.updatedAt),
+              updatedBy: projAsStr(placement.updatedBy),
+            },
+          ]),
+      ),
     },
   };
 }

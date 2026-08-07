@@ -367,6 +367,20 @@ export function mergeHomepage(localData, remoteDoc, ctx = {}) {
       revision: mergeAsNum(remoteDoc.revision),
       contentHash: remoteDoc.contentHash,
       settingsClock: normalizeSettingsClock(settingsClock),
+      placementClock: Object.fromEntries(
+        placements
+          .filter((placement) => !placement.deletedAt)
+          .map((placement) => [
+            placement.nodeId,
+            {
+              parentKind: placement.parentKind,
+              parentId: placement.parentId,
+              index: mergeAsNum(placement.index),
+              updatedAt: mergeAsNum(placement.updatedAt),
+              updatedBy: mergeAsStr(placement.updatedBy),
+            },
+          ]),
+      ),
       groupTombstones: mergedGroupTombstones,
     },
   };

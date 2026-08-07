@@ -418,25 +418,50 @@ export function dedupeData(input) {
   let changed = false;
   input.nodes = { ...(input.nodes || {}) };
 
-  // 从根目录按显示顺序深度遍历。先遇到的位置获胜，因此本机已有位置在导入合并时优先保留。
+  // 从根目录按显示顺序深度遍历。显式栈避免恶意或异常深层导入耗尽调用栈。
   const placed = new Set();
   const normalizeList = (list) => {
-    const normalized = [];
-    for (const id of Array.isArray(list) ? list : []) {
+    let result = [];
+    const stack = [
+      {
+        source: Array.isArray(list) ? list : [],
+        index: 0,
+        normalized: [],
+        assign: (value) => {
+          result = value;
+        },
+      },
+    ];
+    if (!Array.isArray(list)) changed = true;
+    while (stack.length) {
+      const frame = stack[stack.length - 1];
+      if (frame.index >= frame.source.length) {
+        frame.assign(frame.normalized);
+        stack.pop();
+        continue;
+      }
+      const id = frame.source[frame.index++];
       const node = input.nodes[id];
       if (!node || node.deletedAt || node.purgedAt || placed.has(id)) {
         changed = true;
         continue;
       }
       placed.add(id);
-      normalized.push(id);
-      if (node.type === "folder") {
-        const children = normalizeList(node.children);
-        if (!Array.isArray(node.children) || children.length !== node.children.length) changed = true;
-        node.children = children;
-      }
+      frame.normalized.push(id);
+      if (node.type !== "folder") continue;
+      const original = node.children;
+      if (!Array.isArray(original)) changed = true;
+      stack.push({
+        source: Array.isArray(original) ? original : [],
+        index: 0,
+        normalized: [],
+        assign: (value) => {
+          if (!Array.isArray(original) || value.length !== original.length) changed = true;
+          node.children = value;
+        },
+      });
     }
-    return normalized;
+    return result;
   };
 
   for (const group of input.groups || []) {

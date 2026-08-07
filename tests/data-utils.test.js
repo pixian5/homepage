@@ -198,6 +198,20 @@ describe("data-utils", () => {
       assert.ok(data.nodes.n1);
     });
 
+    it("handles a 10,000-level folder chain without overflowing the call stack", () => {
+      const nodes = {};
+      for (let index = 0; index < 10_000; index++) {
+        nodes[`f${index}`] = {
+          id: `f${index}`,
+          type: "folder",
+          children: index < 9_999 ? [`f${index + 1}`] : [],
+        };
+      }
+      const data = { groups: [{ id: "g1", nodes: ["f0"] }], nodes };
+      assert.doesNotThrow(() => dedupeData(data));
+      assert.equal(data.nodes.f9999.id, "f9999");
+    });
+
     it("returns false when no changes", () => {
       const data = {
         groups: [{ id: "g1", nodes: ["n1"] }],

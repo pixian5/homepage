@@ -3,6 +3,7 @@
  * Chrome/Firefox 也加载，作为 history 的补充无害。
  */
 import { createItemNode } from "./data-utils.js";
+import { getOrCreateDeviceId } from "./sync_ids.js";
 import { initVisitTrackingInBackground } from "./visit-history.js";
 
 const BING_API_URL = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1";
@@ -50,24 +51,39 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
         sendResponse({ ok: false, error: "invalid_url" });
         return false;
       }
-      chrome.storage.local.get("homepage_data", (result) => {
-        const data = result?.homepage_data;
-        const container = data?.groups?.find((group) => group.id === folderId) || data?.nodes?.[folderId];
-        if (!data?.nodes || !container || (container.type && container.type !== "folder")) {
-          sendResponse({ ok: false, error: "no_folder" });
-          return;
-        }
-        const node = createItemNode({ url, title: tab.title || url, iconType: "auto", iconPending: true });
-        data.nodes[node.id] = node;
-        if (Array.isArray(container.nodes)) container.nodes.push(node.id);
-        else {
-          if (!Array.isArray(container.children)) container.children = [];
-          container.children.push(node.id);
-        }
-        container.updatedAt = Date.now();
-        data.lastUpdated = Date.now();
-        chrome.storage.local.set({ homepage_data: data }, () => sendResponse({ ok: !chrome.runtime.lastError }));
-      });
+      void getOrCreateDeviceId().then((deviceId) =>
+        chrome.storage.local.get("homepage_data", (result) => {
+          const data = result?.homepage_data;
+          const container = data?.groups?.find((group) => group.id === folderId) || data?.nodes?.[folderId];
+          if (!data?.nodes || !container || (container.type && container.type !== "folder")) {
+            sendResponse({ ok: false, error: "no_folder" });
+            return;
+          }
+          const now = Date.now();
+          const node = createItemNode({ url, title: tab.title || url, iconType: "auto", iconPending: true });
+          data.nodes[node.id] = node;
+          if (Array.isArray(container.nodes)) container.nodes.push(node.id);
+          else {
+            if (!Array.isArray(container.children)) container.children = [];
+            container.children.push(node.id);
+          }
+          container.updatedAt = now;
+          if (!data._syncMeta || typeof data._syncMeta !== "object") data._syncMeta = {};
+          if (!data._syncMeta.placementClock || typeof data._syncMeta.placementClock !== "object") {
+            data._syncMeta.placementClock = {};
+          }
+          const list = Array.isArray(container.nodes) ? container.nodes : container.children;
+          data._syncMeta.placementClock[node.id] = {
+            parentKind: Array.isArray(container.nodes) ? "group" : "folder",
+            parentId: container.id,
+            index: list.indexOf(node.id),
+            updatedAt: now,
+            updatedBy: deviceId,
+          };
+          data.lastUpdated = now;
+          chrome.storage.local.set({ homepage_data: data }, () => sendResponse({ ok: !chrome.runtime.lastError }));
+        }),
+      );
       return true;
     }
     if (message?.type === "homepage_open_bookmark") {

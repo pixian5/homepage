@@ -75,6 +75,7 @@
  * @property {Record<string, Node>} nodes
  * @property {BackupSnapshot[]} backups
  * @property {number} lastUpdated
+ * @property {{placementClock?: Record<string, PlacementClock>}} [_syncMeta]
  */
 
 /**
@@ -86,6 +87,16 @@
  * @property {Settings} settings
  * @property {Group[]} groups
  * @property {Record<string, Node>} nodes
+ */
+
+/**
+ * 节点位置的独立同步时钟。父容器发生无关变化时不得更新此记录。
+ * @typedef {Object} PlacementClock
+ * @property {'group'|'folder'} parentKind
+ * @property {string} parentId
+ * @property {number} index
+ * @property {number} updatedAt
+ * @property {string} updatedBy
  */
 
 /**

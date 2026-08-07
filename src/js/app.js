@@ -63,8 +63,14 @@ import {
 } from "./sync_engine.js";
 import { httpHealth, httpPullState } from "./sync_http_transport.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
+import { mergeHomepage } from "./sync_merge.js";
 import { normalizeSyncInterval, SYNC_INTERVAL_OPTIONS, syncBytesBudgetLevel } from "./sync_policy.js";
-import { estimateSyncProjectionBytes } from "./sync_projection.js";
+import {
+  collectPlacementSnapshot,
+  estimateSyncProjectionBytes,
+  stampChangedPlacementClock,
+  toSyncDocument,
+} from "./sync_projection.js";
 import { stampChangedSyncSettings } from "./sync_settings.js";
 import { attachVisitTracking, getVisitHistoryItems, recordVisit } from "./visit-history.js";
 
@@ -1118,6 +1124,7 @@ async function reloadFromStorage() {
     }
   }
   resetSettingsClockBaseline(data);
+  resetPlacementClockBaseline(data);
   const newTs = Number(data?.lastUpdated || 0);
   // merge 提示由 engine onMerged 负责；此处仅非 sync 粗提示
   if (!wasSync && newTs > prevLocalTs && prevLocalTs > 0 && !prevPending) {
@@ -1503,9 +1510,14 @@ function ensureAutoBackupBeforePersist() {
 /** 串行化 persist，避免多路 fire-and-forget 互相覆盖 */
 let _persistChain = Promise.resolve();
 let _settingsClockBaseline = null;
+let _placementClockBaseline = null;
 
 function resetSettingsClockBaseline(source = data) {
   _settingsClockBaseline = deepClone(source?.settings || {});
+}
+
+function resetPlacementClockBaseline(source = data) {
+  _placementClockBaseline = collectPlacementSnapshot(source);
 }
 
 async function stampSettingsClockBeforePersist() {
@@ -1525,6 +1537,22 @@ async function stampSettingsClockBeforePersist() {
   } catch (e) {
     // 设置时钟只服务于跨设备合并，不能阻塞本地保存或新标签页启动。
     console.warn("settings clock skipped", e);
+    return [];
+  }
+}
+
+async function stampPlacementClockBeforePersist() {
+  try {
+    if (!_placementClockBaseline) {
+      resetPlacementClockBaseline(data);
+      return [];
+    }
+    const deviceId = await getOrCreateDeviceId();
+    const changed = stampChangedPlacementClock(data, _placementClockBaseline, { deviceId });
+    resetPlacementClockBaseline(data);
+    return changed;
+  } catch (e) {
+    console.warn("placement clock skipped", e);
     return [];
   }
 }
@@ -1558,6 +1586,7 @@ async function persistData() {
       const changed = dedupeData(data) || allGroupRepaired;
       const tombstonesPruned = pruneSyncTombstones(data);
       const settingsClockChanged = await stampSettingsClockBeforePersist();
+      const placementClockChanged = await stampPlacementClockBeforePersist();
       let warning = null;
       let err = null;
       const err1 = await saveData(data, false);
@@ -1579,6 +1608,9 @@ async function persistData() {
       }
       if (settingsClockChanged.length) {
         debugLog("persist_settings_clock", { settingsClockChanged });
+      }
+      if (placementClockChanged.length) {
+        debugLog("persist_placement_clock", { placementClockChanged });
       }
       if (shouldDebugPersist()) {
         const verify = await loadDataFromArea(false);
@@ -3790,6 +3822,7 @@ function openSettingsModal() {
         data = result.state;
         if (!data.settings) data.settings = {};
         resetSettingsClockBaseline(data);
+        resetPlacementClockBaseline(data);
         // 保持用户当前同步开关
         await persistData();
         render();
@@ -3842,6 +3875,7 @@ function openSettingsModal() {
         data = result.state;
         if (!data.settings) data.settings = {};
         resetSettingsClockBaseline(data);
+        resetPlacementClockBaseline(data);
         await persistData();
         render();
         processPendingIconFetches();
@@ -4181,7 +4215,22 @@ async function openImportModal() {
       pushBackup();
       if (mode === "replace") {
         data = repairedIncoming;
-      } else if (mode === "merge" || mode === "add") {
+        resetSettingsClockBaseline(data);
+        resetPlacementClockBaseline(data);
+      } else if (mode === "merge") {
+        const deviceId = await getOrCreateDeviceId();
+        const incomingDoc = toSyncDocument(repairedIncoming, {
+          deviceId: `import_${deviceId}`,
+          docId: repairedIncoming?._syncMeta?.docId || createDocId(),
+          revision: Number(repairedIncoming?._syncMeta?.revision || 1),
+          writtenAt: Number(repairedIncoming.lastUpdated || Date.now()),
+        });
+        const merged = mergeHomepage(data, incomingDoc, { deviceId, now: Date.now() });
+        if (!merged.ok) throw new Error(merged.reason || "合并失败");
+        data = merged.state;
+        resetSettingsClockBaseline(data);
+        resetPlacementClockBaseline(data);
+      } else if (mode === "add") {
         mergeRootBookmarkData(data, repairedIncoming);
       }
       // 导入完成后对所有节点 URL 做协议白名单校验，丢弃危险协议
@@ -4900,6 +4949,7 @@ async function init() {
       // merge 成功几乎总会 applied；仅当远端 revision 推进，或用户选了「用云端」才提示
       if (stats?.applied) {
         resetSettingsClockBaseline(data);
+        resetPlacementClockBaseline(data);
         if (stats.remoteNewer || stats.choice === "remote") {
           toast(t("toast.syncOverwritten"), "warning");
         }
@@ -4933,6 +4983,7 @@ async function init() {
   }
   syncBackupBaseline(data);
   resetSettingsClockBaseline(data);
+  resetPlacementClockBaseline(data);
   debugLog("init_ready", {
     groups: data.groups?.length || 0,
     nodes: Object.keys(data.nodes || {}).length,

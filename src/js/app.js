@@ -7,13 +7,11 @@ import {
   createItemNode,
   dedupeData,
   ensureAllBookmarksGroup,
-  getGroupProxyFolderId,
-  getLinkedGroup,
+  getRootFolderNodeIds,
   isAllBookmarksGroup,
-  isLinkedGroupFolder,
   isSafeCssColor,
-  markGroupDeleted,
   markNodeDeleted,
+  mergeRootBookmarkData,
   moveNodeInList,
   pruneSyncTombstones,
   repairHomepageData,
@@ -1127,10 +1125,10 @@ async function reloadFromStorage() {
   }
   if (prevActive === RECENT_GROUP_ID) {
     activeGroupId = RECENT_GROUP_ID;
-  } else if (prevActive && data.groups.find((g) => g.id === prevActive)) {
+  } else if (prevActive && getRootContainerById(prevActive)) {
     activeGroupId = prevActive;
   } else {
-    activeGroupId = data.groups?.[0]?.id || RECENT_GROUP_ID;
+    activeGroupId = getRootGroup()?.id || RECENT_GROUP_ID;
   }
   if (prevOpenFolder && data.nodes?.[prevOpenFolder]?.type === "folder") {
     openFolderId = prevOpenFolder;
@@ -1609,12 +1607,31 @@ async function persistData() {
 }
 
 function getActiveGroup() {
-  return data.groups.find((g) => g.id === activeGroupId) || data.groups[0];
+  const root = getRootGroup();
+  if (activeGroupId === root?.id) return root;
+  const folder = data.nodes[activeGroupId];
+  return folder?.type === "folder" && root?.nodes?.includes(folder.id) ? folder : root;
+}
+
+function getRootGroup() {
+  return data.groups.find((group) => isAllBookmarksGroup(group)) || data.groups[0];
+}
+
+function getRootFolderIds() {
+  return getRootFolderNodeIds(data);
+}
+
+function getRootContainers() {
+  const root = getRootGroup();
+  return [root, ...getRootFolderIds().map((id) => data.nodes[id])].filter(Boolean);
+}
+
+function getRootContainerById(id) {
+  return getRootContainers().find((container) => container.id === id) || null;
 }
 
 function getFolderPlacementContainer(folderId) {
-  const folder = data.nodes[folderId];
-  return getLinkedGroup(data, folder) || folder || null;
+  return data.nodes[folderId] || null;
 }
 
 function getPlacementList(container) {
@@ -1631,7 +1648,7 @@ function setPlacementList(container, list) {
 function getCurrentNodes() {
   if (activeGroupId === RECENT_GROUP_ID) return recentItems;
   const group = getActiveGroup();
-  const nodeIds = openFolderId ? getPlacementList(getFolderPlacementContainer(openFolderId)) : group.nodes;
+  const nodeIds = openFolderId ? getPlacementList(getFolderPlacementContainer(openFolderId)) : getPlacementList(group);
   return nodeIds.map((id) => data.nodes[id]).filter(Boolean);
 }
 
@@ -1655,69 +1672,73 @@ function renderGroups() {
   elements.recentTab.setAttribute("aria-label", recentLabel);
   elements.recentTab.textContent = data.settings.sidebarCollapsed ? "" : recentLabel;
   elements.recentTab.dataset.short = t("sidebar.history");
-  [...data.groups]
-    .sort((a, b) => a.order - b.order)
-    .forEach((group, idx) => {
-      const fixedAllGroup = isAllBookmarksGroup(group);
-      const btn = document.createElement("button");
-      btn.className = `group-tab${fixedAllGroup ? "" : " draggable"} ${group.id === activeGroupId ? "active" : ""}`;
-      btn.dataset.label = group.name;
-      btn.setAttribute("aria-label", group.name);
-      btn.textContent = data.settings.sidebarCollapsed ? "" : group.name;
-      btn.dataset.short = String(idx + 1);
-      btn.dataset.groupId = group.id;
-      btn.draggable = !fixedAllGroup;
-      btn.addEventListener("click", (e) => {
-        if (Date.now() < suppressTouchClickUntil) {
-          e.preventDefault();
-          return;
-        }
-        activeGroupId = group.id;
-        openFolderId = null;
-        data.settings.lastActiveGroupId = activeGroupId;
-        queuePersist();
-        render();
-      });
-      btn.addEventListener("contextmenu", (e) => {
+  const root = data.groups.find((group) => isAllBookmarksGroup(group)) || data.groups[0];
+  const sidebarEntries = [
+    root,
+    ...(root?.nodes || []).map((id) => data.nodes[id]).filter((node) => node?.type === "folder"),
+  ].filter(Boolean);
+  sidebarEntries.forEach((group, idx) => {
+    const fixedAllGroup = isAllBookmarksGroup(group);
+    const btn = document.createElement("button");
+    btn.className = `group-tab${fixedAllGroup ? "" : " draggable"} ${group.id === activeGroupId ? "active" : ""}`;
+    const label = fixedAllGroup ? group.name : group.title;
+    btn.dataset.label = label;
+    btn.setAttribute("aria-label", label);
+    btn.textContent = data.settings.sidebarCollapsed ? "" : label;
+    btn.dataset.short = String(idx + 1);
+    btn.dataset.groupId = group.id;
+    btn.draggable = !fixedAllGroup;
+    btn.addEventListener("click", (e) => {
+      if (Date.now() < suppressTouchClickUntil) {
         e.preventDefault();
-        if (!fixedAllGroup) openGroupContextMenu(e.clientX, e.clientY, group);
-      });
-      btn.addEventListener("dragstart", () => {
-        if (fixedAllGroup) return;
-        draggingGroupId = group.id;
-        btn.classList.add("dragging");
-      });
-      btn.addEventListener("dragend", () => {
-        draggingGroupId = null;
-        btn.classList.remove("dragging");
-        qsa(".group-tab", elements.groupTabs).forEach((el) => {
-          el.classList.remove("drop-target");
-        });
-      });
-      btn.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        btn.classList.add("drop-target");
-      });
-      btn.addEventListener("dragleave", () => {
-        btn.classList.remove("drop-target");
-      });
-      btn.addEventListener("drop", (e) => {
-        e.preventDefault();
-        btn.classList.remove("drop-target");
-        if (!draggingGroupId || draggingGroupId === group.id) return;
-        moveGroupBefore(draggingGroupId, group.id);
-      });
-      btn.addEventListener(
-        "touchstart",
-        (e) => {
-          if (e.touches.length !== 1 || fixedAllGroup) return;
-          const touch = e.touches[0];
-          beginTouchLongPress("group", group.id, btn, touch.clientX, touch.clientY);
-        },
-        { passive: true },
-      );
-      elements.groupTabs.appendChild(btn);
+        return;
+      }
+      activeGroupId = group.id;
+      openFolderId = null;
+      data.settings.lastActiveGroupId = activeGroupId;
+      queuePersist();
+      render();
     });
+    btn.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      if (!fixedAllGroup) openGroupContextMenu(e.clientX, e.clientY, group);
+    });
+    btn.addEventListener("dragstart", () => {
+      if (fixedAllGroup) return;
+      draggingGroupId = group.id;
+      btn.classList.add("dragging");
+    });
+    btn.addEventListener("dragend", () => {
+      draggingGroupId = null;
+      btn.classList.remove("dragging");
+      qsa(".group-tab", elements.groupTabs).forEach((el) => {
+        el.classList.remove("drop-target");
+      });
+    });
+    btn.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      btn.classList.add("drop-target");
+    });
+    btn.addEventListener("dragleave", () => {
+      btn.classList.remove("drop-target");
+    });
+    btn.addEventListener("drop", (e) => {
+      e.preventDefault();
+      btn.classList.remove("drop-target");
+      if (!draggingGroupId || draggingGroupId === group.id) return;
+      moveGroupBefore(draggingGroupId, group.id);
+    });
+    btn.addEventListener(
+      "touchstart",
+      (e) => {
+        if (e.touches.length !== 1 || fixedAllGroup) return;
+        const touch = e.touches[0];
+        beginTouchLongPress("group", group.id, btn, touch.clientX, touch.clientY);
+      },
+      { passive: true },
+    );
+    elements.groupTabs.appendChild(btn);
+  });
 }
 
 async function renderGrid() {
@@ -1979,7 +2000,7 @@ function openFolder(folderId) {
   elements.folderOverlay.classList.remove("hidden");
   elements.folderOverlay.setAttribute("aria-hidden", "false");
   const folder = data.nodes[folderId];
-  elements.folderTitle.textContent = getLinkedGroup(data, folder)?.name || folder?.title || t("folder.defaultTitle");
+  elements.folderTitle.textContent = folder?.title || t("folder.defaultTitle");
   render();
   elements.folderGrid.focus({ preventScroll: true });
 }
@@ -1988,15 +2009,10 @@ function findParentFolderId(folderId) {
   if (!folderId) return "";
   for (const node of Object.values(data.nodes || {})) {
     if (node.type !== "folder" || !Array.isArray(node.children)) continue;
+    if (node.id === activeGroupId) continue;
     if (node.children.includes(folderId)) {
       return node.id;
     }
-  }
-  if (activeGroupId === ALL_BOOKMARKS_GROUP_ID) {
-    const linkedParent = data.groups.find(
-      (group) => !isAllBookmarksGroup(group) && Array.isArray(group.nodes) && group.nodes.includes(folderId),
-    );
-    if (linkedParent) return getGroupProxyFolderId(linkedParent.id);
   }
   return "";
 }
@@ -2006,7 +2022,7 @@ function closeFolder() {
   if (parentId) {
     openFolderId = parentId;
     const parent = data.nodes[parentId];
-    elements.folderTitle.textContent = getLinkedGroup(data, parent)?.name || parent?.title || t("folder.defaultTitle");
+    elements.folderTitle.textContent = parent?.title || t("folder.defaultTitle");
     render();
     return;
   }
@@ -2022,13 +2038,12 @@ function closeFolder() {
 }
 
 function toggleSelect(id, index, range) {
-  if (isLinkedGroupFolder(data.nodes[id])) return;
   const nodes = getCurrentNodes();
   if (range && lastSelectedIndex !== null) {
     const start = Math.min(lastSelectedIndex, index);
     const end = Math.max(lastSelectedIndex, index);
     for (let i = start; i <= end; i++) {
-      if (nodes[i] && !isLinkedGroupFolder(nodes[i])) selectedIds.add(nodes[i].id);
+      if (nodes[i]) selectedIds.add(nodes[i].id);
     }
   } else {
     if (selectedIds.has(id)) selectedIds.delete(id);
@@ -2254,7 +2269,7 @@ function finishTouchDrag() {
       moveGroupBefore(sourceId, targetId);
     } else {
       const rect = elements.groupTabs.getBoundingClientRect();
-      const total = data.groups.length;
+      const total = getRootFolderIds().length;
       if (touchDragState.y < rect.top + 24) moveGroupToIndex(sourceId, 0);
       else if (touchDragState.y > rect.bottom - 24) moveGroupToIndex(sourceId, total);
     }
@@ -2298,8 +2313,6 @@ function openContextMenu(x, y, node) {
     actions.push({ label: t("context.openCurrent"), fn: () => openUrl(normalizeUrl(node.url)) });
     actions.push({ label: t("context.openNew"), fn: () => openUrl(normalizeUrl(node.url), "new") });
     actions.push({ label: t("context.openBackground"), fn: () => openUrl(normalizeUrl(node.url), "background") });
-  } else if (isLinkedGroupFolder(node)) {
-    actions.push({ label: t("context.openFolder"), fn: () => openFolder(node.id) });
   } else {
     actions.push({ label: t("context.openFolder"), fn: () => openFolder(node.id) });
     actions.push({ label: t("context.dissolveFolder"), fn: () => dissolveFolder(node.id) });
@@ -2382,7 +2395,6 @@ function handleDropOnTile(targetId, x, y) {
   const targetNode = data.nodes[targetId];
   const sourceNode = data.nodes[sourceId];
   if (!targetNode || !sourceNode) return;
-  if (isLinkedGroupFolder(sourceNode) && isDropOnIcon(targetId, x, y)) return;
 
   const inFolder = !!openFolderId;
   const container = inFolder ? getFolderPlacementContainer(openFolderId) : getActiveGroup();
@@ -2422,15 +2434,9 @@ function handleDropOnTile(targetId, x, y) {
     };
     data.nodes[folderId] = folder;
 
-    if (inFolder) {
-      const next = getPlacementList(container).filter((nid) => nid !== sourceId && nid !== targetId);
-      next.splice(Math.max(0, Math.min(insertIndex, next.length)), 0, folderId);
-      setPlacementList(container, next);
-    } else {
-      const next = container.nodes.filter((nid) => nid !== sourceId && nid !== targetId);
-      next.splice(Math.max(0, Math.min(insertIndex, next.length)), 0, folderId);
-      container.nodes = next;
-    }
+    const next = getPlacementList(container).filter((nid) => nid !== sourceId && nid !== targetId);
+    next.splice(Math.max(0, Math.min(insertIndex, next.length)), 0, folderId);
+    setPlacementList(container, next);
     touchPlacementContainer(container);
     queuePersist();
     render();
@@ -2452,7 +2458,7 @@ function handleDropOnTile(targetId, x, y) {
 
 function dissolveFolder(folderId) {
   const folder = data.nodes[folderId];
-  if (folder?.type !== "folder" || isLinkedGroupFolder(folder)) return;
+  if (folder?.type !== "folder") return;
   const children = Array.isArray(folder.children) ? folder.children.slice() : [];
   pushBackup();
   let replaced = false;
@@ -2477,7 +2483,9 @@ function dissolveFolder(folderId) {
   }
   if (!replaced) {
     const group = getActiveGroup();
-    group.nodes.push(...children);
+    const list = getPlacementList(group);
+    list.push(...children);
+    setPlacementList(group, list);
     touchPlacementContainer(group);
   }
   markNodeDeleted(data, folderId);
@@ -2514,75 +2522,48 @@ function touchPlacementContainer(container) {
 
 function moveGroupBefore(sourceId, targetId) {
   if (isAllBookmarksGroup(sourceId) || isAllBookmarksGroup(targetId)) return;
-  const targetIndex = [...data.groups]
-    .filter((group) => !isAllBookmarksGroup(group))
-    .sort((a, b) => a.order - b.order)
-    .map((g) => g.id)
-    .indexOf(targetId);
+  const targetIndex = getRootFolderIds().indexOf(targetId);
   moveGroupToIndex(sourceId, targetIndex);
 }
 
 function moveGroupToIndex(sourceId, index) {
   if (isAllBookmarksGroup(sourceId)) return;
-  const ordered = [...data.groups]
-    .filter((group) => !isAllBookmarksGroup(group))
-    .sort((a, b) => a.order - b.order)
-    .map((g) => g.id);
-  const ids = ordered.filter((id) => id !== sourceId);
-  const safeIndex = Math.max(0, Math.min(index, ids.length));
-  ids.splice(safeIndex, 0, sourceId);
-  ids.forEach((id, idx) => {
-    const group = data.groups.find((g) => g.id === id);
-    if (group) {
-      group.order = idx;
-      touchPlacementContainer(group);
-    }
-  });
+  const root = getRootGroup();
+  if (!root?.nodes?.includes(sourceId) || data.nodes[sourceId]?.type !== "folder") return;
+  const visible = getRootFolderIds().filter((id) => id !== sourceId);
+  const safeIndex = Math.max(0, Math.min(index, visible.length));
+  const next = root.nodes.filter((id) => id !== sourceId);
+  const targetId = visible[safeIndex];
+  let insertAt = targetId ? next.indexOf(targetId) : next.length;
+  if (!targetId && visible.length) insertAt = next.indexOf(visible[visible.length - 1]) + 1;
+  next.splice(Math.max(0, insertAt), 0, sourceId);
+  root.nodes = next;
+  touchPlacementContainer(root);
   queuePersist();
   render();
 }
 
 function renameGroup(group) {
   if (isAllBookmarksGroup(group)) return;
-  const name = prompt(t("group.promptName"), group.name);
+  const name = prompt(t("group.promptName"), group.title);
   if (!name) return;
-  group.name = name.trim();
+  group.title = name.trim();
   touchPlacementContainer(group);
-  ensureAllBookmarksGroup(data);
   queuePersist();
   render();
 }
 
 function deleteGroup(group) {
   if (isAllBookmarksGroup(group)) return;
-  if (data.groups.filter((item) => !isAllBookmarksGroup(item)).length <= 1) {
-    toast(t("group.keepOne"), "warning");
-    return;
+  if (!confirm(t("group.deleteConfirm", { name: group.title }))) return;
+  if (activeGroupId === group.id) {
+    activeGroupId = ALL_BOOKMARKS_GROUP_ID;
+    data.settings.lastActiveGroupId = ALL_BOOKMARKS_GROUP_ID;
   }
-  if (!confirm(t("group.deleteConfirm", { name: group.name }))) return;
-  pushBackup();
-  // 删除分组时级联删除其下全部节点（含文件夹子孙），避免孤儿占存储
-  const toDelete = new Set();
-  for (const id of group.nodes || []) {
-    for (const nid of collectNodeSubtreeIds(data, id)) toDelete.add(nid);
-  }
-  for (const id of toDelete) {
-    removeNodeFromLocation(id);
-    markNodeDeleted(data, id);
-  }
-  const proxyId = getGroupProxyFolderId(group.id);
-  removeNodeFromLocation(proxyId);
-  markNodeDeleted(data, proxyId);
-  markGroupDeleted(data, group);
-  data.groups = data.groups.filter((g) => g.id !== group.id);
-  if (activeGroupId === group.id) activeGroupId = data.groups[0].id;
-  dedupeData(data);
-  queuePersist();
-  render();
+  deleteNodes([group.id]);
 }
 
 function deleteNodes(ids) {
-  ids = ids.filter((id) => !isLinkedGroupFolder(data.nodes[id]));
   if (!ids.length) return;
   if (activeGroupId === RECENT_GROUP_ID) return;
   pushBackup();
@@ -2960,7 +2941,9 @@ function openAddModal() {
       touchPlacementContainer(targetContainer);
     } else {
       const targetGroup = getActiveGroup();
-      targetGroup.nodes.push(node.id);
+      const targetList = getPlacementList(targetGroup);
+      targetList.push(node.id);
+      setPlacementList(targetGroup, targetList);
       touchPlacementContainer(targetGroup);
       if (activeGroupId === RECENT_GROUP_ID) {
         activeGroupId = targetGroup.id;
@@ -3886,14 +3869,12 @@ function openSettingsModal() {
   lastOpt.value = "";
   lastOpt.textContent = t("settings.lastAddedGroup");
   defaultGroupId.appendChild(lastOpt);
-  [...data.groups]
-    .sort((a, b) => a.order - b.order)
-    .forEach((g) => {
-      const opt = document.createElement("option");
-      opt.value = g.id;
-      opt.textContent = g.name;
-      defaultGroupId.appendChild(opt);
-    });
+  getRootContainers().forEach((g) => {
+    const opt = document.createElement("option");
+    opt.value = g.id;
+    opt.textContent = isAllBookmarksGroup(g) ? g.name : g.title;
+    defaultGroupId.appendChild(opt);
+  });
   const useFixed = data.settings.defaultGroupMode === "fixed" && data.settings.defaultGroupId;
   defaultGroupId.value = useFixed ? data.settings.defaultGroupId : "";
 
@@ -3932,8 +3913,7 @@ function openSettingsModal() {
       data = defaultData();
       data.settings.language = keepLanguage;
       data.settings.syncEnabled = false;
-      if (data.groups?.[0]) data.groups[0].name = t("group.default");
-      activeGroupId = data.groups[0].id;
+      activeGroupId = getRootGroup().id;
       await persistData();
       closeModal();
       render();
@@ -3946,12 +3926,10 @@ function openSettingsModal() {
       pushBackup();
       const preservedSettings = deepClone(data.settings || {});
       for (const id of Object.keys(data.nodes || {})) markNodeDeleted(data, id);
-      for (const group of data.groups || []) markGroupDeleted(data, group);
-      const groupId = `grp_${Date.now()}`;
       data.nodes = {};
-      data.groups = [{ id: groupId, name: t("group.default"), order: 0, nodes: [] }];
+      data.groups = [{ id: ALL_BOOKMARKS_GROUP_ID, name: "全部", order: -1, nodes: [], systemAllGroup: true }];
       data.settings = preservedSettings;
-      activeGroupId = groupId;
+      activeGroupId = ALL_BOOKMARKS_GROUP_ID;
       await persistData();
       closeModal();
       render();
@@ -3997,8 +3975,8 @@ function openSettingsModal() {
       qsa(".group-name", elements.modal).forEach((input) => {
         const row = input.closest("[data-group]");
         const id = row.dataset.group;
-        const group = data.groups.find((g) => g.id === id);
-        if (group) group.name = input.value.trim() || group.name;
+        const group = getRootContainerById(id);
+        if (group && !isAllBookmarksGroup(group)) group.title = input.value.trim() || group.title;
       });
 
       data.settings.showSearch = $("settingShowSearch").checked;
@@ -4203,59 +4181,8 @@ async function openImportModal() {
       pushBackup();
       if (mode === "replace") {
         data = repairedIncoming;
-      } else if (mode === "merge") {
-        const incomingNodes = repairedIncoming.nodes || {};
-        for (const [id, node] of Object.entries(incomingNodes)) {
-          if (!data.nodes[id]) data.nodes[id] = node;
-        }
-        const existingGroups = new Map(data.groups.map((g) => [g.id, g]));
-        const existingIds = new Set(data.groups.map((g) => g.id));
-        const makeGroupId = () => {
-          let id = `grp_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-          while (existingIds.has(id)) {
-            id = `grp_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-          }
-          existingIds.add(id);
-          return id;
-        };
-        for (const group of repairedIncoming.groups || []) {
-          const target = existingGroups.get(group.id);
-          if (!target) {
-            data.groups.push(group);
-            existingGroups.set(group.id, group);
-            continue;
-          }
-          if ((target.name || "") !== (group.name || "")) {
-            const newGroup = { ...group, id: makeGroupId() };
-            data.groups.push(newGroup);
-            existingGroups.set(newGroup.id, newGroup);
-            continue;
-          }
-          const mergedNodes = new Set([...(target.nodes || []), ...(group.nodes || [])]);
-          target.nodes = Array.from(mergedNodes).filter((id) => data.nodes[id] || incomingNodes[id]);
-        }
-      } else if (mode === "add") {
-        const incomingNodes = repairedIncoming.nodes || {};
-        for (const [id, node] of Object.entries(incomingNodes)) {
-          if (!data.nodes[id]) data.nodes[id] = node;
-        }
-        const existingById = new Map(data.groups.map((g) => [g.id, g]));
-        for (const group of repairedIncoming.groups || []) {
-          const target = existingById.get(group.id);
-          if (!target) {
-            data.groups.push(group);
-            existingById.set(group.id, group);
-            continue;
-          }
-          // 同 ID 分组：只追加本地尚不存在的节点引用，避免仅新增节点被孤儿 GC 清掉
-          const have = new Set(target.nodes || []);
-          for (const nid of group.nodes || []) {
-            if (!have.has(nid) && data.nodes[nid]) {
-              target.nodes.push(nid);
-              have.add(nid);
-            }
-          }
-        }
+      } else if (mode === "merge" || mode === "add") {
+        mergeRootBookmarkData(data, repairedIncoming);
       }
       // 导入完成后对所有节点 URL 做协议白名单校验，丢弃危险协议
       if (data?.nodes) {
@@ -4299,14 +4226,13 @@ async function openImportModal() {
 function openImportUrlModal() {
   void leaveSettingsForSubpanel();
 
-  if (!data.groups?.length) {
+  if (!getRootGroup()) {
     toast(t("group.noneAvailable"), "warning");
     return;
   }
   const options = rawHtml(
-    [...data.groups]
-      .sort((a, b) => a.order - b.order)
-      .map((g) => html`<option value="${g.id}">${g.name}</option>`)
+    getRootContainers()
+      .map((g) => html`<option value="${g.id}">${isAllBookmarksGroup(g) ? g.name : g.title}</option>`)
       .join(""),
   );
   const modalHtml = html`
@@ -4328,7 +4254,7 @@ function openImportUrlModal() {
   `;
   openModal(modalHtml);
   const groupSelect = $("importUrlGroup");
-  const defaultGroupId = activeGroupId && activeGroupId !== RECENT_GROUP_ID ? activeGroupId : data.groups[0].id;
+  const defaultGroupId = activeGroupId && activeGroupId !== RECENT_GROUP_ID ? activeGroupId : getRootGroup().id;
   groupSelect.value = defaultGroupId;
 
   const closeWithCleanup = () => {
@@ -4342,7 +4268,7 @@ function openImportUrlModal() {
 
   const importWithScheme = async (scheme) => {
     const groupId = groupSelect.value;
-    const group = data.groups.find((g) => g.id === groupId);
+    const group = getRootContainerById(groupId);
     if (!group) {
       toast(t("group.notFound"), "error");
       return;
@@ -4366,7 +4292,7 @@ function openImportUrlModal() {
       toast(t("import.noUrls"), "warning");
       return;
     }
-    if (!Array.isArray(group.nodes)) group.nodes = [];
+    const targetList = getPlacementList(group);
     pushBackup();
     for (const url of urls) {
       let title = "";
@@ -4377,8 +4303,9 @@ function openImportUrlModal() {
       }
       const node = createItemNode({ url, title, iconType: "auto", iconPending: true });
       data.nodes[node.id] = node;
-      group.nodes.push(node.id);
+      targetList.push(node.id);
     }
+    setPlacementList(group, targetList);
     touchPlacementContainer(group);
     data.settings.lastActiveGroupId = group.id;
     await persistData();
@@ -4799,26 +4726,25 @@ async function _addHistoryToShortcuts(node) {
 
 function getPreferredGroupIdForNewItem() {
   if (data.settings.defaultGroupMode === "fixed" && data.settings.defaultGroupId) {
-    const fixed = data.groups.find((g) => g.id === data.settings.defaultGroupId);
+    const fixed = getRootContainerById(data.settings.defaultGroupId);
     if (fixed) return fixed.id;
   }
   if (data.settings.lastActiveGroupId && data.settings.lastActiveGroupId !== RECENT_GROUP_ID) {
-    const last = data.groups.find((g) => g.id === data.settings.lastActiveGroupId);
+    const last = getRootContainerById(data.settings.lastActiveGroupId);
     if (last) return last.id;
   }
-  return data.groups?.[0]?.id || "";
+  return getRootGroup()?.id || "";
 }
 
 function openAddHistoryToGroup(node) {
   if (!node?.url) return;
-  if (!data.groups?.length) {
+  if (!getRootGroup()) {
     toast(t("group.noneAvailable"), "warning");
     return;
   }
   const options = rawHtml(
-    [...data.groups]
-      .sort((a, b) => a.order - b.order)
-      .map((g) => html`<option value="${g.id}">${g.name}</option>`)
+    getRootContainers()
+      .map((g) => html`<option value="${g.id}">${isAllBookmarksGroup(g) ? g.name : g.title}</option>`)
       .join(""),
   );
   const modalHtml = html`
@@ -4850,7 +4776,7 @@ async function addHistoryToShortcutsInGroup(node, groupId) {
     toast(t("error.invalidUrlSimple"), "error");
     return;
   }
-  const targetGroup = data.groups.find((g) => g.id === groupId);
+  const targetGroup = getRootContainerById(groupId);
   if (!targetGroup) {
     toast(t("group.notFound"), "error");
     return;
@@ -4866,7 +4792,9 @@ async function addHistoryToShortcutsInGroup(node, groupId) {
   }
   const item = createItemNode({ url: safeUrl, title, iconType: "auto", iconPending: true });
   data.nodes[item.id] = item;
-  targetGroup.nodes.push(item.id);
+  const targetList = getPlacementList(targetGroup);
+  targetList.push(item.id);
+  setPlacementList(targetGroup, targetList);
   await persistData();
   render();
   processPendingIconFetches();
@@ -4915,7 +4843,7 @@ function selectTilesInBox(grid, x1, y1, x2, y2) {
   qsa(".tile", grid).forEach((tile) => {
     const rect = tile.getBoundingClientRect();
     const hit = rect.left < right && rect.right > left && rect.top < bottom && rect.bottom > top;
-    if (hit && !isLinkedGroupFolder(data.nodes[tile.dataset.id])) selectedIds.add(tile.dataset.id);
+    if (hit) selectedIds.add(tile.dataset.id);
   });
 }
 
@@ -5015,10 +4943,10 @@ async function init() {
   const preferredGroupId = data.settings.lastActiveGroupId;
   if (preferredGroupId === RECENT_GROUP_ID) {
     activeGroupId = RECENT_GROUP_ID;
-  } else if (preferredGroupId && data.groups.find((g) => g.id === preferredGroupId)) {
+  } else if (preferredGroupId && getRootContainerById(preferredGroupId)) {
     activeGroupId = preferredGroupId;
   } else {
-    activeGroupId = data.groups?.[0]?.id || RECENT_GROUP_ID;
+    activeGroupId = getRootGroup()?.id || RECENT_GROUP_ID;
     data.settings.lastActiveGroupId = activeGroupId;
   }
   recentItems = await recentPromise;
@@ -5066,7 +4994,7 @@ function render() {
   elements.emptyHintToggle.checked = data.settings.emptyHintDisabled;
   elements.btnSelectAll.classList.toggle("hidden", !selectionMode);
   elements.btnBatchDelete.textContent = selectionMode ? t("context.delete") : t("toolbar.batchDelete");
-  elements.btnFolderDissolve.classList.toggle("hidden", isLinkedGroupFolder(data.nodes[openFolderId]));
+  elements.btnFolderDissolve.classList.remove("hidden");
   updateOpenModeButton();
 }
 
@@ -5102,10 +5030,19 @@ function bindEvents() {
     render();
   });
   elements.btnAddGroup.addEventListener("click", () => {
-    const groupId = `grp_${Date.now()}`;
-    data.groups.push({ id: groupId, name: t("group.new"), order: data.groups.length, nodes: [] });
-    ensureAllBookmarksGroup(data);
-    activeGroupId = groupId;
+    const folderId = `fld_${Date.now()}`;
+    data.nodes[folderId] = {
+      id: folderId,
+      type: "folder",
+      title: t("group.new"),
+      children: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const root = getRootGroup();
+    root.nodes.push(folderId);
+    touchPlacementContainer(root);
+    activeGroupId = folderId;
     data.settings.lastActiveGroupId = activeGroupId;
     queuePersist();
     render();
@@ -5161,7 +5098,7 @@ function bindEvents() {
     if (!selectionMode) return;
     const grid = openFolderId ? elements.folderGrid : elements.grid;
     qsa(".tile", grid).forEach((tile) => {
-      if (!isLinkedGroupFolder(data.nodes[tile.dataset.id])) selectedIds.add(tile.dataset.id);
+      selectedIds.add(tile.dataset.id);
     });
     updateSelectionStyles();
   });
@@ -5443,12 +5380,13 @@ function bindEvents() {
     if (openFolderId) return;
     const group = getActiveGroup();
     const index = getDropIndex(elements.grid, e.clientX, e.clientY);
-    const next = moveNodeInList(group.nodes, sourceId, index);
-    if (next === group.nodes) {
+    const list = getPlacementList(group);
+    const next = moveNodeInList(list, sourceId, index);
+    if (next === list) {
       dragState = null;
       return;
     }
-    group.nodes = next;
+    setPlacementList(group, next);
     touchPlacementContainer(group);
     queuePersist();
     render();
@@ -5492,7 +5430,7 @@ function bindEvents() {
     e.preventDefault();
     const rect = elements.groupTabs.getBoundingClientRect();
     const edge = 24;
-    const total = data.groups.length;
+    const total = getRootFolderIds().length;
     if (e.clientY < rect.top + edge) {
       moveGroupToIndex(draggingGroupId, 0);
     } else if (e.clientY > rect.bottom - edge) {

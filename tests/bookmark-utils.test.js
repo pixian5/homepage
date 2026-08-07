@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { collectBookmarkFolders, collectBookmarkItems } from "../src/js/bookmark-utils.js";
-import { ensureAllBookmarksGroup, getGroupProxyFolderId } from "../src/js/data-utils.js";
+import { ensureAllBookmarksGroup, getLegacyGroupFolderId } from "../src/js/data-utils.js";
 
 const data = {
   groups: [{ id: "g1", name: "工作", order: 0, nodes: ["folder", "item-2"] }],
@@ -37,21 +37,21 @@ describe("bookmark-utils", () => {
     ]);
   });
 
-  it("uses all as the single root and exposes linked groups below it", () => {
+  it("uses all as the single root and exposes migrated real folders below it", () => {
     const migrated = structuredClone(data);
     ensureAllBookmarksGroup(migrated);
     assert.deepEqual(
       collectBookmarkFolders(migrated).map((folder) => [folder.id, folder.depth, folder.path.join("/")]),
       [
         ["grp_all", 0, "全部"],
-        [getGroupProxyFolderId("g1"), 1, "全部/工作"],
+        [getLegacyGroupFolderId("g1"), 1, "全部/工作"],
         ["folder", 2, "全部/工作/项目"],
         ["nested", 3, "全部/工作/项目/文档"],
       ],
     );
   });
 
-  it("collects direct all bookmarks together with linked group bookmarks", () => {
+  it("collects direct all bookmarks together with root-folder bookmarks", () => {
     const migrated = structuredClone(data);
     ensureAllBookmarksGroup(migrated);
     migrated.nodes.direct = { id: "direct", type: "item", title: "直达", url: "https://direct.example/" };

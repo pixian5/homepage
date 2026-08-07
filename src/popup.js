@@ -1,5 +1,5 @@
 import { collectBookmarkFolders } from "./js/bookmark-utils.js";
-import { createItemNode, getLinkedGroup } from "./js/data-utils.js";
+import { createItemNode } from "./js/data-utils.js";
 import {
   detectPreferredLanguage,
   getChromeApi,
@@ -357,8 +357,7 @@ async function saveToContainer(tab, selectedContainerId, customTitle = "") {
 
   const group = data.groups.find((g) => g.id === selectedContainerId);
   const folder = !group ? data.nodes[selectedContainerId] : null;
-  const linkedGroup = getLinkedGroup(data, folder);
-  const container = linkedGroup || group || (folder?.type === "folder" ? folder : null);
+  const container = group || (folder?.type === "folder" ? folder : null);
   if (!container) {
     await appendLog({ ts: Date.now(), stage: "no_group" });
     return { error: "no_group" };
@@ -377,7 +376,7 @@ async function saveToContainer(tab, selectedContainerId, customTitle = "") {
     iconPending: true,
   });
   data.nodes[node.id] = node;
-  if (group || linkedGroup) {
+  if (group) {
     if (!Array.isArray(container.nodes)) container.nodes = [];
     container.nodes.push(node.id);
   } else {

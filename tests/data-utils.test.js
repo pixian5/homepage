@@ -9,11 +9,12 @@ import {
   createItemNode,
   dedupeData,
   ensureAllBookmarksGroup,
-  getGroupProxyFolderId,
-  getLinkedGroup,
+  getLegacyGroupFolderId,
+  getRootFolderNodeIds,
   isSafeCssColor,
   markGroupDeleted,
   markNodeDeleted,
+  mergeRootBookmarkData,
   moveNodeInList,
   pickLatestData,
   pruneSyncTombstones,
@@ -343,8 +344,9 @@ describe("data-utils", () => {
         settings: {},
       };
       const repaired = repairHomepageData(data, defaults);
-      assert.deepStrictEqual(Object.keys(repaired.nodes).sort(), [getGroupProxyFolderId("g1"), "n1"].sort());
-      assert.deepStrictEqual(repaired.groups.find((group) => group.id === "g1").nodes, ["n1"]);
+      assert.deepStrictEqual(Object.keys(repaired.nodes).sort(), [getLegacyGroupFolderId("g1"), "n1"].sort());
+      assert.deepStrictEqual(repaired.groups[0].nodes, [getLegacyGroupFolderId("g1")]);
+      assert.deepStrictEqual(repaired.nodes[getLegacyGroupFolderId("g1")].children, ["n1"]);
     });
 
     it("coerces folder children to array", () => {
@@ -366,7 +368,7 @@ describe("data-utils", () => {
         settings: {},
       };
       const repaired = repairHomepageData(data, defaults);
-      assert.deepStrictEqual(repaired.groups.find((group) => group.id === "g1").nodes, ["n1"]);
+      assert.deepStrictEqual(repaired.nodes[getLegacyGroupFolderId("g1")].children, ["n1"]);
     });
 
     it("merges defaults under user settings without clobbering", () => {
@@ -412,25 +414,28 @@ describe("data-utils", () => {
   });
 
   describe("all bookmarks group", () => {
-    it("migrates old data into a fixed all group with linked group folders", () => {
+    it("migrates old groups into real folders under the fixed all root", () => {
       const data = {
         groups: [{ id: "g1", name: "工作", order: 0, nodes: ["n1"] }],
         nodes: { n1: { id: "n1", type: "item", title: "首页" } },
       };
       assert.equal(ensureAllBookmarksGroup(data), true);
       const allGroup = data.groups.find((group) => group.id === ALL_BOOKMARKS_GROUP_ID);
-      const proxyId = getGroupProxyFolderId("g1");
+      const proxyId = getLegacyGroupFolderId("g1");
       assert.equal(data.groups.sort((a, b) => a.order - b.order)[0].id, ALL_BOOKMARKS_GROUP_ID);
       assert.deepEqual(allGroup.nodes, [proxyId]);
-      assert.equal(data.nodes[proxyId].linkedGroupId, "g1");
-      assert.strictEqual(
-        getLinkedGroup(data, proxyId),
-        data.groups.find((group) => group.id === "g1"),
+      assert.deepEqual(
+        data.groups.map((group) => group.id),
+        [ALL_BOOKMARKS_GROUP_ID],
       );
+      assert.deepEqual(data.nodes[proxyId].children, ["n1"]);
+      assert.equal(data.nodes[proxyId].linkedGroupId, undefined);
+      assert.equal(data.backups.length, 1);
+      assert.equal(data._syncMeta.groupTombstones[0].id, "g1");
     });
 
-    it("preserves mixed direct bookmarks and linked group folders", () => {
-      const proxyId = getGroupProxyFolderId("g1");
+    it("preserves mixed direct bookmarks and converted real folders", () => {
+      const proxyId = getLegacyGroupFolderId("g1");
       const data = {
         groups: [
           { id: ALL_BOOKMARKS_GROUP_ID, name: "全部", order: -1, nodes: ["direct", proxyId] },
@@ -451,17 +456,58 @@ describe("data-utils", () => {
       assert.equal(ensureAllBookmarksGroup(data), true);
       assert.equal(ensureAllBookmarksGroup(data), false);
       assert.deepEqual(data.groups[0].nodes, ["direct", proxyId]);
+      assert.equal(data.nodes[proxyId].systemGroupFolder, undefined);
     });
 
-    it("is idempotent and removes proxies for deleted groups", () => {
+    it("is idempotent and keeps real root folders without a second structure", () => {
       const data = { groups: [{ id: "g1", name: "工作", order: 0, nodes: [] }], nodes: {} };
       ensureAllBookmarksGroup(data);
       assert.equal(ensureAllBookmarksGroup(data), false);
-      const proxyId = getGroupProxyFolderId("g1");
-      data.groups = data.groups.filter((group) => group.id !== "g1");
-      assert.equal(ensureAllBookmarksGroup(data), true);
-      assert.equal(data.nodes[proxyId], undefined);
-      assert.deepEqual(data.groups[0].nodes, []);
+      const proxyId = getLegacyGroupFolderId("g1");
+      assert.equal(data.nodes[proxyId].type, "folder");
+      assert.deepEqual(data.groups[0].nodes, [proxyId]);
+      assert.equal(data.groups.length, 1);
+    });
+
+    it("derives the left sidebar by filtering bookmarks out of the all root", () => {
+      const data = {
+        groups: [
+          { id: ALL_BOOKMARKS_GROUP_ID, name: "全部", order: -1, nodes: ["item1", "folder1", "item2", "folder2"] },
+        ],
+        nodes: {
+          item1: { id: "item1", type: "item" },
+          folder1: { id: "folder1", type: "folder", children: [] },
+          item2: { id: "item2", type: "item" },
+          folder2: { id: "folder2", type: "folder", children: [] },
+        },
+      };
+      assert.deepEqual(getRootFolderNodeIds(data), ["folder1", "folder2"]);
+    });
+
+    it("merges imported nodes and folder children into the single root without creating groups", () => {
+      const target = {
+        groups: [{ id: ALL_BOOKMARKS_GROUP_ID, name: "全部", order: -1, nodes: ["local", "folder"] }],
+        nodes: {
+          local: { id: "local", type: "item", title: "本机" },
+          folder: { id: "folder", type: "folder", title: "本机文件夹", children: ["local"] },
+        },
+      };
+      const incoming = {
+        groups: [{ id: ALL_BOOKMARKS_GROUP_ID, name: "全部", order: -1, nodes: ["folder", "remote"] }],
+        nodes: {
+          folder: { id: "folder", type: "folder", title: "云端文件夹", children: ["remote"] },
+          remote: { id: "remote", type: "item", title: "导入" },
+        },
+      };
+
+      assert.equal(mergeRootBookmarkData(target, incoming), true);
+      assert.deepEqual(
+        target.groups.map((group) => group.id),
+        [ALL_BOOKMARKS_GROUP_ID],
+      );
+      assert.deepEqual(target.groups[0].nodes, ["local", "folder", "remote"]);
+      assert.deepEqual(target.nodes.folder.children, ["local", "remote"]);
+      assert.equal(target.nodes.folder.title, "本机文件夹");
     });
   });
 

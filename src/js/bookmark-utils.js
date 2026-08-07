@@ -3,7 +3,7 @@
  * 分组是顶层书签文件夹，folder 节点可以继续嵌套 folder 节点。
  */
 
-import { ALL_BOOKMARKS_GROUP_ID, isLinkedGroupFolder } from "./data-utils.js";
+import { ALL_BOOKMARKS_GROUP_ID } from "./data-utils.js";
 
 function byOrder(left, right) {
   return (
@@ -52,26 +52,7 @@ export function collectBookmarkFolders(data) {
       parentId: "",
     });
     for (const nodeId of Array.isArray(allGroup.nodes) ? allGroup.nodes : []) {
-      const node = data?.nodes?.[nodeId];
-      if (isLinkedGroupFolder(node)) {
-        const linkedGroup = groups.find((group) => group.id === node.linkedGroupId);
-        if (!linkedGroup) continue;
-        const groupName = nodeLabel({ title: linkedGroup.name });
-        folders.push({
-          id: node.id || nodeId,
-          kind: "folder",
-          name: groupName,
-          depth: 1,
-          path: [allName, groupName],
-          groupId: linkedGroup.id,
-          parentId: allGroup.id,
-        });
-        for (const childId of Array.isArray(linkedGroup.nodes) ? linkedGroup.nodes : []) {
-          visit(childId, linkedGroup.id, node.id || nodeId, 2, [allName, groupName]);
-        }
-      } else {
-        visit(nodeId, allGroup.id, allGroup.id, 1, [allName]);
-      }
+      visit(nodeId, allGroup.id, allGroup.id, 1, [allName]);
     }
     return folders;
   }
@@ -130,17 +111,7 @@ export function collectBookmarkItems(data) {
   if (allGroup) {
     const allName = nodeLabel({ title: allGroup.name || "全部" });
     for (const nodeId of Array.isArray(allGroup.nodes) ? allGroup.nodes : []) {
-      const node = data?.nodes?.[nodeId];
-      if (isLinkedGroupFolder(node)) {
-        const linkedGroup = groups.find((group) => group.id === node.linkedGroupId);
-        if (!linkedGroup) continue;
-        const groupName = nodeLabel({ title: linkedGroup.name });
-        for (const childId of Array.isArray(linkedGroup.nodes) ? linkedGroup.nodes : []) {
-          visit(childId, linkedGroup.id, [allName, groupName]);
-        }
-      } else {
-        visit(nodeId, allGroup.id, [allName]);
-      }
+      visit(nodeId, allGroup.id, [allName]);
     }
     return [...items.values()].sort(
       (left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id),

@@ -6,7 +6,7 @@
  * @typedef {import('./types.js').IconCacheEntry} IconCacheEntry
  */
 
-import { ensureAllBookmarksGroup, repairHomepageData } from "./data-utils.js";
+import { ensureAllBookmarksGroup, isAllBookmarksGroup, repairHomepageData } from "./data-utils.js";
 import {
   detectPreferredLanguage,
   estimateBytes,
@@ -29,27 +29,6 @@ const MAX_ICON_CACHE_ENTRIES = 500;
 const STORAGE_SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en", "ja", "ko", "de", "fr", "es"];
 export const deepClone = (obj) =>
   typeof structuredClone === "function" ? structuredClone(obj) : JSON.parse(JSON.stringify(obj));
-
-function getDefaultGroupNameByLanguage(language) {
-  switch (language) {
-    case "zh-TW":
-      return "預設";
-    case "en":
-      return "Default";
-    case "ja":
-      return "デフォルト";
-    case "ko":
-      return "기본";
-    case "de":
-      return "Standard";
-    case "fr":
-      return "Par defaut";
-    case "es":
-      return "Predeterminado";
-    default:
-      return "默认";
-  }
-}
 
 /**
  * 默认设置配置
@@ -103,11 +82,10 @@ function nowTs() {
 
 function createDefaultData() {
   const language = detectPreferredLanguage(STORAGE_SUPPORTED_LANGUAGES);
-  const groupId = `grp_${nowTs()}`;
   const data = {
     schemaVersion: 1,
     settings: { ...DEFAULT_SETTINGS, language },
-    groups: [{ id: groupId, name: getDefaultGroupNameByLanguage(language), order: 0, nodes: [] }],
+    groups: [{ id: "grp_all", name: "全部", order: -1, nodes: [], systemAllGroup: true }],
     nodes: {},
     backups: [],
     lastUpdated: nowTs(),
@@ -315,7 +293,9 @@ export async function loadData() {
   }
   data = migrateData(data) || base;
   data.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
+  const migratedRootModel = Array.isArray(data.groups) && data.groups.some((group) => !isAllBookmarksGroup(group));
   data = repairHomepageData(data, DEFAULT_SETTINGS);
+  if (migratedRootModel) await storageSetLocal(local, { [ROOT_KEY]: data });
   return data;
 }
 

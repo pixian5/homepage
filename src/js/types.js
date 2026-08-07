@@ -27,7 +27,7 @@
  */
 
 /**
- * 分组对象
+ * 唯一根目录对象。运行时 groups 只保留 ID 为 grp_all 的这一项。
  * @typedef {Object} Group
  * @property {string} id
  * @property {string} name
@@ -49,8 +49,6 @@
  * @property {boolean} [iconPending]
  * @property {number} createdAt
  * @property {number} updatedAt
- * @property {string} [linkedGroupId]
- * @property {boolean} [systemGroupFolder]
  */
 
 /**

@@ -50,25 +50,7 @@
         group: true,
       });
       for (const id of Array.isArray(allGroup.nodes) ? allGroup.nodes : []) {
-        const node = data?.nodes?.[id];
-        if (node?.systemGroupFolder === true && node.linkedGroupId) {
-          const linkedGroup = groups.find((group) => group?.id === node.linkedGroupId);
-          if (!linkedGroup) continue;
-          const groupName = String(linkedGroup.name || "默认");
-          folders.push({
-            id: node.id || id,
-            title: groupName,
-            path: [allName, groupName],
-            depth: 1,
-            groupId: linkedGroup.id,
-            parentId: allGroup.id,
-          });
-          for (const childId of Array.isArray(linkedGroup.nodes) ? linkedGroup.nodes : []) {
-            visit(childId, linkedGroup.id, [allName, groupName], 2, node.id || id);
-          }
-        } else {
-          visit(id, allGroup.id, [allName], 1, allGroup.id);
-        }
+        visit(id, allGroup.id, [allName], 1, allGroup.id);
       }
     } else {
       for (const group of groups) {

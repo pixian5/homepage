@@ -233,7 +233,34 @@ describe("storage", async () => {
     const loaded = await loadDataFromArea(false);
     assert.ok(loaded);
     assert.equal(loaded.lastUpdated, 123);
-    assert.deepEqual(loaded.groups.find((group) => group.id === "g1").nodes, []);
+    assert.deepEqual(
+      loaded.groups.map((group) => group.id),
+      ["grp_all"],
+    );
+    assert.deepEqual(loaded.nodes.fld_group_g1.children, []);
+  });
+
+  it("loadData persists the one-root migration and its backup", async () => {
+    const key = getStorageKey();
+    stored[key] = {
+      schemaVersion: 1,
+      groups: [{ id: "g1", name: "工作", order: 0, nodes: ["n1"] }],
+      nodes: { n1: { id: "n1", type: "item", title: "首页", url: "https://example.com" } },
+      backups: [],
+      lastUpdated: 123,
+      settings: {},
+    };
+    const loaded = await loadData();
+    assert.deepEqual(
+      loaded.groups.map((group) => group.id),
+      ["grp_all"],
+    );
+    assert.deepEqual(loaded.nodes.fld_group_g1.children, ["n1"]);
+    assert.equal(loaded.backups.length, 1);
+    assert.deepEqual(
+      stored[key].groups.map((group) => group.id),
+      ["grp_all"],
+    );
   });
 
   it("evictIconCacheLRU preserves attempts on failed entries", () => {

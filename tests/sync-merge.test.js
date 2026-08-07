@@ -21,7 +21,7 @@ function baseData(overrides = {}) {
   return {
     schemaVersion: 1,
     settings: { language: "zh-CN", syncEnabled: true, showSearch: true },
-    groups: [{ id: "g1", name: "默认", order: 0, nodes: ["n1"], updatedAt: 1000, updatedBy: "dev_a" }],
+    groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["n1"], updatedAt: 1000, updatedBy: "dev_a" }],
     nodes: {
       n1: {
         id: "n1",
@@ -136,32 +136,26 @@ describe("toSyncDocument", () => {
     assert.equal(doc.settingsMeta.syncServerToken, undefined);
   });
 
-  it("roundtrips linked group folder metadata", () => {
+  it("roundtrips a real root folder and its children", () => {
     const data = baseData({
-      groups: [
-        { id: "grp_all", name: "全部", order: -1, nodes: ["proxy"], updatedAt: 1000 },
-        { id: "g1", name: "工作", order: 0, nodes: ["n1"], updatedAt: 1000 },
-      ],
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["folder"], updatedAt: 1000 }],
       nodes: {
         ...baseData().nodes,
-        proxy: {
-          id: "proxy",
+        folder: {
+          id: "folder",
           type: "folder",
           title: "工作",
-          children: [],
-          linkedGroupId: "g1",
-          systemGroupFolder: true,
+          children: ["n1"],
           updatedAt: 1000,
         },
       },
     });
     const doc = toSyncDocument(data, { deviceId: "dev_a", docId: "doc1", revision: 1 });
-    const proxy = doc.nodes.find((node) => node.id === "proxy");
-    assert.equal(proxy.linkedGroupId, "g1");
-    assert.equal(proxy.systemGroupFolder, true);
+    assert.ok(doc.placements.some((row) => row.nodeId === "folder" && row.parentId === "grp_all"));
+    assert.ok(doc.placements.some((row) => row.nodeId === "n1" && row.parentId === "folder"));
     const restored = syncDocumentToHomepageShape(doc);
-    assert.equal(restored.nodes.proxy.linkedGroupId, "g1");
-    assert.equal(restored.nodes.proxy.systemGroupFolder, true);
+    assert.deepEqual(restored.groups[0].nodes, ["folder"]);
+    assert.deepEqual(restored.nodes.folder.children, ["n1"]);
   });
 
   it("projects invisible group tombstones", () => {
@@ -196,7 +190,7 @@ describe("mergeHomepage", () => {
   it("S3 both sides add different nodes keeps both", () => {
     const local = baseData();
     const remoteData = baseData({
-      groups: [{ id: "g1", name: "默认", order: 0, nodes: ["n2"], updatedAt: 2000, updatedBy: "dev_b" }],
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["n2"], updatedAt: 2000, updatedBy: "dev_b" }],
       nodes: {
         n2: {
           id: "n2",
@@ -220,7 +214,7 @@ describe("mergeHomepage", () => {
     assert.equal(result.ok, true);
     assert.ok(result.state.nodes.n1);
     assert.ok(result.state.nodes.n2);
-    const g = result.state.groups.find((x) => x.id === "g1");
+    const g = result.state.groups.find((x) => x.id === "grp_all");
     assert.ok(g.nodes.includes("n1"));
     assert.ok(g.nodes.includes("n2"));
   });
@@ -242,7 +236,7 @@ describe("mergeHomepage", () => {
           updatedBy: "dev_b",
         },
       },
-      groups: [{ id: "g1", name: "默认", order: 0, nodes: [], updatedAt: 3000, updatedBy: "dev_b" }],
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: [], updatedAt: 3000, updatedBy: "dev_b" }],
       lastUpdated: 3000,
     });
     // force tombstone into projection by keeping deleted node in data.nodes
@@ -264,7 +258,7 @@ describe("mergeHomepage", () => {
 
   it("keeps a local delete tombstone when the remote still has the old live node", () => {
     const local = baseData({
-      groups: [{ id: "g1", name: "默认", order: 0, nodes: [], updatedAt: 3000, updatedBy: "dev_a" }],
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: [], updatedAt: 3000, updatedBy: "dev_a" }],
       nodes: {
         n1: {
           id: "n1",
@@ -487,7 +481,7 @@ describe("sync_bundle", () => {
     _setDeviceIdForTests("dev_test");
     const local = baseData();
     const other = baseData({
-      groups: [{ id: "g1", name: "默认", order: 0, nodes: ["n9"], updatedAt: 4000, updatedBy: "dev_c" }],
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["n9"], updatedAt: 4000, updatedBy: "dev_c" }],
       nodes: {
         n9: {
           id: "n9",

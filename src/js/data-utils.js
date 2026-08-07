@@ -15,17 +15,22 @@ const cloneValue = (value) =>
   typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
 
 export const ALL_BOOKMARKS_GROUP_ID = "grp_all";
-const GROUP_PROXY_FOLDER_PREFIX = "fld_group_";
+const LEGACY_GROUP_FOLDER_PREFIX = "fld_group_";
 
-export function getGroupProxyFolderId(groupId) {
-  return `${GROUP_PROXY_FOLDER_PREFIX}${String(groupId || "")}`;
+export function getLegacyGroupFolderId(groupId) {
+  return `${LEGACY_GROUP_FOLDER_PREFIX}${String(groupId || "")}`;
 }
 
 export function isAllBookmarksGroup(groupOrId) {
   return String(typeof groupOrId === "object" ? groupOrId?.id || "" : groupOrId || "") === ALL_BOOKMARKS_GROUP_ID;
 }
 
-export function isLinkedGroupFolder(node) {
+export function getRootFolderNodeIds(data) {
+  const root = (data?.groups || []).find((group) => isAllBookmarksGroup(group));
+  return (root?.nodes || []).filter((id) => data?.nodes?.[id]?.type === "folder");
+}
+
+function isLinkedGroupFolder(node) {
   return !!(
     node?.type === "folder" &&
     node.systemGroupFolder === true &&
@@ -34,16 +39,15 @@ export function isLinkedGroupFolder(node) {
   );
 }
 
-export function getLinkedGroup(data, nodeOrId) {
-  const node = typeof nodeOrId === "string" ? data?.nodes?.[nodeOrId] : nodeOrId;
-  if (!isLinkedGroupFolder(node)) return null;
-  return (data?.groups || []).find((group) => group?.id === node.linkedGroupId && !isAllBookmarksGroup(group)) || null;
+function createRootModelMigrationBackup(data) {
+  if (!(data?.groups || []).some((group) => !isAllBookmarksGroup(group))) return;
+  const snapshotData = cloneValue(data);
+  snapshotData.backups = [];
+  if (!Array.isArray(data.backups)) data.backups = [];
+  data.backups.unshift({ id: `bak_root_model_${Date.now()}`, ts: Date.now(), data: snapshotData });
 }
 
-/**
- * 确保固定“全部”分组及每个普通分组对应的代理文件夹存在。
- * 代理文件夹不复制 children；运行时通过 linkedGroupId 直接读写普通分组的 nodes。
- */
+/** 将旧版多分组/代理结构迁移为“全部”唯一根目录。 */
 export function ensureAllBookmarksGroup(data, name = "全部") {
   if (!data || typeof data !== "object") return false;
   let changed = false;
@@ -73,68 +77,116 @@ export function ensureAllBookmarksGroup(data, name = "全部") {
     changed = true;
   }
 
-  const ordinaryGroups = data.groups.filter((group) => group?.id && !isAllBookmarksGroup(group));
-  const validProxyIds = new Set();
+  const ordinaryGroups = data.groups
+    .filter((group) => group?.id && !isAllBookmarksGroup(group))
+    .sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+  if (ordinaryGroups.length) createRootModelMigrationBackup(data);
+
   for (const group of ordinaryGroups) {
-    const proxyId = getGroupProxyFolderId(group.id);
-    validProxyIds.add(proxyId);
-    let proxy = data.nodes[proxyId];
-    if (!proxy || !isLinkedGroupFolder(proxy)) {
-      proxy = {
-        id: proxyId,
+    let folderId = getLegacyGroupFolderId(group.id);
+    let folder = data.nodes[folderId];
+    if (folder && folder.type !== "folder") {
+      folderId = `fld_root_${group.id}`;
+      folder = data.nodes[folderId];
+    }
+    const useLegacyGroupMetadata = !folder || isLinkedGroupFolder(folder);
+    if (folder?.type !== "folder") {
+      folder = {
+        id: folderId,
         type: "folder",
         title: String(group.name || "未命名"),
         children: [],
-        linkedGroupId: group.id,
-        systemGroupFolder: true,
         createdAt: Number(group.createdAt || group.updatedAt || Date.now()),
         updatedAt: Number(group.updatedAt || Date.now()),
       };
-      data.nodes[proxyId] = proxy;
-      changed = true;
+      data.nodes[folderId] = folder;
     }
-    if (
-      proxy.title !== String(group.name || "未命名") ||
-      proxy.linkedGroupId !== group.id ||
-      proxy.systemGroupFolder !== true ||
-      !Array.isArray(proxy.children) ||
-      proxy.children.length
-    ) {
-      proxy.title = String(group.name || "未命名");
-      proxy.linkedGroupId = group.id;
-      proxy.systemGroupFolder = true;
-      proxy.children = [];
-      changed = true;
-    }
-    if (!allGroup.nodes.includes(proxyId)) {
-      allGroup.nodes.push(proxyId);
-      changed = true;
-    }
+    if (useLegacyGroupMetadata) folder.title = String(group.name || folder.title || "未命名");
+    folder.children = [
+      ...new Set([
+        ...(Array.isArray(folder.children) ? folder.children : []),
+        ...(Array.isArray(group.nodes) ? group.nodes : []),
+      ]),
+    ];
+    delete folder.linkedGroupId;
+    delete folder.systemGroupFolder;
+    if (!allGroup.nodes.includes(folderId)) allGroup.nodes.push(folderId);
+    if (data.settings?.lastActiveGroupId === group.id) data.settings.lastActiveGroupId = folderId;
+    if (data.settings?.defaultGroupId === group.id) data.settings.defaultGroupId = folderId;
+    markGroupDeleted(data, group);
+    changed = true;
   }
 
+  for (const node of Object.values(data.nodes)) {
+    if (!isLinkedGroupFolder(node)) continue;
+    delete node.linkedGroupId;
+    delete node.systemGroupFolder;
+    if (!Array.isArray(node.children)) node.children = [];
+    changed = true;
+  }
+
+  if (data.groups.length !== 1 || data.groups[0] !== allGroup) {
+    data.groups = [allGroup];
+    changed = true;
+  }
   const seen = new Set();
-  const nextAllNodes = [];
-  for (const id of allGroup.nodes) {
+  allGroup.nodes = allGroup.nodes.filter((id) => {
     if (!data.nodes[id] || seen.has(id)) {
       changed = true;
-      continue;
-    }
-    const node = data.nodes[id];
-    if (isLinkedGroupFolder(node) && !validProxyIds.has(id)) {
-      delete data.nodes[id];
-      changed = true;
-      continue;
+      return false;
     }
     seen.add(id);
-    nextAllNodes.push(id);
+    return true;
+  });
+  if (!data._syncMeta || typeof data._syncMeta !== "object") {
+    data._syncMeta = {};
+    changed = true;
   }
-  allGroup.nodes = nextAllNodes;
+  if (data._syncMeta.rootModelVersion !== 1) {
+    data._syncMeta.rootModelVersion = 1;
+    changed = true;
+  }
+  return changed;
+}
 
-  for (const [id, node] of Object.entries(data.nodes)) {
-    if (isLinkedGroupFolder(node) && !validProxyIds.has(id)) {
-      delete data.nodes[id];
+/**
+ * 将已修复的导入数据合并到当前唯一根目录模型。
+ * 同 ID 节点以本机为准；文件夹 children 与根节点引用只追加缺失项，不覆盖本机顺序和元数据。
+ */
+export function mergeRootBookmarkData(target, incoming) {
+  if (!target || typeof target !== "object" || !incoming || typeof incoming !== "object") return false;
+  ensureAllBookmarksGroup(target);
+  ensureAllBookmarksGroup(incoming);
+  const targetRoot = target.groups.find((group) => isAllBookmarksGroup(group));
+  const incomingRoot = incoming.groups.find((group) => isAllBookmarksGroup(group));
+  if (!targetRoot || !incomingRoot) return false;
+
+  let changed = false;
+  for (const [id, node] of Object.entries(incoming.nodes || {})) {
+    if (target.nodes[id]) continue;
+    target.nodes[id] = cloneValue(node);
+    changed = true;
+  }
+
+  for (const [id, incomingNode] of Object.entries(incoming.nodes || {})) {
+    const targetNode = target.nodes[id];
+    if (targetNode?.type !== "folder" || incomingNode?.type !== "folder") continue;
+    if (!Array.isArray(targetNode.children)) targetNode.children = [];
+    const have = new Set(targetNode.children);
+    for (const childId of incomingNode.children || []) {
+      if (have.has(childId) || !target.nodes[childId]) continue;
+      targetNode.children.push(childId);
+      have.add(childId);
       changed = true;
     }
+  }
+
+  const rootIds = new Set(targetRoot.nodes);
+  for (const id of incomingRoot.nodes || []) {
+    if (rootIds.has(id) || !target.nodes[id]) continue;
+    targetRoot.nodes.push(id);
+    rootIds.add(id);
+    changed = true;
   }
   return changed;
 }

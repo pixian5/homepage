@@ -41,6 +41,26 @@ async function fetchBingWallpaper(language) {
 
 if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === "homepage_open_bookmark") {
+      const url = String(message.url || "");
+      const settings = message.settings || {};
+      if (!/^https?:\/\//i.test(url)) {
+        sendResponse({ ok: false, error: "invalid_url" });
+        return false;
+      }
+      const mode = settings.openMode || "current";
+      const tabId = _sender?.tab?.id;
+      const action =
+        mode === "new" || !tabId
+          ? chrome.tabs.create({ url })
+          : mode === "background"
+            ? chrome.tabs.create({ url, active: false })
+            : chrome.tabs.update(tabId, { url });
+      Promise.resolve(action)
+        .then(() => sendResponse({ ok: true }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || "open_failed" }));
+      return true;
+    }
     if (message?.type !== "homepage.fetchBingWallpaper") return undefined;
     fetchBingWallpaper(message.language)
       .then((result) => sendResponse({ ok: true, ...result }))

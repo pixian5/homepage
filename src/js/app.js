@@ -3481,11 +3481,11 @@ function openSettingsModal() {
         </div>
         <div class="row-inline settings-sync-actions">
           <button type="button" id="btnSyncTestServer" class="icon-btn">${t("settings.sync.testServer")}</button>
+          <button type="button" id="btnSyncNow" class="icon-btn">${t("settings.sync.now")}</button>
         </div>
       </div>
       <div id="syncStatusLine" class="settings-sync-status"></div>
       <div class="row-inline settings-sync-actions">
-        <button type="button" id="btnSyncNow" class="icon-btn">${t("settings.sync.now")}</button>
         <button type="button" id="btnSyncResolveConflict" class="icon-btn hidden">${t("settings.sync.state.conflict")}</button>
         <button type="button" id="btnSyncExportBundle" class="icon-btn">${t("settings.sync.exportBundle")}</button>
         <button type="button" id="btnSyncImportBundle" class="icon-btn">${t("settings.sync.importBundle")}</button>

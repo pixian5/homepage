@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "我的首页",
-  "version": "22.4",
+  "version": "22.5",
   "description": "自定义新标签页",
   "action": {
     "default_title": "保存当前网页",
@@ -20,7 +20,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["js/content-toast.js"]
+      "js": ["js/content-toast.js", "js/bookmark-sidebar.js"]
     }
   ],
   "content_security_policy": {

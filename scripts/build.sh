@@ -180,6 +180,18 @@ normalize_safari_project_bundle_ids() {
   perl -0pi -e "s/PRODUCT_BUNDLE_IDENTIFIER = \\Q${extension_bundle_id}\\E;/PRODUCT_BUNDLE_IDENTIFIER = ${target_extension_bundle_id};/g" "$pbxproj_file"
 }
 
+normalize_safari_project_versions() {
+  local project_file="$1"
+  local pbxproj_file="$project_file/project.pbxproj"
+
+  if [[ ! -f "$pbxproj_file" ]]; then
+    echo "[build] Skip Safari version synchronization: pbxproj not found"
+    return 0
+  fi
+
+  node "$ROOT_DIR/scripts/sync-safari-version.mjs" "$pbxproj_file" "$ROOT_DIR/package.json"
+}
+
 normalize_safari_host_app_sources() {
   local project_root="$1"
   local project_file="$project_root/$SAFARI_APP_NAME.xcodeproj/project.pbxproj"
@@ -276,6 +288,7 @@ build_safari_project() {
       --no-prompt
     normalize_safari_project_signing "$project_file"
     normalize_safari_project_bundle_ids "$project_file"
+    normalize_safari_project_versions "$project_file"
     normalize_safari_host_app_sources "$project_root"
     sync_safari_project_resources "$project_root"
     fix_safari_extension_info_plist "$project_root"
@@ -297,6 +310,7 @@ build_safari_project() {
       project_root="$(dirname "$project_file")"
       normalize_safari_project_signing "$project_file"
       normalize_safari_project_bundle_ids "$project_file"
+      normalize_safari_project_versions "$project_file"
       normalize_safari_host_app_sources "$project_root"
       sync_safari_project_resources "$project_root"
       fix_safari_extension_info_plist "$project_root"

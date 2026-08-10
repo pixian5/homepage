@@ -1,6 +1,6 @@
 {
   "name": "newtab-extension",
-  "version": "23.9",
+  "version": "24.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "lint": "biome lint src scripts tests *.json",
     "format": "biome format --write src scripts tests *.json",
     "test": "node --test",
+    "test:sync-e2e": "node scripts/run-browser-sync-e2e.mjs",
     "sync-server": "node scripts/sync-server.mjs"
   },
   "devDependencies": {

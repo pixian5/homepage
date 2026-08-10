@@ -60,3 +60,23 @@
 - Chrome 与 Firefox 的扩展本地存储在测试前后分别计算 SHA-256，恢复后哈希与各自备份完全一致。
 - 云端测试数据恢复到基线后为 revision 6；忽略 revision 的规范化 SHA-256 前后均为 `2b3d3c8ad05f3567643fba2e96a43307a52c6dcf37b5716212d7e446a7e30e9e`。
 - 测试端点和生产端点在无 Token 时均返回 HTTP 401；测试服务继续保留，服务器临时上传文件已清理。
+
+## 可重复浏览器门禁（24.0）
+
+真实公网测试已经收敛为仓库脚本，不再依赖 `/tmp` 中的手工协调器：
+
+```bash
+HOMEPAGE_E2E_TOKEN='<测试服务 Token>' npm run test:sync-e2e
+```
+
+也可以通过 `HOMEPAGE_E2E_BASE_URL`、`CHROME_E2E_BINARY`、`FIREFOX_E2E_BINARY` 覆盖默认测试端点和浏览器路径。程序只接受已经存在远端状态的隔离测试服务，以便任何写入前都能生成可恢复备份。
+
+门禁执行以下安全与恢复步骤：
+
+1. 先通过 authenticated GET 备份完整云端文档，并将备份以权限 600 写入忽略提交的 `test-results/browser-sync-e2e/`。
+2. Token 只写入权限 600 的临时扩展配置；本机协调器没有 `/config` 接口，不通过 HTTP 返回 Token。
+3. 协调器只允许 `chrome-extension://` 与 `moz-extension://` 来源，并要求每次运行随机生成的 `X-E2E-Session` nonce。
+4. Chrome for Testing 与 Firefox Developer Edition 均使用新建的独立 Profile；所有布尔检查都执行硬断言，浏览器失败、超时、恢复失败或哈希不一致都会让命令非零退出。
+5. 无论成功或失败，程序都会结束临时浏览器、恢复云端备份、重新拉取比较规范化 SHA-256，并生成不含 Token 的 `report.json`。
+
+普通 `npm test` 另外覆盖协调器来源/nonce 验证、重复幂等键不增加 revision，以及真实端口从不可达恢复后重试成功。公网浏览器门禁需要显式提供测试 Token，不会在普通单元测试中自动运行。

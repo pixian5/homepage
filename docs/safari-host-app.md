@@ -19,3 +19,6 @@ Safari Web Extension 转换出的宿主 App 会通过 `SFSafariApplication.showP
 
 构建脚本会复用已有 Xcode 工程，所以修改此类宿主 App 行为时需要同时更新模板和当前生成工程源文件。
 
+## 版本同步
+
+构建时 `scripts/sync-safari-version.mjs` 会读取根目录 `package.json`，把扩展版本同步到 Safari Xcode 工程所有宿主和扩展配置的 `MARKETING_VERSION`。`CURRENT_PROJECT_VERSION` 使用相同版本转换出的单调数字，例如 `24.0 -> 2400`，避免 `.app`/`.appex` 长期停留在转换器默认的 `1.0 (1)`。

@@ -7,3 +7,4 @@ node_modules/
 # sync server local state
 data/
 logs/
+test-results/

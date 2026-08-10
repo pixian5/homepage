@@ -17,6 +17,7 @@ import {
   moveNodeToFolder,
   pruneSyncTombstones,
   repairHomepageData,
+  stampNodeFieldChanges,
 } from "./data-utils.js";
 import {
   applyFailureToCache,
@@ -66,7 +67,12 @@ import {
 import { httpHealth, httpPullState } from "./sync_http_transport.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
 import { mergeHomepage } from "./sync_merge.js";
-import { normalizeSyncInterval, SYNC_INTERVAL_OPTIONS, syncBytesBudgetLevel } from "./sync_policy.js";
+import {
+  nextSyncTimestamp,
+  normalizeSyncInterval,
+  SYNC_INTERVAL_OPTIONS,
+  syncBytesBudgetLevel,
+} from "./sync_policy.js";
 import {
   collectPlacementSnapshot,
   estimateSyncProjectionBytes,
@@ -2475,13 +2481,15 @@ function handleDropOnTile(targetId, x, y) {
     removeNodeFromLocation(targetId);
 
     const folderId = `fld_${Date.now()}`;
+    const createdAt = Date.now();
     const folder = {
       id: folderId,
       type: "folder",
       title: t("folder.newTitle"),
       children: [targetId, sourceId],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt,
+      updatedAt: createdAt,
+      titleUpdatedAt: createdAt,
     };
     data.nodes[folderId] = folder;
 
@@ -2577,7 +2585,13 @@ function moveDraggedNodeToSidebarFolder(nodeId, folderId) {
 
 function touchPlacementContainer(container) {
   if (!container || typeof container !== "object") return;
-  container.updatedAt = Date.now();
+  container.updatedAt = nextSyncTimestamp(
+    Date.now(),
+    container.updatedAt,
+    container.titleUpdatedAt,
+    container.nameUpdatedAt,
+    container.orderUpdatedAt,
+  );
   // 投影时为空会自动写入当前设备 ID，保证同一时间的并发变更可确定裁决。
   container.updatedBy = "";
 }
@@ -2609,8 +2623,10 @@ function renameGroup(group) {
   if (isAllBookmarksGroup(group)) return;
   const name = prompt(t("group.promptName"), group.title);
   if (!name) return;
-  group.title = name.trim();
-  touchPlacementContainer(group);
+  const nextTitle = name.trim();
+  if (nextTitle === group.title) return;
+  stampNodeFieldChanges(group, { titleChanged: true });
+  group.title = nextTitle;
   queuePersist();
   render();
 }
@@ -3193,6 +3209,9 @@ function openEditModal(node) {
 
     const oldUrl = node.url;
     const oldIconType = node.iconType;
+    const titleChanged = node.title !== nextTitle;
+    const urlChanged = node.type === "item" && oldUrl !== nextUrl;
+    stampNodeFieldChanges(node, { titleChanged, urlChanged });
 
     node.title = nextTitle;
     if (node.type === "item") {
@@ -3212,7 +3231,6 @@ function openEditModal(node) {
         node.iconData = "";
       }
 
-      const urlChanged = oldUrl !== url;
       const iconTypeChanged = oldIconType !== iconType;
       const shouldRefetchIcon = urlChanged || (iconTypeChanged && iconType === "auto");
 
@@ -3223,7 +3241,6 @@ function openEditModal(node) {
         }
       }
     }
-    node.updatedAt = Date.now();
     const result = await persistData();
     if (!result.ok) {
       data = snapshot;
@@ -4040,7 +4057,13 @@ function openSettingsModal() {
         const row = input.closest("[data-group]");
         const id = row.dataset.group;
         const group = getRootContainerById(id);
-        if (group && !isAllBookmarksGroup(group)) group.title = input.value.trim() || group.title;
+        if (group && !isAllBookmarksGroup(group)) {
+          const nextTitle = input.value.trim() || group.title;
+          if (nextTitle !== group.title) {
+            stampNodeFieldChanges(group, { titleChanged: true });
+            group.title = nextTitle;
+          }
+        }
       });
 
       data.settings.showSearch = $("settingShowSearch").checked;
@@ -4275,6 +4298,7 @@ async function openImportModal() {
               if (Array.isArray(g.nodes)) g.nodes = g.nodes.filter((nid) => nid !== id);
             }
           } else {
+            if (node.url !== safe) stampNodeFieldChanges(node, { urlChanged: true });
             node.url = safe;
           }
         }
@@ -4439,6 +4463,7 @@ function openBackupModal() {
               if (Array.isArray(g.nodes)) g.nodes = g.nodes.filter((nid) => nid !== id);
             }
           } else {
+            if (node.url !== safe) stampNodeFieldChanges(node, { urlChanged: true });
             node.url = safe;
           }
         }
@@ -4530,6 +4555,7 @@ async function fetchTitleInBackground(nodeId, url) {
   if (!title) return;
   const target = data?.nodes?.[nodeId];
   if (!target?.titlePending) return;
+  stampNodeFieldChanges(target, { titleChanged: true });
   target.title = title;
   target.titlePending = false;
   await persistData();
@@ -5112,13 +5138,15 @@ function bindEvents() {
   });
   elements.btnAddGroup.addEventListener("click", () => {
     const folderId = `fld_${Date.now()}`;
+    const createdAt = Date.now();
     data.nodes[folderId] = {
       id: folderId,
       type: "folder",
       title: t("group.new"),
       children: [],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt,
+      updatedAt: createdAt,
+      titleUpdatedAt: createdAt,
     };
     const root = getRootGroup();
     root.nodes.push(folderId);

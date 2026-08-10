@@ -21,6 +21,7 @@ import {
   pickLatestData,
   pruneSyncTombstones,
   repairHomepageData,
+  stampNodeFieldChanges,
 } from "../src/js/data-utils.js";
 
 describe("data-utils", () => {
@@ -321,6 +322,19 @@ describe("data-utils", () => {
     });
   });
 
+  describe("stampNodeFieldChanges", () => {
+    it("backfills legacy field clocks before advancing only the changed field", () => {
+      const node = { id: "n1", type: "item", title: "A", url: "https://a.example/", updatedAt: 1000 };
+
+      stampNodeFieldChanges(node, { urlChanged: true, now: 2000 });
+
+      assert.equal(node.titleUpdatedAt, 1000);
+      assert.equal(node.urlUpdatedAt, 2000);
+      assert.equal(node.updatedAt, 2000);
+      assert.equal(node.updatedBy, "");
+    });
+  });
+
   describe("collectNodeSubtreeIds", () => {
     it("collects folder and nested children", () => {
       const data = {
@@ -350,7 +364,7 @@ describe("data-utils", () => {
       assert.equal(data._syncMeta.groupTombstones[0].deletedAt, 1000);
     });
 
-    it("prunes only expired tombstones", () => {
+    it("retains old tombstones until the protocol has device acknowledgements", () => {
       const now = 10_000_000_000;
       const data = {
         nodes: {
@@ -364,13 +378,26 @@ describe("data-utils", () => {
           ],
         },
       };
-      assert.equal(pruneSyncTombstones(data, now), true);
-      assert.equal(data.nodes.old, undefined);
+      assert.equal(pruneSyncTombstones(data, now), false);
+      assert.ok(data.nodes.old);
       assert.ok(data.nodes.recent);
       assert.deepEqual(
         data._syncMeta.groupTombstones.map((group) => group.id),
-        ["recent-group"],
+        ["old-group", "recent-group"],
       );
+    });
+
+    it("deletes with a clock newer than a future-dated node", () => {
+      const future = 4_102_444_800_000;
+      const data = {
+        groups: [{ id: "g1", nodes: ["n1"] }],
+        nodes: { n1: { id: "n1", type: "item", title: "A", updatedAt: future } },
+      };
+
+      const tombstone = markNodeDeleted(data, "n1");
+
+      assert.ok(tombstone.deletedAt > future);
+      assert.equal(tombstone.updatedAt, tombstone.deletedAt);
     });
   });
 

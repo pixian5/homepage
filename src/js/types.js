@@ -49,6 +49,8 @@
  * @property {boolean} [iconPending]
  * @property {number} createdAt
  * @property {number} updatedAt
+ * @property {number} [titleUpdatedAt]
+ * @property {number} [urlUpdatedAt]
  */
 
 /**
@@ -60,6 +62,7 @@
  * @property {string[]} children
  * @property {number} createdAt
  * @property {number} updatedAt
+ * @property {number} [titleUpdatedAt]
  */
 
 /**

@@ -8,7 +8,7 @@
  * @typedef {import('./types.js').Settings} Settings
  */
 
-import { SYNC_TOMBSTONE_TTL_MS } from "./sync_policy.js";
+import { nextSyncTimestamp, SYNC_TOMBSTONE_TTL_MS } from "./sync_policy.js";
 
 let _itemSeq = 0;
 const cloneValue = (value) =>
@@ -225,7 +225,30 @@ export function createItemNode({
     iconPending,
     createdAt: now,
     updatedAt: now,
+    titleUpdatedAt: now,
+    urlUpdatedAt: now,
   };
+}
+
+/**
+ * 在本地节点修改前补齐旧数据的字段时钟，并推进实际变化字段。
+ * @param {object} node
+ * @param {{titleChanged?: boolean, urlChanged?: boolean, now?: number}} changes
+ * @returns {number}
+ */
+export function stampNodeFieldChanges(node, { titleChanged = false, urlChanged = false, now = Date.now() } = {}) {
+  if (!node || typeof node !== "object") return Number(now) || Date.now();
+  const baseline = Number(node.updatedAt) || Number(now) || Date.now();
+  if (!Number.isFinite(Number(node.titleUpdatedAt)) || Number(node.titleUpdatedAt) <= 0) node.titleUpdatedAt = baseline;
+  if (node.type === "item" && (!Number.isFinite(Number(node.urlUpdatedAt)) || Number(node.urlUpdatedAt) <= 0)) {
+    node.urlUpdatedAt = baseline;
+  }
+  const updatedAt = nextSyncTimestamp(now, node.updatedAt, node.titleUpdatedAt, node.urlUpdatedAt);
+  if (titleChanged) node.titleUpdatedAt = updatedAt;
+  if (node.type === "item" && urlChanged) node.urlUpdatedAt = updatedAt;
+  node.updatedAt = updatedAt;
+  node.updatedBy = "";
+  return updatedAt;
 }
 
 /**
@@ -383,28 +406,50 @@ function ensureSyncMeta(data) {
 }
 
 /** 将节点移到不可见墓碑层，避免删除后被远端旧数据复活。 */
-export function markNodeDeleted(data, id, deletedAt = Date.now()) {
+export function markNodeDeleted(data, id, deletedAt) {
   const node = data?.nodes?.[id] || data?._syncMeta?.nodeTombstones?.[id];
   if (!node) return null;
+  const deletionClock =
+    deletedAt === undefined
+      ? nextSyncTimestamp(
+          Date.now(),
+          node.updatedAt,
+          node.titleUpdatedAt,
+          node.urlUpdatedAt,
+          node.deletedAt,
+          node.purgedAt,
+        )
+      : deletedAt;
   const meta = ensureSyncMeta(data);
   if (!meta.nodeTombstones || typeof meta.nodeTombstones !== "object") meta.nodeTombstones = {};
-  const tombstone = { ...cloneValue(node), updatedAt: deletedAt, deletedAt };
+  const tombstone = { ...cloneValue(node), updatedAt: deletionClock, deletedAt: deletionClock };
   delete data.nodes[id];
   meta.nodeTombstones[id] = tombstone;
   return tombstone;
 }
 
 /** 将分组移到不可见墓碑层；界面仍只使用 data.groups 中的活动分组。 */
-export function markGroupDeleted(data, group, deletedAt = Date.now()) {
+export function markGroupDeleted(data, group, deletedAt) {
   if (!group?.id) return null;
+  const deletionClock =
+    deletedAt === undefined
+      ? nextSyncTimestamp(
+          Date.now(),
+          group.updatedAt,
+          group.nameUpdatedAt,
+          group.orderUpdatedAt,
+          group.deletedAt,
+          group.purgedAt,
+        )
+      : deletedAt;
   const meta = ensureSyncMeta(data);
   const list = Array.isArray(meta.groupTombstones) ? meta.groupTombstones : [];
-  const tombstone = { ...cloneValue(group), nodes: [], updatedAt: deletedAt, deletedAt };
+  const tombstone = { ...cloneValue(group), nodes: [], updatedAt: deletionClock, deletedAt: deletionClock };
   meta.groupTombstones = [...list.filter((item) => item?.id !== group.id), tombstone];
   return tombstone;
 }
 
-/** 清理超过保留期的墓碑，避免长期删除操作撑爆同步额度。 */
+/** 仅在策略允许时清理墓碑；无逐设备确认时保留期为无限。 */
 export function pruneSyncTombstones(data, now = Date.now()) {
   let changed = false;
   const cutoff = now - SYNC_TOMBSTONE_TTL_MS;

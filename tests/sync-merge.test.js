@@ -5,6 +5,7 @@ import { exportSyncBundle, importSyncBundle } from "../src/js/sync_bundle.js";
 import { _setDeviceIdForTests, createDocId } from "../src/js/sync_ids.js";
 import { mergeHomepage, mergeNode, mergePlacements, newerField } from "../src/js/sync_merge.js";
 import {
+  nextSyncTimestamp,
   normalizeSyncInterval,
   SYNC_TOTAL_SOFT_BYTES,
   syncBytesBudgetLevel,
@@ -49,6 +50,11 @@ describe("sync_policy", () => {
     assert.equal(syncBytesBudgetLevel(0), "green");
     assert.equal(syncBytesBudgetLevel(SYNC_TOTAL_SOFT_BYTES), "yellow");
     assert.equal(syncBytesBudgetLevel(999999), "red");
+  });
+
+  it("advances past an observed future clock", () => {
+    const future = 4_102_444_800_000;
+    assert.equal(nextSyncTimestamp(2_000, future), future + 1);
   });
 
   it("sync interval normalize and ms", () => {
@@ -630,6 +636,92 @@ describe("mergePlacements", () => {
 
     assert.deepEqual(mergePlacements([oldPlacement], [movedPlacement]), [movedPlacement]);
     assert.deepEqual(mergePlacements([movedPlacement], [oldPlacement]), [movedPlacement]);
+  });
+});
+
+describe("sync regression coverage", () => {
+  it("reports an identical repeated remote merge as not applied", () => {
+    const remote = toSyncDocument(baseData(), {
+      deviceId: "dev_b",
+      docId: "doc1",
+      revision: 2,
+      writtenAt: 2000,
+    });
+    const first = mergeHomepage(baseData(), remote, { deviceId: "dev_a", now: 2100 });
+    assert.equal(first.ok, true);
+    const second = mergeHomepage(first.state, remote, { deviceId: "dev_a", now: 2200 });
+
+    assert.equal(second.ok, true);
+    assert.equal(second.stats.applied, false);
+  });
+
+  it("keeps independent title and url edits when field clocks are present", () => {
+    const local = baseData();
+    local.nodes.n1.urlUpdatedAt = 1000;
+    local.nodes.n1.title = "Title from A";
+    local.nodes.n1.titleUpdatedAt = 3000;
+    local.nodes.n1.updatedAt = 3000;
+    local.nodes.n1.updatedBy = "dev_a";
+    const remoteData = baseData();
+    remoteData.nodes.n1.titleUpdatedAt = 1000;
+    remoteData.nodes.n1.url = "https://edited.example/";
+    remoteData.nodes.n1.urlUpdatedAt = 3100;
+    remoteData.nodes.n1.updatedAt = 3100;
+    remoteData.nodes.n1.updatedBy = "dev_b";
+    const remote = toSyncDocument(remoteData, {
+      deviceId: "dev_b",
+      docId: "doc1",
+      revision: 2,
+      writtenAt: 3100,
+    });
+
+    const result = mergeHomepage(local, remote, { deviceId: "dev_a", now: 3200 });
+
+    assert.equal(result.state.nodes.n1.title, "Title from A");
+    assert.equal(result.state.nodes.n1.url, "https://edited.example/");
+  });
+
+  it("allows a local edit to advance past a remote future clock", () => {
+    const future = 4_102_444_800_000;
+    const remoteData = baseData();
+    remoteData.nodes.n1.title = "Future title";
+    remoteData.nodes.n1.titleUpdatedAt = future;
+    remoteData.nodes.n1.updatedAt = future;
+    remoteData.nodes.n1.updatedBy = "dev_future";
+    const remote = toSyncDocument(remoteData, {
+      deviceId: "dev_future",
+      docId: "doc1",
+      revision: 2,
+      writtenAt: future,
+    });
+    const received = mergeHomepage(baseData(), remote, { deviceId: "dev_a", now: 2000 }).state;
+    const localClock = nextSyncTimestamp(3000, received.nodes.n1.updatedAt, received.nodes.n1.titleUpdatedAt);
+    received.nodes.n1.title = "Recovered local title";
+    received.nodes.n1.titleUpdatedAt = localClock;
+    received.nodes.n1.updatedAt = localClock;
+    received.nodes.n1.updatedBy = "dev_a";
+
+    const result = mergeHomepage(received, remote, { deviceId: "dev_a", now: 4000 });
+
+    assert.equal(result.state.nodes.n1.title, "Recovered local title");
+  });
+
+  it("retains a 61-day tombstone so an offline node cannot revive", () => {
+    const day = 24 * 60 * 60 * 1000;
+    const deleted = baseData();
+    markNodeDeleted(deleted, "n1", 10_000);
+    deleted.groups[0].nodes = [];
+    const remote = toSyncDocument(deleted, {
+      deviceId: "dev_a",
+      docId: "doc1",
+      revision: 2,
+      writtenAt: 10_000 + 61 * day,
+    });
+
+    assert.ok(remote.nodes.some((node) => node.id === "n1" && node.deletedAt === 10_000));
+    const result = mergeHomepage(baseData(), remote, { deviceId: "dev_b", now: 10_000 + 61 * day });
+    assert.equal(result.state.nodes.n1.deletedAt, 10_000);
+    assert.equal(result.state.groups[0].nodes.includes("n1"), false);
   });
 });
 

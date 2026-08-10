@@ -10,8 +10,11 @@ export const SYNC_SHARD_MAX_BYTES = 7000;
 export const SYNC_TOTAL_SOFT_BYTES = 60_000;
 export const SYNC_TOTAL_HARD_BYTES = 90_000;
 
-/** 墓碑保留时间 */
-export const SYNC_TOMBSTONE_TTL_MS = 60 * 24 * 60 * 60 * 1000;
+/**
+ * 墓碑保留时间。
+ * 当前协议没有逐设备删除确认，有限 TTL 会让长期离线设备复活旧节点，因此保守地永久保留。
+ */
+export const SYNC_TOMBSTONE_TTL_MS = Number.POSITIVE_INFINITY;
 
 /** Outbox 退避（对齐 Pass 思路） */
 export const SYNC_OUTBOX_MAX_ATTEMPTS = 12;
@@ -76,6 +79,22 @@ export const SYNC_SHARD_KEY_PREFIX = "homepage_sync_s";
 export const SYNC_OUTBOX_KEY = "homepage_sync_outbox";
 export const SYNC_STATE_KEY = "homepage_sync_state";
 export const DEVICE_ID_KEY = "homepage_device_id";
+
+/**
+ * 生成严格大于已观察时钟的本地逻辑时间，避免错误的未来系统时间永久锁死编辑。
+ * @param {number} wallClockNow
+ * @param {...unknown} observed
+ * @returns {number}
+ */
+export function nextSyncTimestamp(wallClockNow = Date.now(), ...observed) {
+  let next = Number.isFinite(Number(wallClockNow)) ? Math.max(0, Math.floor(Number(wallClockNow))) : Date.now();
+  for (const value of observed) {
+    const clock = Number(value);
+    if (!Number.isFinite(clock) || clock < 0) continue;
+    next = Math.max(next, Math.min(Number.MAX_SAFE_INTEGER - 1, Math.floor(clock)) + 1);
+  }
+  return next;
+}
 
 /** 可进入同步投影的 settings 白名单 */
 export const SYNC_SETTINGS_WHITELIST = [

@@ -237,6 +237,15 @@ function collectActiveIds(data) {
   return ids;
 }
 
+function syncContentFingerprint(data, deviceId, docId) {
+  return toSyncDocument(data, {
+    deviceId,
+    docId: docId || "doc_compare",
+    revision: 0,
+    writtenAt: 0,
+  }).contentHash;
+}
+
 /**
  * 主合并入口
  * @param {object} localData HomepageData
@@ -411,11 +420,15 @@ export function mergeHomepage(localData, remoteDoc, ctx = {}) {
     };
   }
 
+  const applied =
+    syncContentFingerprint(localData, deviceId, remoteDoc.docId) !==
+    syncContentFingerprint(state, deviceId, remoteDoc.docId);
+
   return {
     ok: true,
     state,
     stats: {
-      applied: true,
+      applied,
       groups: state.groups.length,
       nodes: Object.keys(state.nodes).length,
       remoteRevision: mergeAsNum(remoteDoc.revision),

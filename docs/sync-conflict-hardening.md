@@ -44,3 +44,19 @@
 - 删除 61 天后，旧离线节点仍不能复活。
 - 网络失败后重试成功，幂等键不重复增加 revision。
 - 测试结束后使用备份恢复隔离云端，规范化哈希与基线一致。
+
+## 真实公网双端验收（2026-08-10）
+
+在 `sf.sbbz.tech` 上保留生产同步端口 `58443`，另建隔离测试端口 `58444`。测试服务使用独立的 systemd 单元、低权限用户、数据目录、Token 和 Caddy 反向代理，测试期间所有请求只指向 `https://sf.sbbz.tech:58444`，不写入生产端点。
+
+浏览器 A 使用独立 Profile 的 Google Chrome for Testing 加载 Chrome 23.8 产物，浏览器 B 使用独立 Profile 的 Firefox Developer Edition 加载 Firefox 23.8 产物。正式版 Chrome 151 已忽略命令行 `--load-extension`，因此自动化验收使用官方 Chrome for Testing；用户默认 Chrome Profile 未被修改。
+
+真实浏览器与公网服务完成以下检查：
+
+- 两端均从 revision 1 拉取同一基线，并发新增时第二端收到 HTTP 412，合并重试后推进到 revision 3。
+- 两端都确认新增节点并集完整，节点总数为 3。
+- A 修改标题、B 修改 URL，第二次 HTTP 412 合并重试后推进到 revision 5，两个字段均保留。
+- 两端重复合并均为无变化；未来时钟后的本地编辑可恢复；过期墓碑仍阻止旧离线节点复活。
+- Chrome 与 Firefox 的扩展本地存储在测试前后分别计算 SHA-256，恢复后哈希与各自备份完全一致。
+- 云端测试数据恢复到基线后为 revision 6；忽略 revision 的规范化 SHA-256 前后均为 `2b3d3c8ad05f3567643fba2e96a43307a52c6dcf37b5716212d7e446a7e30e9e`。
+- 测试端点和生产端点在无 Token 时均返回 HTTP 401；测试服务继续保留，服务器临时上传文件已清理。

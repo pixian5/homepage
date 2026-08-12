@@ -294,7 +294,7 @@ export async function loadData() {
   }
   let data = got.value;
   const stableData = await readSafariStableHomepage(api);
-  if (shouldRestoreSafariStableHomepage(data, stableData)) {
+  if (shouldRestoreSafariStableHomepage(data, stableData, base)) {
     data = stableData;
     const restoreError = await storageSetLocal(local, { [ROOT_KEY]: data });
     if (restoreError) console.error("loadData: failed to restore Safari stable homepage storage");

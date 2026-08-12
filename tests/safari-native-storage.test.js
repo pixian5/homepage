@@ -32,10 +32,33 @@ describe("Safari stable native storage", () => {
   });
 
   it("restores only when local storage is missing or unexpectedly empty", () => {
-    const stable = { nodes: { a: {} } };
-    assert.equal(shouldRestoreSafariStableHomepage(null, stable), true);
-    assert.equal(shouldRestoreSafariStableHomepage({ nodes: {} }, stable), true);
-    assert.equal(shouldRestoreSafariStableHomepage({ nodes: { b: {} } }, stable), false);
-    assert.equal(shouldRestoreSafariStableHomepage({ nodes: {} }, { nodes: {} }), false);
+    const fallback = {
+      nodes: {},
+      backups: [],
+      groups: [{ id: "grp_all", nodes: [], systemAllGroup: true }],
+      settings: { theme: "system" },
+    };
+    const stable = { ...fallback, nodes: { a: {} } };
+    assert.equal(shouldRestoreSafariStableHomepage(null, stable, fallback), true);
+    assert.equal(shouldRestoreSafariStableHomepage(fallback, stable, fallback), true);
+    assert.equal(shouldRestoreSafariStableHomepage({ ...fallback, nodes: { b: {} } }, stable, fallback), false);
+    assert.equal(shouldRestoreSafariStableHomepage(fallback, fallback, fallback), false);
+  });
+
+  it("restores settings and backups even when both stores have zero nodes", () => {
+    const fallback = {
+      nodes: {},
+      backups: [],
+      groups: [{ id: "grp_all", nodes: [], systemAllGroup: true }],
+      settings: { theme: "system" },
+    };
+    assert.equal(
+      shouldRestoreSafariStableHomepage(fallback, { ...fallback, settings: { theme: "dark" } }, fallback),
+      true,
+    );
+    assert.equal(
+      shouldRestoreSafariStableHomepage(fallback, { ...fallback, backups: [{ id: "backup" }] }, fallback),
+      true,
+    );
   });
 });

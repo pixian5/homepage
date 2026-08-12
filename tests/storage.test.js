@@ -150,6 +150,23 @@ describe("storage", async () => {
     assert.deepEqual(Object.keys(stored[getStorageKey()].nodes), ["n1"]);
   });
 
+  it("Safari restores App Group backups when a generated empty local payload has zero nodes", async () => {
+    const local = defaultData();
+    const stable = defaultData();
+    stable.settings.theme = "dark";
+    stable.backups = [{ id: "saved", ts: 1, data: { nodes: {}, groups: [], backups: [] } }];
+    stored[getStorageKey()] = local;
+    global.chrome.runtime.getURL = () => "safari-web-extension://test/";
+    global.chrome.runtime.sendNativeMessage = (_app, message, callback) => {
+      callback(message.type === "homepage.storage.read" ? { ok: true, data: stable } : { ok: true });
+    };
+
+    const loaded = await loadData();
+    assert.equal(loaded.settings.theme, "dark");
+    assert.equal(loaded.backups.length, 1);
+    assert.equal(stored[getStorageKey()].backups.length, 1);
+  });
+
   it("Safari keeps non-empty local data instead of overwriting it from App Group", async () => {
     const local = defaultData();
     local.nodes.local = { id: "local", type: "item", title: "本地", url: "https://local.example" };

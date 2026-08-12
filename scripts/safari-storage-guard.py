@@ -164,9 +164,11 @@ def verify(snapshot_dir: Path, restore_on_regression: bool) -> dict[str, object]
     directory = target_directory()
     actual_rows = read_rows(directory / "LocalStorage.db")
     actual = homepage_metrics(actual_rows)
+    # Safari 已在快照前退出，安装期间不存在合法用户写入；任何 payload 哈希变化
+    # 都代表更新过程改写了数据。节点数/字节数无法发现设置或备份被默认值替换。
     regression = bool(expected["hasHomepageData"]) and (
-        int(actual["nodeCount"]) < int(expected["nodeCount"])
-        or int(actual["homepageBytes"]) < int(expected["homepageBytes"])
+        not bool(actual["hasHomepageData"])
+        or actual["homepageSha256"] != expected["homepageSha256"]
     )
     restored = False
     if regression and restore_on_regression:

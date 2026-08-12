@@ -343,6 +343,7 @@ tests/                   单元测试（storage / icons / bing-wallpaper / bump-
 - 获取当前标签页：`getCurrentTab()`（含 `chrome.runtime.lastError` 检查）。
 - 保存后优先向当前页面注入 toast（消息通信 + 内容脚本兜底）。
 - 内容脚本：[src/js/content-toast.js](file:///Users/x/code/homepage/src/js/content-toast.js)（含 `__homepageToastInjected` 注入守卫）。
+- 点击扩展图标时，弹窗会在三个操作项下方显示所有普通书签（含分组路径和 URL）；点击条目沿用 `settings.openMode` 打开。
 
 ## 7. 同步与配额策略
 

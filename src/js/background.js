@@ -24,6 +24,48 @@ function toDataUrl(buffer, contentType) {
   return `data:${contentType || "image/jpeg"};base64,${btoa(binary)}`;
 }
 
+function queryActiveTab() {
+  if (!chrome.tabs?.query) return Promise.resolve(null);
+  const query = { active: true, lastFocusedWindow: true };
+  const pickWebTab = (tabs) =>
+    (Array.isArray(tabs) ? tabs : []).find((tab) => {
+      const url = String(tab?.url || "");
+      return Number.isInteger(tab?.id) && !/^(?:chrome|edge|about|safari-web-extension):/i.test(url);
+    }) || null;
+  return new Promise((resolve) => {
+    try {
+      const result = chrome.tabs.query(query, (tabs) => {
+        if (chrome.runtime?.lastError) return resolve(null);
+        resolve(pickWebTab(tabs));
+      });
+      if (typeof result?.then === "function")
+        result.then((tabs) => resolve(pickWebTab(tabs))).catch(() => resolve(null));
+    } catch (_error) {
+      resolve(null);
+    }
+  });
+}
+
+function isWebTab(tab) {
+  const url = String(tab?.url || "");
+  return Number.isInteger(tab?.id) && !/^(?:chrome|edge|about|safari-web-extension):/i.test(url);
+}
+
+function queryWebTabById(tabId) {
+  if (!Number.isInteger(tabId) || !chrome.tabs?.get) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      const result = chrome.tabs.get(tabId, (tab) =>
+        resolve(chrome.runtime?.lastError ? null : isWebTab(tab) ? tab : null),
+      );
+      if (typeof result?.then === "function")
+        result.then((tab) => resolve(isWebTab(tab) ? tab : null)).catch(() => resolve(null));
+    } catch (_error) {
+      resolve(null);
+    }
+  });
+}
+
 async function fetchBingWallpaper(language) {
   const metadata = await fetch(bingApiUrl(language), { cache: "no-store" });
   if (!metadata.ok) throw new Error(`bing api http ${metadata.status}`);
@@ -90,19 +132,33 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
     if (message?.type === "homepage_open_bookmark") {
       const url = String(message.url || "");
       const settings = message.settings || {};
-      if (!/^https?:\/\//i.test(url)) {
+      if (!/^(?:https?|ftp):\/\//i.test(url)) {
         sendResponse({ ok: false, error: "invalid_url" });
         return false;
       }
       const mode = settings.openMode || "current";
-      const tabId = _sender?.tab?.id;
-      const action =
-        mode === "new" || !tabId
-          ? chrome.tabs.create({ url })
-          : mode === "background"
-            ? chrome.tabs.create({ url, active: false })
-            : chrome.tabs.update(tabId, { url });
-      Promise.resolve(action)
+      const senderTabId = _sender?.tab?.id;
+      const senderUrl = String(_sender?.tab?.url || "");
+      const senderIsWebTab = senderUrl && !/^(?:chrome|edge|about|safari-web-extension):/i.test(senderUrl);
+      const requestedTabId =
+        senderIsWebTab && Number.isInteger(senderTabId)
+          ? senderTabId
+          : Number.isInteger(message.tabId)
+            ? message.tabId
+            : undefined;
+      const open = (tabId) => {
+        if (mode === "new" || mode === "background" || !Number.isInteger(tabId)) {
+          return chrome.tabs.create({ url, ...(mode === "background" ? { active: false } : {}) });
+        }
+        return chrome.tabs.update(tabId, { url });
+      };
+      const target = requestedTabId
+        ? queryWebTabById(requestedTabId)
+            .then((tab) => tab?.id)
+            .then((id) => id || queryActiveTab().then((tab) => tab?.id))
+        : queryActiveTab().then((tab) => tab?.id);
+      Promise.resolve(target)
+        .then((tabId) => open(tabId))
         .then(() => sendResponse({ ok: true }))
         .catch((error) => sendResponse({ ok: false, error: error?.message || "open_failed" }));
       return true;

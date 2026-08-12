@@ -1,4 +1,4 @@
-import { collectBookmarkFolders } from "./js/bookmark-utils.js";
+import { collectBookmarkFolders, collectBookmarkItems } from "./js/bookmark-utils.js";
 import { createItemNode } from "./js/data-utils.js";
 import {
   detectPreferredLanguage,
@@ -52,6 +52,7 @@ const POPUP_I18N = {
     loadFailed: "加载失败，请关闭后重试",
     invalidUrl: "当前页面无法保存（仅支持 http/https/ftp）",
     saveFailed: "保存失败，请重试",
+    openFailed: "打开书签失败，请重试",
     noData: "尚未初始化数据，请先打开一次新标签页",
   },
   "zh-TW": {
@@ -71,6 +72,7 @@ const POPUP_I18N = {
     loadFailed: "載入失敗，請關閉後重試",
     invalidUrl: "目前頁面無法儲存（僅支援 http/https/ftp）",
     saveFailed: "儲存失敗，請重試",
+    openFailed: "開啟書籤失敗，請重試",
     noData: "尚未初始化資料，請先開啟一次新分頁",
   },
   en: {
@@ -90,6 +92,7 @@ const POPUP_I18N = {
     loadFailed: "Load failed, close and retry",
     invalidUrl: "This page cannot be saved (http/https/ftp only)",
     saveFailed: "Save failed, please retry",
+    openFailed: "Failed to open bookmark, please retry",
     noData: "Data not initialized. Open a new tab once first.",
   },
 };
@@ -137,6 +140,8 @@ function applyPopupI18n(language) {
   if (openLeft) openLeft.textContent = language === "en" ? "Show bookmarks on left" : "在左侧栏显示所有书签";
   const openRight = document.getElementById("btnOpenRightSidebar");
   if (openRight) openRight.textContent = language === "en" ? "Show bookmarks on right" : "在右侧栏显示所有书签";
+  const popupBookmarksTitle = document.getElementById("popupBookmarksTitle");
+  if (popupBookmarksTitle) popupBookmarksTitle.textContent = tr("allBookmarks", language);
 }
 
 /**
@@ -183,7 +188,8 @@ async function loadLatestData() {
 async function getCurrentTab() {
   const api = getChromeApi();
   if (!api?.tabs) return null;
-  const result = api.tabs.query({ active: true, currentWindow: true });
+  const query = { active: true, lastFocusedWindow: true };
+  const result = api.tabs.query(query);
   if (typeof result?.then === "function") {
     const tabs = await result;
     if (api.runtime?.lastError) {
@@ -193,7 +199,7 @@ async function getCurrentTab() {
     return tabs?.[0] || null;
   }
   return new Promise((resolve) =>
-    api.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    api.tabs.query(query, (tabs) => {
       if (api.runtime?.lastError) {
         console.warn("getCurrentTab error:", api.runtime.lastError.message);
         return resolve(null);
@@ -243,6 +249,25 @@ function sendRuntimeMessage(message) {
       resolve(null);
     }
   });
+}
+
+/**
+ * 从弹窗打开书签。弹窗的 runtime sender 在 Safari 中可能没有 tab，
+ * 因此优先使用弹窗自身拿到的活动标签页，再回退到后台消息。
+ * @param {string} url
+ * @param {object} settings
+ * @param {chrome.tabs.Tab | null} tab
+ * @returns {Promise<{ok:boolean}>}
+ */
+async function openBookmarkFromPopup(url, settings, tab) {
+  return (
+    (await sendRuntimeMessage({
+      type: "homepage_open_bookmark",
+      url,
+      settings,
+      tabId: Number.isInteger(tab?.id) ? tab.id : undefined,
+    })) || { ok: false }
+  );
 }
 
 /**
@@ -333,9 +358,52 @@ function renderBookmarkFolderMenu(data, tab) {
 }
 
 /**
- * 在两个侧栏中渲染本程序的所有普通书签。
+ * 在扩展弹窗中渲染本程序的所有普通书签。
  * @param {object} data
  */
+function renderPopupBookmarks(data) {
+  const section = document.getElementById("popupBookmarks");
+  const list = document.getElementById("popupBookmarkList");
+  if (!section || !list) return;
+  const items = collectBookmarkItems(data);
+  list.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "popup-bookmark-empty";
+    empty.textContent = tr("noBookmarks", popupLanguage);
+    list.appendChild(empty);
+    return;
+  }
+  for (const item of items) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "popup-bookmark-item";
+    button.title = item.path.join(" / ");
+
+    const title = document.createElement("span");
+    title.className = "popup-bookmark-item-title";
+    title.textContent = item.title;
+    const path = document.createElement("span");
+    path.className = "popup-bookmark-item-path";
+    path.textContent = item.path.join(" / ");
+    const url = document.createElement("span");
+    url.className = "popup-bookmark-item-url";
+    url.textContent = item.url;
+    button.append(title, path, url);
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      const result = await openBookmarkFromPopup(item.url, data?.settings || {}, tab);
+      if (result?.ok) {
+        window.close();
+        return;
+      }
+      button.disabled = false;
+      showPopupError(tr("openFailed", popupLanguage));
+    });
+    list.appendChild(button);
+  }
+}
+
 /**
  * 保存到分组或任意嵌套文件夹
  * @param {chrome.tabs.Tab} tab
@@ -520,6 +588,7 @@ async function init() {
   }
   document.body.classList.remove("hidden");
   renderBookmarkFolderMenu(data, tab);
+  renderPopupBookmarks(data);
   document.getElementById("btnOpenLeftSidebar")?.addEventListener("click", async () => {
     if (await openBookmarkSidebar(tab, data, "left")) window.close();
     else showPopupError("无法在当前网页打开左侧书签栏");

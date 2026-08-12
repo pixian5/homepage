@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { collectBookmarkFolders, collectBookmarkItems } from "../src/js/bookmark-utils.js";
+import { collectBookmarkFolders, collectBookmarkItems, collectBookmarkTree } from "../src/js/bookmark-utils.js";
 import { ensureAllBookmarksGroup, getLegacyGroupFolderId } from "../src/js/data-utils.js";
 
 const data = {
@@ -15,6 +15,62 @@ const data = {
 };
 
 describe("bookmark-utils", () => {
+  it("keeps groups, folders, bookmarks, and their original order in a tree", () => {
+    const tree = collectBookmarkTree(data);
+    assert.deepEqual(
+      tree[0].children.map((node) => [node.id, node.type]),
+      [
+        ["folder", "folder"],
+        ["item-2", "item"],
+      ],
+    );
+    assert.deepEqual(
+      tree[0].children[0].children.map((node) => [node.id, node.type]),
+      [
+        ["nested", "folder"],
+        ["item-1", "item"],
+      ],
+    );
+    assert.deepEqual(
+      tree[0].children[0].children[0].children.map((node) => node.id),
+      ["item-3"],
+    );
+  });
+
+  it("does not flatten folder bookmarks into the group root", () => {
+    const root = collectBookmarkTree(data)[0];
+    assert.equal(
+      root.children.some((node) => node.id === "item-1" || node.id === "item-3"),
+      false,
+    );
+  });
+
+  it("skips deleted nodes and cuts cyclic references without hanging", () => {
+    const cyclic = {
+      groups: [{ id: "g1", name: "工作", nodes: ["a", "deleted"] }],
+      nodes: {
+        a: { id: "a", type: "folder", title: "A", children: ["b"] },
+        b: { id: "b", type: "folder", title: "B", children: ["a", "live"] },
+        live: { id: "live", type: "item", title: "有效", url: "https://live.example/" },
+        deleted: { id: "deleted", type: "item", title: "已删除", url: "https://deleted.example/", deletedAt: 1 },
+      },
+    };
+    const tree = collectBookmarkTree(cyclic);
+    assert.deepEqual(
+      tree[0].children.map((node) => node.id),
+      ["a"],
+    );
+    assert.deepEqual(
+      tree[0].children[0].children[0].children.map((node) => node.id),
+      ["live"],
+    );
+    assert.equal(tree[0].children[0].children[0].children[0].children.length, 0);
+    assert.equal(
+      tree[0].children.some((node) => node.id === "deleted"),
+      false,
+    );
+  });
+
   it("flattens groups and nested folders for save targets", () => {
     assert.deepEqual(
       collectBookmarkFolders(data).map((folder) => [folder.id, folder.depth, folder.path.join("/")]),

@@ -17,6 +17,66 @@ function nodeLabel(node) {
 }
 
 /**
+ * 返回保留原始顺序的书签树，供弹窗等需要同时显示文件夹和书签的界面使用。
+ * 只沿当前路径防循环，允许异常数据中的同一节点在不同引用位置继续显示。
+ * @param {object} data
+ * @returns {Array<{id:string, type:"group"|"folder"|"item", title:string, url?:string, path:string[], groupId:string, parentId:string, children:Array<object>}>}
+ */
+export function collectBookmarkTree(data) {
+  const groups = [...(data?.groups || [])].filter((group) => group?.id).sort(byOrder);
+  const allGroup = groups.find((group) => group.id === ALL_BOOKMARKS_GROUP_ID);
+  const roots = allGroup ? [allGroup] : groups;
+
+  const visit = (id, groupId, path, parentId, ancestors) => {
+    if (!id) return null;
+    const node = data?.nodes?.[id];
+    if (!node || node.deletedAt || node.purgedAt || (node.type !== "folder" && node.type !== "item")) return null;
+    const nodeId = String(node.id || id);
+    if (ancestors.has(nodeId)) return null;
+    const nextAncestors = new Set(ancestors);
+    nextAncestors.add(nodeId);
+    const result = {
+      id: nodeId,
+      type: node.type,
+      title: nodeLabel(node),
+      path: node.type === "item" ? path : [...path, nodeLabel(node)],
+      groupId,
+      parentId,
+      children: [],
+    };
+    if (node.type === "item") {
+      result.url = String(node.url || "");
+      return result;
+    }
+    const nextPath = result.path;
+    for (const childId of Array.isArray(node.children) ? node.children : []) {
+      const child = visit(childId, groupId, nextPath, nodeId, nextAncestors);
+      if (child) result.children.push(child);
+    }
+    return result;
+  };
+
+  return roots.map((group) => {
+    const groupName = nodeLabel({ title: group.name || "默认" });
+    const root = {
+      id: String(group.id),
+      type: "group",
+      title: groupName,
+      path: [groupName],
+      groupId: String(group.id),
+      parentId: "",
+      children: [],
+    };
+    const ancestors = new Set([root.id]);
+    for (const nodeId of Array.isArray(group.nodes) ? group.nodes : []) {
+      const child = visit(nodeId, root.groupId, root.path, root.id, ancestors);
+      if (child) root.children.push(child);
+    }
+    return root;
+  });
+}
+
+/**
  * 返回可作为“保存位置”的分组和嵌套文件夹。
  * @param {object} data
  * @returns {Array<{id:string, kind:"group"|"folder", name:string, depth:number, path:string[], groupId:string, parentId:string}>}

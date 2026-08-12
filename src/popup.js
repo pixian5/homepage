@@ -1,4 +1,4 @@
-import { collectBookmarkFolders, collectBookmarkItems } from "./js/bookmark-utils.js";
+import { collectBookmarkFolders, collectBookmarkTree } from "./js/bookmark-utils.js";
 import { createItemNode } from "./js/data-utils.js";
 import {
   detectPreferredLanguage,
@@ -360,47 +360,69 @@ function renderBookmarkFolderMenu(data, tab) {
 /**
  * 在扩展弹窗中渲染本程序的所有普通书签。
  * @param {object} data
+ * @param {chrome.tabs.Tab | null} tab
  */
-function renderPopupBookmarks(data) {
+function renderPopupBookmarks(data, tab) {
   const section = document.getElementById("popupBookmarks");
   const list = document.getElementById("popupBookmarkList");
   if (!section || !list) return;
-  const items = collectBookmarkItems(data);
+  const tree = collectBookmarkTree(data);
   list.replaceChildren();
-  if (!items.length) {
+  if (!tree.length || tree.every((root) => root.children.length === 0)) {
     const empty = document.createElement("div");
     empty.className = "popup-bookmark-empty";
     empty.textContent = tr("noBookmarks", popupLanguage);
     list.appendChild(empty);
     return;
   }
-  for (const item of items) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "popup-bookmark-item";
-    button.title = item.path.join(" / ");
 
-    const title = document.createElement("span");
-    title.className = "popup-bookmark-item-title";
-    title.textContent = item.title;
-    const path = document.createElement("span");
-    path.className = "popup-bookmark-item-path";
-    path.textContent = item.path.join(" / ");
-    const url = document.createElement("span");
-    url.className = "popup-bookmark-item-url";
-    url.textContent = item.url;
-    button.append(title, path, url);
-    button.addEventListener("click", async () => {
-      button.disabled = true;
-      const result = await openBookmarkFromPopup(item.url, data?.settings || {}, tab);
-      if (result?.ok) {
-        window.close();
-        return;
-      }
-      button.disabled = false;
-      showPopupError(tr("openFailed", popupLanguage));
-    });
-    list.appendChild(button);
+  const appendNode = (node, host) => {
+    if (node.type === "item") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "popup-bookmark-item";
+      button.title = node.path.join(" / ");
+
+      const title = document.createElement("span");
+      title.className = "popup-bookmark-item-title";
+      title.textContent = node.title;
+      const path = document.createElement("span");
+      path.className = "popup-bookmark-item-path";
+      path.textContent = node.path.join(" / ");
+      const url = document.createElement("span");
+      url.className = "popup-bookmark-item-url";
+      url.textContent = node.url;
+      button.append(title, path, url);
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        const result = await openBookmarkFromPopup(node.url, data?.settings || {}, tab);
+        if (result?.ok) {
+          window.close();
+          return;
+        }
+        button.disabled = false;
+        showPopupError(tr("openFailed", popupLanguage));
+      });
+      host.appendChild(button);
+      return;
+    }
+
+    const details = document.createElement("details");
+    details.className = `popup-bookmark-folder popup-bookmark-${node.type}`;
+    details.open = true;
+    const summary = document.createElement("summary");
+    summary.className = "popup-bookmark-folder-title";
+    summary.textContent = node.title;
+    details.appendChild(summary);
+    const children = document.createElement("div");
+    children.className = "popup-bookmark-children";
+    for (const child of node.children) appendNode(child, children);
+    details.appendChild(children);
+    host.appendChild(details);
+  };
+
+  for (const root of tree) {
+    appendNode(root, list);
   }
 }
 
@@ -588,7 +610,7 @@ async function init() {
   }
   document.body.classList.remove("hidden");
   renderBookmarkFolderMenu(data, tab);
-  renderPopupBookmarks(data);
+  renderPopupBookmarks(data, tab);
   document.getElementById("btnOpenLeftSidebar")?.addEventListener("click", async () => {
     if (await openBookmarkSidebar(tab, data, "left")) window.close();
     else showPopupError("无法在当前网页打开左侧书签栏");

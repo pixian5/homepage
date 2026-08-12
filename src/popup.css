@@ -90,19 +90,19 @@ body {
   border-color: var(--border);
   outline: none;
 }
-.menu-parent:hover > .menu-submenu,
-.menu-parent:focus-within > .menu-submenu,
-.menu-folder-row:hover > .menu-submenu {
+.menu-parent.menu-open > .menu-submenu,
+.menu-folder-row.menu-open > .menu-submenu {
   display: block;
+}
+.menu-parent {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
 }
 .menu-arrow { color: var(--muted); font-size: 18px; }
 .menu-submenu {
   display: none;
-  position: fixed;
   z-index: 10;
-  top: 58px;
-  left: 12px;
-  width: 256px;
   max-height: 560px;
   overflow-y: auto;
   padding: 5px;
@@ -111,7 +111,32 @@ body {
   background: var(--panel);
   box-shadow: 0 10px 28px rgba(0,0,0,.35);
 }
-.menu-folder-row { position: relative; }
+.menu-parent > .menu-submenu {
+  grid-column: 1 / -1;
+  width: 100%;
+  max-height: 320px;
+  margin-top: 4px;
+}
+.menu-folder-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+.menu-folder-row > .menu-submenu {
+  position: static;
+  grid-column: 1 / -1;
+  width: auto;
+  max-height: none;
+  overflow: visible;
+  margin: 2px 0 0 12px;
+  padding: 0 0 0 8px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
 .menu-folder-button {
   display: flex;
   align-items: center;
@@ -131,7 +156,25 @@ body {
   text-overflow: ellipsis;
 }
 .menu-folder-button:hover { background: var(--input-bg); }
-.menu-folder-row.has-children > .menu-folder-button::after { content: "›"; color: var(--muted); margin-left: 8px; }
+.menu-folder-toggle {
+  width: 30px;
+  min-height: 30px;
+  padding: 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+}
+.menu-folder-toggle:hover,
+.menu-folder-toggle:focus-visible {
+  background: var(--input-bg);
+  outline: none;
+}
+.menu-folder-row.menu-open > .menu-folder-toggle { transform: rotate(90deg); }
 .menu-empty { padding: 8px; color: var(--muted); }
 
 .popup-bookmarks {

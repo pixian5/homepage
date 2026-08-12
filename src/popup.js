@@ -318,6 +318,12 @@ function renderBookmarkFolderMenu(data, tab) {
   const menu = document.getElementById("bookmarkFolderMenu");
   const parent = document.getElementById("addBookmarkMenu");
   if (!menu || !parent) return;
+  parent.setAttribute("aria-expanded", "false");
+  parent.addEventListener("click", (event) => {
+    if (event.target.closest(".menu-folder-button, .menu-folder-toggle, .menu-submenu")) return;
+    const open = parent.classList.toggle("menu-open");
+    parent.setAttribute("aria-expanded", String(open));
+  });
   const folders = collectBookmarkFolders(data);
   const childrenOf = (folder) => folders.filter((entry) => entry.parentId === folder.id);
   const appendFolder = (folder, host) => {
@@ -346,6 +352,19 @@ function renderBookmarkFolderMenu(data, tab) {
     const children = childrenOf(folder);
     if (children.length) {
       row.classList.add("has-children");
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "menu-folder-toggle";
+      toggle.textContent = "›";
+      toggle.title = "展开文件夹";
+      toggle.setAttribute("aria-label", "展开文件夹");
+      toggle.setAttribute("aria-expanded", "false");
+      toggle.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const open = row.classList.toggle("menu-open");
+        toggle.setAttribute("aria-expanded", String(open));
+      });
+      row.appendChild(toggle);
       const submenu = document.createElement("div");
       submenu.className = "menu-submenu";
       for (const child of children) appendFolder(child, submenu);
@@ -402,7 +421,6 @@ function renderPopupBookmarks(data, tab) {
 
     const details = document.createElement("details");
     details.className = `popup-bookmark-folder popup-bookmark-${node.type}`;
-    details.open = true;
     const summary = document.createElement("summary");
     summary.className = "popup-bookmark-folder-title";
     summary.textContent = node.title;

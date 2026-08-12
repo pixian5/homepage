@@ -253,11 +253,113 @@ if 'SFSafariWebsiteAccess' not in data:
     }
     print('Added SFSafariWebsiteAccess with Level: All')
 
+# Safari 的扩展管理页读取 appex 的原生 bundle 图标，不读取网页 manifest.json。
+# 没有这个字段时会退回成系统默认的心形窗口图标。
+data['CFBundleIconFile'] = 'ExtensionIcon'
+
 with open(path, 'wb') as f:
     plistlib.dump(data, f)
 
 print('Extension Info.plist updated successfully')
 "
+}
+
+install_safari_extension_icon() {
+  local project_root="$1"
+  local icon_source="$ROOT_DIR/logo.png"
+  local iconset icon_destination project_file
+
+  if [[ ! -f "$icon_source" ]]; then
+    icon_source="$SRC_DIR/assets/icon-128.png"
+  fi
+  if [[ ! -f "$icon_source" ]]; then
+    echo "[build] Safari extension icon source not found"
+    return 0
+  fi
+
+  icon_destination="$project_root/Shared (Extension)/Resources/ExtensionIcon.icns"
+  if [[ ! -d "$(dirname "$icon_destination")" ]]; then
+    echo "[build] Safari extension resource directory not found"
+    return 0
+  fi
+
+  iconset="$(mktemp -d "${TMPDIR:-/tmp}/homepage-extension-icon.XXXXXX.iconset")"
+  for spec in '16 16' '16@2x 32' '32 32' '32@2x 64' '128 128' '128@2x 256' '256 256' '256@2x 512' '512 512' '512@2x 1024'; do
+    set -- $spec
+    sips -z "$2" "$2" "$icon_source" --out "$iconset/icon_${1}x${1}.png" >/dev/null
+  done
+  iconutil -c icns "$iconset" -o "$icon_destination"
+  rm -rf "$iconset"
+
+  project_file="$project_root/$SAFARI_APP_NAME.xcodeproj/project.pbxproj"
+  if [[ ! -f "$project_file" ]]; then
+    echo "[build] Safari project file not found for extension icon registration"
+    return 1
+  fi
+
+  PBXPROJ_FILE="$project_file" python3 -c '
+import os
+import re
+
+path = os.environ["PBXPROJ_FILE"]
+with open(path, encoding="utf-8") as stream:
+    text = stream.read()
+
+build_id = "F0A11CE00000000000000001"
+file_id = "F0A11CE00000000000000002"
+# Remove the deterministic fallback from a previous rebuild. The converter may
+# now have generated its own file reference after seeing ExtensionIcon.icns.
+text = re.sub(rf"^.*{build_id}.*\n?", "", text, flags=re.MULTILINE)
+text = re.sub(rf"^.*{file_id}.*\n?", "", text, flags=re.MULTILINE)
+
+native_section = re.search(
+    r"(?ms)/\* Begin PBXNativeTarget section \*/(?P<body>.*?)/\* End PBXNativeTarget section \*/",
+    text,
+)
+if not native_section:
+    raise SystemExit("PBXNativeTarget section not found")
+native = re.search(
+    r"(?ms)^\s*[A-F0-9]{24} /\* [^*\n]+ Extension \(macOS\) \*/ = \{.*?^\s*\};",
+    native_section.group("body"),
+)
+if not native:
+    raise SystemExit("macOS Safari Extension target not found")
+resource_match = re.search(r"([A-F0-9]{24}) /\* Resources \*/", native.group(0))
+if not resource_match:
+    raise SystemExit("macOS Safari Extension resource phase not found")
+resource_phase = resource_match.group(1)
+phase_match = re.search(
+    rf"(?ms)^\s*{resource_phase} /\* Resources \*/ = \{{.*?^\s*\}};",
+    text,
+)
+if not phase_match:
+    raise SystemExit("macOS Safari Extension resource phase body not found")
+
+if "ExtensionIcon.icns in Resources" not in phase_match.group(0):
+    text = text.replace(
+        "/* End PBXBuildFile section */",
+        f"\t\t{build_id} /* ExtensionIcon.icns in Resources */ = {{isa = PBXBuildFile; fileRef = {file_id} /* ExtensionIcon.icns */; }};\n/* End PBXBuildFile section */",
+        1,
+    )
+    text = text.replace(
+        "/* End PBXFileReference section */",
+        f"\t\t{file_id} /* ExtensionIcon.icns */ = {{isa = PBXFileReference; lastKnownFileType = image.icns; name = ExtensionIcon.icns; path = \"Shared (Extension)/Resources/ExtensionIcon.icns\"; sourceTree = SOURCE_ROOT; }};\n/* End PBXFileReference section */",
+        1,
+    )
+    phase_pattern = rf"(?ms)^(\s*{resource_phase} /\* Resources \*/ = \{{.*?files = \(\n)"
+    text, count = re.subn(
+        phase_pattern,
+        rf"\1\t\t\t\t{build_id} /* ExtensionIcon.icns in Resources */,\n",
+        text,
+        count=1,
+    )
+    if count != 1:
+        raise SystemExit("could not register icon in macOS Extension resource phase")
+
+with open(path, "w", encoding="utf-8") as stream:
+    stream.write(text)
+'
+  echo "[build] Safari extension icon -> $icon_destination"
 }
 
 build_safari_project() {
@@ -292,6 +394,7 @@ build_safari_project() {
     normalize_safari_host_app_sources "$project_root"
     sync_safari_project_resources "$project_root"
     fix_safari_extension_info_plist "$project_root"
+    install_safari_extension_icon "$project_root"
   else
     rm -rf "$SAFARI_PROJECT_DIR"
     xcrun safari-web-extension-converter "$SAFARI_DIR" \
@@ -314,6 +417,7 @@ build_safari_project() {
       normalize_safari_host_app_sources "$project_root"
       sync_safari_project_resources "$project_root"
       fix_safari_extension_info_plist "$project_root"
+      install_safari_extension_icon "$project_root"
     fi
   fi
 

@@ -91,6 +91,12 @@ if [[ -n "${PROJECT_FILE}" ]]; then
 
   APP_PATH="${SAFARI_BUILD_DIR}/Build/Products/${SAFARI_XCODE_CONFIGURATION}/${SAFARI_APP_NAME}.app"
   if [[ -d "${APP_PATH}" ]]; then
+    APPEX_PATH="${APP_PATH}/Contents/PlugIns/${SAFARI_APP_NAME} Extension.appex"
+    APPEX_ICON="${APPEX_PATH}/Contents/Resources/ExtensionIcon.icns"
+    if [[ ! -s "${APPEX_ICON}" ]]; then
+      echo "[build] ERROR: Safari extension icon missing from built appex: ${APPEX_ICON}" >&2
+      exit 1
+    fi
     post_sign_safari_app "${APP_PATH}" "${SAFARI_XCODE_CONFIGURATION}"
 
     # 复制到应用程序目录
@@ -99,13 +105,29 @@ if [[ -n "${PROJECT_FILE}" ]]; then
     rm -rf "${APPS_DIR_APP}"
     cp -R "${APP_PATH}" "${APPS_DIR_APP}"
 
+    if pgrep -x Safari >/dev/null 2>&1; then
+      echo "[build] Quitting Safari before cleaning stale extension registrations..."
+      osascript -e 'tell application "Safari" to quit' 2>/dev/null || true
+      for _ in {1..20}; do
+        if ! pgrep -x Safari >/dev/null 2>&1; then
+          break
+        fi
+        sleep 0.5
+      done
+    fi
+    node "${ROOT_DIR}/scripts/clean-safari-homepage-registrations.mjs"
+
     # Xcode 构建时会将 build-output 里的 .app 注册到 LaunchServices，
     # 安装到 /Applications 后如果不注销源路径，Safari 扩展列表会出现重复条目。
     echo "[build] Unregistering build-output app from LaunchServices..."
     /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -u "${APP_PATH}" 2>/dev/null || true
 
-    open "${APPS_DIR_APP}"
-    echo "[build] launched: ${APPS_DIR_APP}"
+    if [[ "${SAFARI_LAUNCH_AFTER_BUILD:-0}" == "1" ]]; then
+      open "${APPS_DIR_APP}"
+      echo "[build] launched: ${APPS_DIR_APP}"
+    else
+      echo "[build] installed without foreground launch"
+    fi
   fi
 fi
 

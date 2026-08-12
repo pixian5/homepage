@@ -10,8 +10,10 @@
   <noscript><div class="empty">请启用 JavaScript 后使用</div></noscript>
   <div class="header"><div class="title">我的书签</div></div>
   <nav class="bookmark-menu" aria-label="书签菜单">
-    <div id="addBookmarkMenu" class="menu-item menu-parent" tabindex="0">
-      <span id="addBookmarkLabel">添加书签</span><span class="menu-arrow">›</span>
+    <div id="addBookmarkMenu" class="menu-parent">
+      <button id="addBookmarkToggle" type="button" class="menu-item" aria-expanded="false">
+        <span id="addBookmarkLabel">添加书签</span><span class="menu-arrow">›</span>
+      </button>
       <div id="bookmarkFolderMenu" class="menu-submenu"></div>
     </div>
     <button id="btnOpenLeftSidebar" type="button" class="menu-item">在左侧栏显示所有书签</button>

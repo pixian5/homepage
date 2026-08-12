@@ -317,12 +317,13 @@ async function openBookmarkSidebar(tab, data, side) {
 function renderBookmarkFolderMenu(data, tab) {
   const menu = document.getElementById("bookmarkFolderMenu");
   const parent = document.getElementById("addBookmarkMenu");
-  if (!menu || !parent) return;
-  parent.setAttribute("aria-expanded", "false");
-  parent.addEventListener("click", (event) => {
-    if (event.target.closest(".menu-folder-button, .menu-folder-toggle, .menu-submenu")) return;
+  const toggleButton = document.getElementById("addBookmarkToggle");
+  if (!menu || !parent || !toggleButton) return;
+  toggleButton.setAttribute("aria-expanded", "false");
+  toggleButton.addEventListener("click", (event) => {
+    event.stopPropagation();
     const open = parent.classList.toggle("menu-open");
-    parent.setAttribute("aria-expanded", String(open));
+    toggleButton.setAttribute("aria-expanded", String(open));
   });
   const folders = collectBookmarkFolders(data);
   const childrenOf = (folder) => folders.filter((entry) => entry.parentId === folder.id);
@@ -352,17 +353,21 @@ function renderBookmarkFolderMenu(data, tab) {
     const children = childrenOf(folder);
     if (children.length) {
       row.classList.add("has-children");
+      const openByDefault = folder.kind === "group";
+      if (openByDefault) row.classList.add("menu-open");
       const toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className = "menu-folder-toggle";
       toggle.textContent = "›";
-      toggle.title = "展开文件夹";
-      toggle.setAttribute("aria-label", "展开文件夹");
-      toggle.setAttribute("aria-expanded", "false");
+      toggle.title = openByDefault ? "收起文件夹" : "展开文件夹";
+      toggle.setAttribute("aria-label", toggle.title);
+      toggle.setAttribute("aria-expanded", String(openByDefault));
       toggle.addEventListener("click", (event) => {
         event.stopPropagation();
         const open = row.classList.toggle("menu-open");
         toggle.setAttribute("aria-expanded", String(open));
+        toggle.title = open ? "收起文件夹" : "展开文件夹";
+        toggle.setAttribute("aria-label", toggle.title);
       });
       row.appendChild(toggle);
       const submenu = document.createElement("div");

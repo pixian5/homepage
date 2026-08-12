@@ -99,6 +99,13 @@ body {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
 }
+.menu-parent > .menu-item {
+  grid-column: 1 / -1;
+}
+.menu-parent.menu-open > .menu-item {
+  border-color: var(--border);
+  background: var(--input-bg);
+}
 .menu-arrow { color: var(--muted); font-size: 18px; }
 .menu-submenu {
   display: none;

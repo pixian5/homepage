@@ -3,6 +3,7 @@
  * Chrome/Firefox 也加载，作为 history 的补充无害。
  */
 import { createItemNode } from "./data-utils.js";
+import { writeSafariStableHomepage } from "./safari_native_storage.js";
 import { getOrCreateDeviceId } from "./sync_ids.js";
 import { initVisitTrackingInBackground } from "./visit-history.js";
 
@@ -118,4 +119,13 @@ try {
   initVisitTrackingInBackground();
 } catch (e) {
   console.warn("background init failed", e);
+}
+
+if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    const next = changes?.homepage_data?.newValue;
+    if (areaName === "local" && next && typeof next === "object") {
+      void writeSafariStableHomepage(next);
+    }
+  });
 }

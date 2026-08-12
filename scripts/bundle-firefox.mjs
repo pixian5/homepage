@@ -12,6 +12,7 @@ const htmlPath = path.join(firefoxDir, "newtab.html");
 const files = [
   "shared-utils.js",
   "data-utils.js",
+  "safari_native_storage.js",
   "storage.js",
   "icons.js",
   "bing-wallpaper.js",
@@ -28,7 +29,13 @@ const files = [
   "sync_engine.js",
   "app.js",
 ];
-const backgroundFiles = ["shared-utils.js", "data-utils.js", "visit-history.js", "background.js"];
+const backgroundFiles = [
+  "shared-utils.js",
+  "data-utils.js",
+  "safari_native_storage.js",
+  "visit-history.js",
+  "background.js",
+];
 
 export function stripImports(code) {
   return code.replace(/^\s*import[\s\S]*?;\s*/gm, "");

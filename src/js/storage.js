@@ -8,6 +8,12 @@
 
 import { ensureAllBookmarksGroup, isAllBookmarksGroup, repairHomepageData } from "./data-utils.js";
 import {
+  clearSafariStableHomepage,
+  readSafariStableHomepage,
+  shouldRestoreSafariStableHomepage,
+  writeSafariStableHomepage,
+} from "./safari_native_storage.js";
+import {
   detectPreferredLanguage,
   estimateBytes,
   getChromeApi,
@@ -287,8 +293,15 @@ export async function loadData() {
     return base;
   }
   let data = got.value;
+  const stableData = await readSafariStableHomepage(api);
+  if (shouldRestoreSafariStableHomepage(data, stableData)) {
+    data = stableData;
+    const restoreError = await storageSetLocal(local, { [ROOT_KEY]: data });
+    if (restoreError) console.error("loadData: failed to restore Safari stable homepage storage");
+  }
   if (!data) {
     await storageSetLocal(local, { [ROOT_KEY]: base });
+    await writeSafariStableHomepage(base, api);
     return base;
   }
   data = migrateData(data) || base;
@@ -296,6 +309,7 @@ export async function loadData() {
   const migratedRootModel = Array.isArray(data.groups) && data.groups.some((group) => !isAllBookmarksGroup(group));
   data = repairHomepageData(data, DEFAULT_SETTINGS);
   if (migratedRootModel) await storageSetLocal(local, { [ROOT_KEY]: data });
+  if (!stableData) await writeSafariStableHomepage(data, api);
   return data;
 }
 
@@ -369,6 +383,8 @@ export async function saveData(data, useSync = false) {
   if (err) {
     // 写盘失败：回滚 lastUpdated，避免 LWW 把“内存新、磁盘旧”当成权威
     data.lastUpdated = prevLastUpdated;
+  } else if (!useSync) {
+    await writeSafariStableHomepage(data, api);
   }
   return err;
 }
@@ -378,6 +394,7 @@ export async function clearData(useSync = false) {
   if (!api) return;
   const area = storageArea(useSync);
   await storageRemoveLocal(area, ROOT_KEY);
+  if (!useSync) await clearSafariStableHomepage(api);
 }
 
 let _iconCacheMemory = null;

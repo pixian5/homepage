@@ -9,6 +9,24 @@ SAFARI_PROJECT_DIR="${DIST_DIR}/safari-app"
 SAFARI_BUILD_DIR="${SAFARI_PROJECT_DIR}/build"
 SAFARI_APP_NAME="${SAFARI_APP_NAME:-我的首页 Safari}"
 SAFARI_XCODE_CONFIGURATION="${SAFARI_XCODE_CONFIGURATION:-Release}"
+SAFARI_STORAGE_BACKUP_ROOT="${ROOT_DIR}/.test-backups/safari-storage"
+
+quit_safari_for_storage_update() {
+  if pgrep -x Safari >/dev/null 2>&1; then
+    echo "[build] Quitting Safari before storage snapshot..."
+    osascript -e 'tell application "Safari" to quit' 2>/dev/null || true
+    for _ in {1..20}; do
+      if ! pgrep -x Safari >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.5
+    done
+  fi
+  if pgrep -x Safari >/dev/null 2>&1; then
+    echo "[build] ERROR: Safari is still running; refusing to update without a safe snapshot" >&2
+    exit 1
+  fi
+}
 
 detect_apple_development_identity() {
   security find-identity -p codesigning -v 2>/dev/null \
@@ -43,7 +61,31 @@ post_sign_safari_app() {
   /usr/bin/codesign --verify --verbose=2 "${app_path}"
 }
 
+verify_stable_storage_entitlements() {
+  local app_path="$1"
+  local appex_path="${app_path}/Contents/PlugIns/${SAFARI_APP_NAME} Extension.appex"
+  local expected_group="group.com.aeroluna.homepage.safari"
+  local target entitlements
+
+  for target in "$app_path" "$appex_path"; do
+    entitlements="$(/usr/bin/codesign -d --entitlements :- "$target" 2>/dev/null || true)"
+    if [[ "$entitlements" != *"$expected_group"* ]]; then
+      echo "[build] ERROR: stable-storage App Group missing from signed target: $target" >&2
+      exit 1
+    fi
+  done
+  echo "[build] Verified stable-storage App Group -> $expected_group"
+}
+
 echo "[build] ROOT_DIR=${ROOT_DIR}"
+
+# 必须在 converter/xcodebuild 注册新扩展、替换 App 之前停止 Safari 并保存一致性快照。
+quit_safari_for_storage_update
+SAFARI_STORAGE_SNAPSHOT="$({
+  python3 "${ROOT_DIR}/scripts/safari-storage-guard.py" snapshot \
+    --output-root "${SAFARI_STORAGE_BACKUP_ROOT}"
+} | python3 -c 'import json,sys; print(json.load(sys.stdin)["snapshot"])')"
+echo "[build] Safari storage snapshot: ${SAFARI_STORAGE_SNAPSHOT}"
 
 if [[ -f "${ROOT_DIR}/logo.png" ]]; then
   echo "[build] Found logo.png, generating extension icons..."
@@ -83,7 +125,8 @@ if [[ -n "${PROJECT_FILE}" ]]; then
     -derivedDataPath "${SAFARI_BUILD_DIR}"
   )
 
-  if [[ "${SAFARI_ENABLE_TEAM_SIGNING:-0}" == "1" ]]; then
+  # App Group capability 需要 Xcode 自动创建/刷新开发描述文件；允许显式设为 0 关闭。
+  if [[ "${SAFARI_ENABLE_TEAM_SIGNING:-1}" == "1" ]]; then
     XCODEBUILD_ARGS+=(-allowProvisioningUpdates)
   fi
 
@@ -98,6 +141,7 @@ if [[ -n "${PROJECT_FILE}" ]]; then
       exit 1
     fi
     post_sign_safari_app "${APP_PATH}" "${SAFARI_XCODE_CONFIGURATION}"
+    verify_stable_storage_entitlements "${APP_PATH}"
 
     # 复制到应用程序目录
     APPS_DIR_APP="/Applications/${SAFARI_APP_NAME}.app"
@@ -105,17 +149,11 @@ if [[ -n "${PROJECT_FILE}" ]]; then
     rm -rf "${APPS_DIR_APP}"
     cp -R "${APP_PATH}" "${APPS_DIR_APP}"
 
-    if pgrep -x Safari >/dev/null 2>&1; then
-      echo "[build] Quitting Safari before cleaning stale extension registrations..."
-      osascript -e 'tell application "Safari" to quit' 2>/dev/null || true
-      for _ in {1..20}; do
-        if ! pgrep -x Safari >/dev/null 2>&1; then
-          break
-        fi
-        sleep 0.5
-      done
-    fi
     node "${ROOT_DIR}/scripts/clean-safari-homepage-registrations.mjs"
+
+    python3 "${ROOT_DIR}/scripts/safari-storage-guard.py" verify \
+      --snapshot "${SAFARI_STORAGE_SNAPSHOT}" \
+      --restore-on-regression
 
     # Xcode 构建时会将 build-output 里的 .app 注册到 LaunchServices，
     # 安装到 /Applications 后如果不注销源路径，Safari 扩展列表会出现重复条目。

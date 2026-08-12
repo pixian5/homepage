@@ -51,6 +51,8 @@ global.chrome = {
 beforeEach(() => {
   stored = {};
   lastError = null;
+  delete global.chrome.runtime.getURL;
+  delete global.chrome.runtime.sendNativeMessage;
 });
 
 describe("storage", async () => {
@@ -132,6 +134,70 @@ describe("storage", async () => {
     const loaded = await loadData();
     assert.equal(loaded.settings.language, "en");
     assert.ok(loaded.lastUpdated > 0);
+  });
+
+  it("Safari restores non-empty App Group data when extension local storage is empty", async () => {
+    const stable = defaultData();
+    stable.nodes.n1 = { id: "n1", type: "item", title: "保留", url: "https://example.com" };
+    stable.groups[0].nodes.push("n1");
+    global.chrome.runtime.getURL = () => "safari-web-extension://test/";
+    global.chrome.runtime.sendNativeMessage = (_app, message, callback) => {
+      callback(message.type === "homepage.storage.read" ? { ok: true, data: stable } : { ok: true });
+    };
+
+    const loaded = await loadData();
+    assert.deepEqual(Object.keys(loaded.nodes), ["n1"]);
+    assert.deepEqual(Object.keys(stored[getStorageKey()].nodes), ["n1"]);
+  });
+
+  it("Safari keeps non-empty local data instead of overwriting it from App Group", async () => {
+    const local = defaultData();
+    local.nodes.local = { id: "local", type: "item", title: "本地", url: "https://local.example" };
+    local.groups[0].nodes.push("local");
+    const stable = defaultData();
+    stable.nodes.stable = { id: "stable", type: "item", title: "副本", url: "https://stable.example" };
+    stable.groups[0].nodes.push("stable");
+    stored[getStorageKey()] = local;
+    global.chrome.runtime.getURL = () => "safari-web-extension://test/";
+    global.chrome.runtime.sendNativeMessage = (_app, message, callback) => {
+      callback(message.type === "homepage.storage.read" ? { ok: true, data: stable } : { ok: true });
+    };
+
+    const loaded = await loadData();
+    assert.deepEqual(Object.keys(loaded.nodes), ["local"]);
+  });
+
+  it("Safari seeds missing App Group storage from existing extension data", async () => {
+    const local = defaultData();
+    local.nodes.local = { id: "local", type: "item", title: "本地", url: "https://local.example" };
+    local.groups[0].nodes.push("local");
+    stored[getStorageKey()] = local;
+    const writes = [];
+    global.chrome.runtime.getURL = () => "safari-web-extension://test/";
+    global.chrome.runtime.sendNativeMessage = (_app, message, callback) => {
+      if (message.type === "homepage.storage.write") writes.push(message.data);
+      callback(message.type === "homepage.storage.read" ? { ok: true, data: null } : { ok: true });
+    };
+
+    const loaded = await loadData();
+    assert.deepEqual(Object.keys(loaded.nodes), ["local"]);
+    assert.equal(writes.length, 1);
+    assert.deepEqual(Object.keys(writes[0].nodes), ["local"]);
+  });
+
+  it("Safari mirrors successful local saves into App Group storage", async () => {
+    const writes = [];
+    global.chrome.runtime.getURL = () => "safari-web-extension://test/";
+    global.chrome.runtime.sendNativeMessage = (_app, message, callback) => {
+      if (message.type === "homepage.storage.write") writes.push(message.data);
+      callback({ ok: true });
+    };
+    const data = defaultData();
+    data.nodes.n1 = { id: "n1", type: "item", title: "镜像", url: "https://example.com" };
+
+    assert.equal(await saveData(data), null);
+    assert.equal(writes.length, 1);
+    assert.deepEqual(Object.keys(writes[0].nodes), ["n1"]);
   });
 
   it("clearData removes root key", async () => {

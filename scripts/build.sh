@@ -10,6 +10,7 @@ SAFARI_DIR="$DIST_DIR/safari"
 SAFARI_PROJECT_DIR="$DIST_DIR/safari-app"
 SAFARI_APP_NAME="${SAFARI_APP_NAME:-我的首页 Safari}"
 SAFARI_BUNDLE_ID="${SAFARI_BUNDLE_ID:-com.aeroluna.homepage.safari}"
+SAFARI_APP_GROUP_ID="${SAFARI_APP_GROUP_ID:-group.com.aeroluna.homepage.safari}"
 
 # 统一版本号自增入口：允许 SKIP_BUMP=1 跳过（如 CI 或调试场景）
 if [[ "${SKIP_BUMP:-0}" != "1" ]]; then
@@ -197,6 +198,8 @@ normalize_safari_host_app_sources() {
   local project_file="$project_root/$SAFARI_APP_NAME.xcodeproj/project.pbxproj"
   local view_controller_template="$ROOT_DIR/scripts/templates/safari/ViewController.swift"
   local view_controller_file="$project_root/Shared (App)/ViewController.swift"
+  local extension_handler_template="$ROOT_DIR/scripts/templates/safari/SafariWebExtensionHandler.swift"
+  local extension_handler_file="$project_root/Shared (Extension)/SafariWebExtensionHandler.swift"
   local app_bundle_id
 
   if [[ ! -f "$project_file" || ! -f "$view_controller_template" || ! -f "$view_controller_file" ]]; then
@@ -217,6 +220,77 @@ normalize_safari_host_app_sources() {
   local target_extension_bundle_id="${SAFARI_BUNDLE_ID}.extension"
   echo "[build] Normalize Safari host source extension id -> $target_extension_bundle_id"
   perl -0pe "s/__SAFARI_EXTENSION_BUNDLE_ID__/$target_extension_bundle_id/g" "$view_controller_template" > "$view_controller_file"
+  if [[ -f "$extension_handler_template" && -f "$extension_handler_file" ]]; then
+    cp "$extension_handler_template" "$extension_handler_file"
+    echo "[build] Install Safari stable-storage native handler"
+  fi
+}
+
+configure_safari_app_group() {
+  local project_root="$1"
+  local project_file="$project_root/$SAFARI_APP_NAME.xcodeproj/project.pbxproj"
+  local app_entitlements="$project_root/macOS (App)/HomepageSafari.entitlements"
+  local extension_entitlements="$project_root/macOS (Extension)/HomepageSafariExtension.entitlements"
+
+  if [[ ! -f "$project_file" || ! -d "$(dirname "$app_entitlements")" || ! -d "$(dirname "$extension_entitlements")" ]]; then
+    echo "[build] Safari macOS targets not found for App Group configuration"
+    return 1
+  fi
+
+  APP_ENTITLEMENTS="$app_entitlements" EXT_ENTITLEMENTS="$extension_entitlements" \
+    APP_GROUP_ID="$SAFARI_APP_GROUP_ID" PBXPROJ_FILE="$project_file" python3 - <<'PY'
+import os
+import plistlib
+import re
+from pathlib import Path
+
+for env_name in ("APP_ENTITLEMENTS", "EXT_ENTITLEMENTS"):
+    path = Path(os.environ[env_name])
+    with path.open("wb") as stream:
+        plistlib.dump(
+            {"com.apple.security.application-groups": [os.environ["APP_GROUP_ID"]]},
+            stream,
+            sort_keys=True,
+        )
+
+pbxproj = Path(os.environ["PBXPROJ_FILE"])
+text = pbxproj.read_text(encoding="utf-8")
+
+def inject(block, info_plist, entitlement_path):
+    if f'INFOPLIST_FILE = "{info_plist}";' not in block:
+        return block
+    block = re.sub(r"\n\s*CODE_SIGN_ENTITLEMENTS = [^;]+;", "", block)
+    marker = "\n\t\t\t\tCODE_SIGN_STYLE = Automatic;"
+    if marker not in block:
+        raise SystemExit(f"CODE_SIGN_STYLE missing for {info_plist}")
+    return block.replace(
+        marker,
+        marker + f'\n\t\t\t\tCODE_SIGN_ENTITLEMENTS = "{entitlement_path}";',
+        1,
+    )
+
+configuration = re.compile(
+    r"(?ms)^\t\t[A-F0-9]{24} /\* (?:Debug|Release) \*/ = \{\n"
+    r"\t\t\tisa = XCBuildConfiguration;\n\t\t\tbuildSettings = \{.*?"
+    r"^\t\t\t\};\n\t\t\tname = (?:Debug|Release);\n\t\t\};"
+)
+
+def update(match):
+    block = match.group(0)
+    block = inject(block, "macOS (App)/Info.plist", "macOS (App)/HomepageSafari.entitlements")
+    block = inject(
+        block,
+        "macOS (Extension)/Info.plist",
+        "macOS (Extension)/HomepageSafariExtension.entitlements",
+    )
+    return block
+
+updated = configuration.sub(update, text)
+if updated.count("CODE_SIGN_ENTITLEMENTS") < 4:
+    raise SystemExit("failed to configure App Group entitlements for all macOS configurations")
+pbxproj.write_text(updated, encoding="utf-8")
+PY
+  echo "[build] Configure stable Safari App Group -> $SAFARI_APP_GROUP_ID"
 }
 
 fix_safari_extension_info_plist() {
@@ -392,6 +466,7 @@ build_safari_project() {
     normalize_safari_project_bundle_ids "$project_file"
     normalize_safari_project_versions "$project_file"
     normalize_safari_host_app_sources "$project_root"
+    configure_safari_app_group "$project_root"
     sync_safari_project_resources "$project_root"
     fix_safari_extension_info_plist "$project_root"
     install_safari_extension_icon "$project_root"
@@ -415,6 +490,7 @@ build_safari_project() {
       normalize_safari_project_bundle_ids "$project_file"
       normalize_safari_project_versions "$project_file"
       normalize_safari_host_app_sources "$project_root"
+      configure_safari_app_group "$project_root"
       sync_safari_project_resources "$project_root"
       fix_safari_extension_info_plist "$project_root"
       install_safari_extension_icon "$project_root"

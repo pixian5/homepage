@@ -381,18 +381,11 @@ function renderPopupBookmarks(data, tab) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "popup-bookmark-item";
-      button.title = node.path.join(" / ");
 
       const title = document.createElement("span");
       title.className = "popup-bookmark-item-title";
       title.textContent = node.title;
-      const path = document.createElement("span");
-      path.className = "popup-bookmark-item-path";
-      path.textContent = node.path.join(" / ");
-      const url = document.createElement("span");
-      url.className = "popup-bookmark-item-url";
-      url.textContent = node.url;
-      button.append(title, path, url);
+      button.append(title);
       button.addEventListener("click", async () => {
         button.disabled = true;
         const result = await openBookmarkFromPopup(node.url, data?.settings || {}, tab);

@@ -184,10 +184,9 @@ body {
   color: var(--accent);
 }
 .popup-bookmark-item {
-  display: grid;
-  gap: 2px;
+  display: block;
   width: 100%;
-  min-height: 54px;
+  min-height: 30px;
   padding: 7px 8px;
   border: 1px solid transparent;
   border-radius: 7px;
@@ -207,19 +206,13 @@ body {
   opacity: 0.65;
   cursor: wait;
 }
-.popup-bookmark-item-title,
-.popup-bookmark-item-path,
-.popup-bookmark-item-url {
+.popup-bookmark-item-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.popup-bookmark-item-title {
-  font-weight: 600;
-}
-.popup-bookmark-item-path,
-.popup-bookmark-item-url,
+.popup-bookmark-item-title { font-weight: 600; }
 .popup-bookmark-empty {
   color: var(--muted);
   font-size: 0.86em;

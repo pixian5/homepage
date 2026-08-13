@@ -127,6 +127,20 @@ export function initSyncEngine(hooks) {
   _createSafety = hooks.createSafetySnapshot || (async () => {});
 }
 
+/**
+ * 判断本次远端 revision 是否明确由另一台设备写入。
+ *
+ * revision 只表示服务端文档推进，并不代表写入方。变更时自动推送会先预拉取，
+ * 同机此前写入的版本也可能在这里被读到；这种情况不能提示为“另一设备”。
+ */
+export function isRemoteUpdateFromAnotherDevice({ previousRemoteRevision, remoteRevision, remoteDeviceId, deviceId }) {
+  const previous = Number(previousRemoteRevision) || 0;
+  const remote = Number(remoteRevision) || 0;
+  const remoteWriter = String(remoteDeviceId || "").trim();
+  const localDevice = String(deviceId || "").trim();
+  return previous > 0 && remote > previous && !!remoteWriter && !!localDevice && remoteWriter !== localDevice;
+}
+
 export function getSyncStatus() {
   const data = _getData();
   const transport = getTransportConfig();
@@ -279,9 +293,13 @@ async function applyRemoteDoc(doc, deviceId, reason) {
 
   const prevRemoteRevision = Number(_status.lastRemoteRevision) || 0;
   const remoteRevision = Number(doc.revision) || 0;
-  // 仅当此前已知远端 revision，且远端比上次更高，才视为「他端更新」
-  // prev=0：首次 pull / 本机刚启用，不弹覆盖警告
-  const remoteNewer = prevRemoteRevision > 0 && remoteRevision > prevRemoteRevision;
+  const remoteDeviceId = String(doc.deviceId || "");
+  const remoteNewer = isRemoteUpdateFromAnotherDevice({
+    previousRemoteRevision: prevRemoteRevision,
+    remoteRevision,
+    remoteDeviceId,
+    deviceId,
+  });
 
   const merged = mergeHomepage(data, doc, { deviceId, now: Date.now() });
   if (!merged.ok) {
@@ -310,6 +328,7 @@ async function applyRemoteDoc(doc, deviceId, reason) {
       remoteNewer,
       remoteRevision,
       prevRemoteRevision,
+      remoteDeviceId,
       reason,
     });
   }
@@ -323,7 +342,7 @@ async function applyRemoteDoc(doc, deviceId, reason) {
   return {
     ok: true,
     merged: !!merged.stats?.applied,
-    stats: { ...merged.stats, remoteNewer, remoteRevision },
+    stats: { ...merged.stats, remoteNewer, remoteRevision, remoteDeviceId },
     reason,
   };
 }

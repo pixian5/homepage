@@ -155,6 +155,11 @@ if [[ -n "${PROJECT_FILE}" ]]; then
       --snapshot "${SAFARI_STORAGE_SNAPSHOT}" \
       --restore-on-regression
 
+    # Safari 26 将“可用作新窗口和标签页面”和实际选中状态分开保存。
+    # 每次更新都重新指向当前签名身份，并立即校验，避免出现扩展已启用但 Cmd+T 仍为空白页。
+    python3 "${ROOT_DIR}/scripts/safari-newtab-selection.py" configure \
+      --app-path "${APPS_DIR_APP}"
+
     # Xcode 构建时会将 build-output 里的 .app 注册到 LaunchServices，
     # 安装到 /Applications 后如果不注销源路径，Safari 扩展列表会出现重复条目。
     echo "[build] Unregistering build-output app from LaunchServices..."

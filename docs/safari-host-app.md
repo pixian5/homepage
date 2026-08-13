@@ -41,3 +41,9 @@ Safari 的扩展管理页读取嵌入 `.appex` 的原生 Bundle 图标，不读�
 Safari 扩展更新的第一步必须是退出 Safari，并在任何 converter、Xcode 注册或 App 替换发生前运行 `scripts/safari-storage-guard.py snapshot`。快照同时保存结构化的全部 `extension_storage` 键值和 SQLite/WAL 原始文件，位置为忽略提交的 `.test-backups/safari-storage/`。
 
 安装后必须运行 `verify --restore-on-regression`：Safari 在快照后保持退出，因此更新前后的 `homepage_data` 哈希必须完全一致；只要快捷按钮、设置、备份或其他字段被安装过程改写，就自动把结构化快照写回当前签名身份的数据库，并让构建失败报警。这样构建不能再把“扩展安装成功但用户数据被默认值替换”报告成成功。
+
+## 新标签页接管
+
+Safari 26 将扩展声明的 `chrome_url_overrides.newtab` 与用户实际选择的“新建标签页时打开”分开管理。仅检查 manifest、签名或扩展启用状态都不能证明 `Cmd+T` 会显示首页。
+
+安装脚本在 Safari 已退出时，会将“新建标签页时打开”和“新建窗口时打开”重新关联到当前签名身份的 `我的首页`，然后用 `scripts/safari-newtab-selection.py verify` 校验两项偏好。该步骤只写 Safari 的两项入口选择，不读取或修改扩展书签数据。若校验失败，构建失败而不是把未接管的新标签页当作成功。

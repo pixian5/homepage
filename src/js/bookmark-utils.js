@@ -77,6 +77,17 @@ export function collectBookmarkTree(data) {
 }
 
 /**
+ * 返回弹窗应显示的书签根节点。内部“全部”分组只用于存储，不能作为用户可见层级。
+ *
+ * @param {Array<object>} tree
+ * @returns {Array<object>}
+ */
+export function getPopupBookmarkRoots(tree) {
+  if (tree.length === 1 && tree[0].id === ALL_BOOKMARKS_GROUP_ID) return tree[0].children;
+  return tree;
+}
+
+/**
  * 返回可作为“保存位置”的分组和嵌套文件夹。
  * @param {object} data
  * @returns {Array<{id:string, kind:"group"|"folder", name:string, depth:number, path:string[], groupId:string, parentId:string}>}

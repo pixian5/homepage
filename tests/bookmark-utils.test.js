@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { collectBookmarkFolders, collectBookmarkItems, collectBookmarkTree } from "../src/js/bookmark-utils.js";
+import {
+  collectBookmarkFolders,
+  collectBookmarkItems,
+  collectBookmarkTree,
+  getPopupBookmarkRoots,
+} from "../src/js/bookmark-utils.js";
 import { ensureAllBookmarksGroup, getLegacyGroupFolderId } from "../src/js/data-utils.js";
 
 const data = {
@@ -104,6 +109,16 @@ describe("bookmark-utils", () => {
         ["folder", 2, "全部/工作/项目"],
         ["nested", 3, "全部/工作/项目/文档"],
       ],
+    );
+  });
+
+  it("hides the internal all root in the popup without flattening folders", () => {
+    const migrated = structuredClone(data);
+    ensureAllBookmarksGroup(migrated);
+    const roots = getPopupBookmarkRoots(collectBookmarkTree(migrated));
+    assert.deepEqual(
+      roots.map((node) => [node.id, node.type, node.children.map((child) => child.id)]),
+      [[getLegacyGroupFolderId("g1"), "folder", ["folder", "item-2"]]],
     );
   });
 

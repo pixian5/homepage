@@ -1,4 +1,4 @@
-import { collectBookmarkFolders, collectBookmarkTree } from "./js/bookmark-utils.js";
+import { collectBookmarkFolders, collectBookmarkTree, getPopupBookmarkRoots } from "./js/bookmark-utils.js";
 import { createItemNode } from "./js/data-utils.js";
 import {
   detectPreferredLanguage,
@@ -391,8 +391,9 @@ function renderPopupBookmarks(data, tab) {
   const list = document.getElementById("popupBookmarkList");
   if (!section || !list) return;
   const tree = collectBookmarkTree(data);
+  const visibleTree = getPopupBookmarkRoots(tree);
   list.replaceChildren();
-  if (!tree.length || tree.every((root) => root.children.length === 0)) {
+  if (!visibleTree.length) {
     const empty = document.createElement("div");
     empty.className = "popup-bookmark-empty";
     empty.textContent = tr("noBookmarks", popupLanguage);
@@ -437,7 +438,7 @@ function renderPopupBookmarks(data, tab) {
     host.appendChild(details);
   };
 
-  for (const root of tree) {
+  for (const root of visibleTree) {
     appendNode(root, list);
   }
 }

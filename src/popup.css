@@ -1,4 +1,5 @@
 :root {
+  --popup-width: 560px;
   --bg: rgba(15, 20, 28, 0.7);
   --panel: #141b26;
   --text: #e7eef8;
@@ -30,7 +31,7 @@
 
 html {
   background: transparent;
-  min-width: 280px;
+  min-width: var(--popup-width);
 }
 * {
   box-sizing: border-box;
@@ -41,8 +42,8 @@ body {
   font-family: "Avenir Next", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   background: var(--bg);
   color: var(--text);
-  width: 280px;
-  min-width: 280px;
+  width: var(--popup-width);
+  min-width: var(--popup-width);
   max-height: 680px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -65,7 +66,7 @@ body {
   display: grid;
   gap: 4px;
   margin-top: 12px;
-  width: 256px;
+  width: 100%;
 }
 .menu-item {
   position: relative;

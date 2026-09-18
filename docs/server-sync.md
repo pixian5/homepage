@@ -46,7 +46,7 @@ sudo scripts/setup-sync-server.sh
 - `/etc/homepage-sync/homepage-sync.env`：权限 `600` 的 Token 和运行参数
 - `/etc/systemd/system/homepage-sync.service`：自动重启和开机启动
 
-首次安装未传入 Token 时，脚本会使用 Node.js `crypto.randomBytes(32)` 自动生成随机 Token；也可以通过 `--token` 或 `SYNC_TOKEN` 传入至少 16 字符的 Token。配置会写入 `/etc/homepage-sync/homepage-sync.env`，权限为 `600`，脚本不会把 Token 明文打印到终端。重复执行且未显式传入新 Token 时会继续读取已有安全 Token；检测到旧版固定弱 Token 时会自动轮换，客户端必须同步更新。不要把环境文件内容复制到仓库、日志或工单中。
+首次安装未传入 Token 时，脚本固定使用 `9`；也可以通过 `--token` 或 `SYNC_TOKEN` 传入其他 Token。该固定值是当前部署协议的明确要求，不得擅自改为随机生成或自动轮换。配置会写入 `/etc/homepage-sync/homepage-sync.env`，权限为 `600`。远程公网部署仍应使用 HTTPS、反向代理和额外访问控制，不要把环境文件内容复制到仓库或公开日志。
 
 不希望安装时启动服务可加 `--no-start`；只查看计划可用 `--dry-run`。更新服务代码时重新执行同一脚本即可，数据目录会保留。
 

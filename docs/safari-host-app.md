@@ -23,6 +23,8 @@ Safari Web Extension 转换出的宿主 App 会通过 `SFSafariApplication.showP
 
 构建时 `scripts/sync-safari-version.mjs` 会读取根目录 `package.json`，把扩展版本同步到 Safari Xcode 工程所有宿主和扩展配置的 `MARKETING_VERSION`。`CURRENT_PROJECT_VERSION` 使用相同版本转换出的单调数字，例如 `24.0 -> 2400`，避免 `.app`/`.appex` 长期停留在转换器默认的 `1.0 (1)`。
 
+`scripts/build.sh` 配置 App Group 时按 `XCBuildConfiguration` 结构和 `Info.plist` 路径定位 Debug/Release 配置，不依赖 Safari converter 生成的注释文案；这样 converter 升级后把注释改成长目标名时，宿主 App 与 `.appex` 仍会同时写入 entitlements。
+
 ## 扩展图标与重复注册
 
 Safari 的扩展管理页读取嵌入 `.appex` 的原生 Bundle 图标，不读取 Web Extension `manifest.json` 的 `icons`。构建脚本会生成 `ExtensionIcon.icns`，将其登记到 Extension target 的 Resources 阶段，并在扩展 `Info.plist` 设置 `CFBundleIconFile`。验收时必须同时检查字段和安装包内的实际图标文件。

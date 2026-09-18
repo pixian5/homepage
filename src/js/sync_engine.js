@@ -227,7 +227,7 @@ async function writeRemoteSyncDocument(doc) {
   if (res.reason === "precondition_failed") {
     // 把远端 doc 塞回，供上层 merge 重试
     if (res.remote?.doc) {
-      return { code: "precondition_failed", remote: res.remote };
+      return { code: "precondition_failed", remote: res.remote, etag: res.etag, revision: res.revision };
     }
     return "precondition_failed";
   }
@@ -529,13 +529,8 @@ export async function resolveDocConflict(choice) {
 
     if (choice === "local") {
       // 本机覆盖云端：采用本机 docId 强制推送
-      _status.docId = _status.conflictLocalDocId || _status.docId || createDocId();
-      _pendingConflictRemote = null;
-      _status.status = "idle";
-      _status.lastError = "";
-      delete _status.conflictRemoteDocId;
-      delete _status.conflictLocalDocId;
-      await saveState();
+      const localDocId = _status.conflictLocalDocId || _status.docId || createDocId();
+      _status.docId = localDocId;
       // 提高 revision 盖过远端
       const remoteRead = await readRemoteSyncDocument();
       let base = 0;
@@ -549,11 +544,21 @@ export async function resolveDocConflict(choice) {
       doc.contentHash = hashSyncDocument(doc);
       const err = await writeRemoteSyncDocument(doc);
       if (err) {
-        _status.status = err.includes("quota") ? "quota" : "error";
-        _status.lastError = err;
+        const errorCode = typeof err === "string" ? err : err?.code || "push_failed";
+        if (typeof err === "object" && err?.remote?.doc) {
+          _pendingConflictRemote = err.remote.doc;
+          _status.conflictRemoteDocId = err.remote.doc.docId || _status.conflictRemoteDocId;
+          if (err.etag) _status.lastRemoteEtag = err.etag;
+        }
+        _status.conflictLocalDocId = localDocId;
+        _status.status = "need_setup";
+        _status.lastError = errorCode;
         await saveState();
-        return { ok: false, reason: err };
+        return { ok: false, reason: errorCode };
       }
+      _pendingConflictRemote = null;
+      delete _status.conflictRemoteDocId;
+      delete _status.conflictLocalDocId;
       _status.lastPushAt = Date.now();
       _status.lastRemoteRevision = doc.revision;
       _status.status = "idle";

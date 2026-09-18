@@ -195,3 +195,101 @@ describe("sync_engine remote-device attribution", () => {
     );
   });
 });
+
+describe("sync_engine conflict resolution", () => {
+  it("preserves conflict context when local overwrite loses a concurrent 412 race", async () => {
+    const port = 25000 + (process.pid % 2000);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const token = "sync-engine-conflict-test-token";
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-conflict-test."));
+    const child = spawn(process.execPath, [path.join(root, "scripts", "sync-server.mjs")], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HOST: "127.0.0.1",
+        TOKEN: token,
+        DATA_FILE: path.join(tempDir, "state.json"),
+      },
+      stdio: "ignore",
+    });
+    const originalFetch = globalThis.fetch;
+
+    try {
+      await waitForHealth(baseUrl, token);
+      const engine = await import(`../src/js/sync_engine.js?conflict=${Date.now()}`);
+      let data = baseData(baseUrl, token);
+      _setDeviceIdForTests("dev_conflict_local");
+      engine.initSyncEngine({
+        getData: () => data,
+        setData: (next) => {
+          data = next;
+        },
+        saveLocal: async () => null,
+      });
+
+      const initial = await engine.pushNow("initial_local");
+      assert.equal(initial.ok, true);
+      const localRemote = await httpPullState({ baseUrl, token });
+      const conflicting = structuredClone(localRemote.doc);
+      conflicting.docId = "doc_conflicting_remote";
+      conflicting.deviceId = "dev_conflict_remote";
+      conflicting.writtenAt += 1;
+      conflicting.contentHash = hashSyncDocument(conflicting);
+      const conflictWrite = await httpPushState({ baseUrl, token }, conflicting, { ifMatch: localRemote.etag });
+      assert.equal(conflictWrite.ok, true);
+
+      const detected = await engine.pullNow("detect_conflict");
+      assert.equal(detected.reason, "doc_conflict");
+      const pendingBefore = engine.getPendingConflict();
+      assert.equal(pendingBefore.remoteDocId, "doc_conflicting_remote");
+
+      let injectConcurrentWrite = true;
+      globalThis.fetch = async (input, options = {}) => {
+        const requestUrl = String(input);
+        if (
+          injectConcurrentWrite &&
+          requestUrl === `${baseUrl}/v1/sync/state` &&
+          (!options.method || options.method === "GET")
+        ) {
+          injectConcurrentWrite = false;
+          const staleResponse = await originalFetch(input, options);
+          const staleBody = await staleResponse.clone().json();
+          const concurrent = structuredClone(staleBody.doc);
+          concurrent.deviceId = "dev_concurrent_remote";
+          concurrent.nodes[0].title = "Concurrent remote update";
+          concurrent.nodes[0].updatedAt += 10;
+          concurrent.nodes[0].titleUpdatedAt = concurrent.nodes[0].updatedAt;
+          concurrent.writtenAt += 10;
+          concurrent.contentHash = hashSyncDocument(concurrent);
+          const competingResponse = await originalFetch(`${baseUrl}/v1/sync/state`, {
+            method: "PUT",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+              "If-Match": staleResponse.headers.get("ETag"),
+            },
+            body: JSON.stringify(concurrent),
+          });
+          assert.equal(competingResponse.status, 200);
+          return staleResponse;
+        }
+        return originalFetch(input, options);
+      };
+
+      const resolved = await engine.resolveDocConflict("local");
+      assert.deepEqual(resolved, { ok: false, reason: "precondition_failed" });
+      const pendingAfter = engine.getPendingConflict();
+      assert.ok(pendingAfter);
+      assert.equal(pendingAfter.localDocId, pendingBefore.localDocId);
+      assert.equal(pendingAfter.remoteDocId, "doc_conflicting_remote");
+      assert.ok(pendingAfter.remoteRevision > pendingBefore.remoteRevision);
+      assert.equal(engine.getSyncStatus().hasConflict, true);
+    } finally {
+      globalThis.fetch = originalFetch;
+      _setDeviceIdForTests("");
+      await stopServer(child);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});

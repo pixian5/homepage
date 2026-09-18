@@ -11,6 +11,8 @@ SERVICE_NAME="homepage-sync"
 SERVICE_USER="homepage-sync"
 PORT="8787"
 TOKEN="${SYNC_TOKEN:-}"
+TOKEN_SOURCE=""
+[[ -n "$TOKEN" ]] && TOKEN_SOURCE="explicit"
 DRY_RUN=0
 NO_START=0
 
@@ -19,7 +21,7 @@ usage() {
 用法：sudo scripts/setup-sync-server.sh [选项]
 
 选项：
-  --token TOKEN       设置 Bearer Token；也可使用 SYNC_TOKEN，首次默认 9
+  --token TOKEN       设置至少 16 字符的 Bearer Token；也可使用 SYNC_TOKEN
   --port PORT         Node 内部端口，默认 8787
   --install-dir DIR  服务代码目录，默认 /opt/homepage-sync
   --data-dir DIR     JSON 数据目录，默认 /var/lib/homepage-sync
@@ -54,6 +56,7 @@ while (($#)); do
     --token)
       (($# >= 2)) || die "--token 缺少参数"
       TOKEN="$2"
+      TOKEN_SOURCE="explicit"
       shift 2
       ;;
     --port)
@@ -103,10 +106,26 @@ fi
 
 if [[ -z "$TOKEN" && -r "$ENV_FILE" ]]; then
   TOKEN="$(sed -n 's/^TOKEN=//p' "$ENV_FILE" | head -n 1)"
+  [[ -n "$TOKEN" ]] && TOKEN_SOURCE="existing"
+fi
+
+if [[ -n "$TOKEN" && ${#TOKEN} -lt 16 ]]; then
+  if [[ "$TOKEN_SOURCE" == "existing" ]]; then
+    printf '[setup-sync-server] 检测到旧的弱 Token，将自动轮换。\n' >&2
+    TOKEN=""
+    TOKEN_SOURCE=""
+  else
+    die "Token 至少需要 16 个字符"
+  fi
 fi
 
 if [[ -z "$TOKEN" ]]; then
-  TOKEN="9"
+  TOKEN_SOURCE="generated"
+  if ((DRY_RUN)); then
+    TOKEN="<自动生成>"
+  else
+    TOKEN="$($NODE_BIN -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')"
+  fi
 fi
 
 if ((DRY_RUN)); then
@@ -136,6 +155,7 @@ install -o root -g root -m 0644 "${SCRIPT_ROOT}/scripts/sync-server.mjs" "${INST
 
 install -d -m 0755 "$(dirname "$ENV_FILE")"
 [[ -n "$TOKEN" ]] || die "Token 不能为空；请使用 --token 或 SYNC_TOKEN"
+(( ${#TOKEN} >= 16 )) || die "Token 至少需要 16 个字符"
 [[ "$TOKEN" =~ ^[A-Za-z0-9._~:-]+$ ]] || die "Token 只能包含字母、数字、点、下划线、短横线、波浪线或冒号"
 {
   printf 'HOST=127.0.0.1\n'
@@ -184,4 +204,4 @@ fi
 printf '\n[setup-sync-server] 完成\n'
 printf '健康检查：curl http://127.0.0.1:%s/health\n' "$PORT"
 printf '反向代理后，扩展 URL 应填写 HTTPS 公网地址。\n'
-printf 'Token 已写入：%s（权限 600），当前 Token：%s\n' "$ENV_FILE" "$TOKEN"
+printf 'Token 已写入：%s（权限 600）；请从该文件安全读取，不会打印到终端。\n' "$ENV_FILE"

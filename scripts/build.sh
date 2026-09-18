@@ -270,7 +270,7 @@ def inject(block, info_plist, entitlement_path):
     )
 
 configuration = re.compile(
-    r"(?ms)^\t\t[A-F0-9]{24} /\* (?:Debug|Release) \*/ = \{\n"
+    r"(?ms)^\t\t[A-F0-9]{24} /\* [^\n]+ \*/ = \{\n"
     r"\t\t\tisa = XCBuildConfiguration;\n\t\t\tbuildSettings = \{.*?"
     r"^\t\t\t\};\n\t\t\tname = (?:Debug|Release);\n\t\t\};"
 )

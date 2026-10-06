@@ -67,7 +67,9 @@ def clean_file(path: Path) -> dict[str, object]:
     try:
         with os.fdopen(descriptor, "wb") as stream:
             plistlib.dump(data, stream, fmt=plistlib.FMT_BINARY, sort_keys=False)
-        subprocess.run(["/usr/bin/plutil", "-lint", temp_name], check=True, capture_output=True)
+        # 重新解析写出的二进制文件后再替换原件；标准库校验也能在 Linux 测试环境运行。
+        with open(temp_name, "rb") as stream:
+            plistlib.load(stream)
         os.replace(temp_name, path)
     except BaseException:
         try:

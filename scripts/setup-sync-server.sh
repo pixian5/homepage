@@ -184,4 +184,4 @@ fi
 printf '\n[setup-sync-server] 完成\n'
 printf '健康检查：curl http://127.0.0.1:%s/health\n' "$PORT"
 printf '反向代理后，扩展 URL 应填写 HTTPS 公网地址。\n'
-printf 'Token 已写入：%s（权限 600），当前 Token：%s\n' "$ENV_FILE" "$TOKEN"
+printf 'Token 已写入：%s（权限 600）\n' "$ENV_FILE"

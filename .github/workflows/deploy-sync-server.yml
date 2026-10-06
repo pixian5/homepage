@@ -1,0 +1,81 @@
+name: Deploy sync server
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homepage-sync-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # 只向仓库管理员显式指定的服务器部署，通过 CI 后才更新。
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      vars.SYNC_DEPLOY_HOST != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull verified revision and restart service
+        env:
+          DEPLOY_HOST: ${{ vars.SYNC_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.SYNC_DEPLOY_USER || 'root' }}
+          SSH_KEY: ${{ secrets.SYNC_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.SYNC_DEPLOY_KNOWN_HOSTS }}
+          VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
+          ssh_dir="$(mktemp -d)"
+          trap 'rm -rf "$ssh_dir"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$ssh_dir/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          chmod 600 "$ssh_dir/key" "$ssh_dir/known_hosts"
+          ssh -i "$ssh_dir/key" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$ssh_dir/known_hosts" \
+            "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- "$VERIFIED_SHA" <<'REMOTE'
+          set -euo pipefail
+          revision="$1"
+          [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
+          source_dir=/opt/homepage-sync-source
+          installed=/opt/homepage-sync/sync-server.mjs
+          test -f "$installed"
+          test -f /etc/homepage-sync/homepage-sync.env
+          if [ ! -d "$source_dir" ]; then
+            git clone https://github.com/pixian5/homepage.git "$source_dir"
+          fi
+          test "$(git -C "$source_dir" remote get-url origin)" = 'https://github.com/pixian5/homepage.git'
+          test -z "$(git -C "$source_dir" status --porcelain)"
+          git -C "$source_dir" fetch origin main
+          # 防止排队中的旧工作流把服务降级到旧提交。
+          if [ "$(git -C "$source_dir" rev-parse origin/main)" != "$revision" ]; then
+            echo '已有更新提交，跳过旧版本部署'
+            exit 0
+          fi
+          git -C "$source_dir" checkout --detach "$revision"
+          node --check "$source_dir/scripts/sync-server.mjs"
+          backup="${installed}.previous"
+          cp -p "$installed" "$backup"
+          rollback() {
+            cp -p "$backup" "$installed"
+            systemctl restart homepage-sync.service
+          }
+          trap rollback ERR
+          install -m 0644 "$source_dir/scripts/sync-server.mjs" "${installed}.next"
+          mv "${installed}.next" "$installed"
+          systemctl restart homepage-sync.service
+          port="$(sed -n 's/^PORT=//p' /etc/homepage-sync/homepage-sync.env | head -n 1)"
+          [[ "$port" =~ ^[0-9]+$ ]]
+          curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 1 \
+            "http://127.0.0.1:${port}/health"
+          systemctl is-active --quiet homepage-sync.service
+          trap - ERR
+          echo "同步服务已部署：$revision"
+          REMOTE

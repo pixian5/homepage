@@ -9,33 +9,9 @@ const outFile = path.join(outDir, "app.ff.js");
 const bgOutFile = path.join(outDir, "background.ff.js");
 const htmlPath = path.join(firefoxDir, "newtab.html");
 
-const files = [
-  "shared-utils.js",
-  "data-utils.js",
-  "safari_native_storage.js",
-  "storage.js",
-  "icons.js",
-  "bing-wallpaper.js",
-  "visit-history.js",
-  "sync_policy.js",
-  "sync_settings.js",
-  "sync_ids.js",
-  "sync_projection.js",
-  "sync_merge.js",
-  "sync_bundle.js",
-  "sync_pack.js",
-  "sync_outbox.js",
-  "sync_http_transport.js",
-  "sync_engine.js",
-  "app.js",
-];
-const backgroundFiles = [
-  "shared-utils.js",
-  "data-utils.js",
-  "safari_native_storage.js",
-  "visit-history.js",
-  "background.js",
-];
+const { app: files, background: backgroundFiles } = JSON.parse(
+  await fs.readFile(new URL("./firefox-modules.json", import.meta.url), "utf8"),
+);
 
 export function stripImports(code) {
   return code.replace(/^\s*import[\s\S]*?;\s*/gm, "");

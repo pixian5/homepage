@@ -30,7 +30,8 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
-const PORT = Number(process.env.PORT) || 8787;
+// 显式 PORT=0 时交由系统分配空闲端口，供隔离测试使用。
+const PORT = process.env.PORT === "0" ? 0 : Number(process.env.PORT) || 8787;
 const HOST = process.env.HOST || "0.0.0.0";
 const TOKEN = String(process.env.TOKEN || "").trim();
 const DATA_FILE = process.env.DATA_FILE || path.join(ROOT, "data", "homepage-sync-state.json");
@@ -410,8 +411,11 @@ const server = createServer(async (req, res) => {
 
 await loadFromDisk();
 server.listen(PORT, HOST, () => {
-  console.log(`[sync-server] http://${HOST}:${PORT}`);
+  const address = server.address();
+  console.log(`[sync-server] http://${HOST}:${address.port}`);
   console.log(`[sync-server] GET/PUT /v1/sync/state  GET /health`);
   console.log(`[sync-server] auth: ${TOKEN ? "Bearer token required" : "open (no TOKEN)"}`);
   console.log(`[sync-server] data: ${DATA_FILE}`);
+  // 仅向启动本进程的父进程报告就绪；测试不再把其他服务的健康响应当作启动成功。
+  if (process.send) process.send({ type: "sync-server-ready", port: address.port, pid: process.pid });
 });

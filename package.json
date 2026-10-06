@@ -1,6 +1,6 @@
 {
   "name": "newtab-extension",
-  "version": "25.9",
+  "version": "25.9.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,8 @@
     "test": "node --test",
     "test:sync-e2e": "node scripts/run-browser-sync-e2e.mjs",
     "clean:safari-registrations": "node scripts/clean-safari-homepage-registrations.mjs",
-    "sync-server": "node scripts/sync-server.mjs"
+    "sync-server": "node scripts/sync-server.mjs",
+    "test:browser-smoke": "node scripts/run-browser-smoke.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.4"

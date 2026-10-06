@@ -31,6 +31,17 @@ jobs:
       - name: Build extensions
         run: SKIP_BUMP=1 npm run build
 
+      - name: Setup Chrome for Testing
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Run isolated browser smoke tests
+        env:
+          CHROME_E2E_BINARY: ${{ steps.chrome.outputs.chrome-path }}
+        run: npm run test:browser-smoke -- chrome
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:

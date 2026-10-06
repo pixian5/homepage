@@ -12,6 +12,10 @@ function Remove-ImportsAndExports {
     "",
     [System.Text.RegularExpressions.RegexOptions]::Multiline
   )
+  # 与 Node 入口统一处理再导出和默认导出，避免经典脚本残留 ESM 语法。
+  $withoutImports = [regex]::Replace($withoutImports, '\bexport\s+\{[^}]*\}\s*(from\s+[''"][^''"]+[''"])?\s*;?', '')
+  $withoutImports = [regex]::Replace($withoutImports, '\bexport\s+\*\s*(?:as\s+\w+\s+)?from\s+[''"][^''"]+[''"]\s*;?', '')
+  $withoutImports = [regex]::Replace($withoutImports, '\bexport\s+default\s+', '')
   return [System.Text.RegularExpressions.Regex]::Replace(
     $withoutImports,
     "\bexport\s+(?=async|function|const|let|var|class)",
@@ -25,17 +29,15 @@ $outDir = Join-Path $firefoxDir "js"
 $outFile = Join-Path $outDir "app.ff.js"
 $htmlPath = Join-Path $firefoxDir "newtab.html"
 
-$files = @(
-  "storage.js",
-  "icons.js",
-  "bing-wallpaper.js",
-  "app.js"
-)
+# 两个平台读取同一份模块顺序，新增模块后不再遗漏 Windows 后备构建。
+$modules = Get-Content -LiteralPath (Join-Path $RootDir "scripts/firefox-modules.json") -Raw | ConvertFrom-Json
 
 if (-not (Test-Path -LiteralPath $outDir)) {
   New-Item -ItemType Directory -Path $outDir | Out-Null
 }
 
+function Write-Bundle {
+param($files, [string]$target)
 $chunks = New-Object System.Collections.Generic.List[string]
 foreach ($file in $files) {
   $fullPath = Join-Path $srcDir $file
@@ -47,8 +49,11 @@ foreach ($file in $files) {
   $chunks.Add($code.TrimEnd())
 }
 
-$output = "/* Firefox bundle (no ESM imports) */`n`n" + ($chunks -join "`n`n") + "`n"
-[System.IO.File]::WriteAllText($outFile, $output, [System.Text.Encoding]::UTF8)
+$output = "/* Firefox bundle (no ESM imports) */`n`n" + ($chunks -join "`n`n") + "`n`n"
+[System.IO.File]::WriteAllText($target, $output, [System.Text.UTF8Encoding]::new($false))
+}
+Write-Bundle $modules.app $outFile
+Write-Bundle $modules.background (Join-Path $outDir "background.ff.js")
 
 $html = [System.IO.File]::ReadAllText($htmlPath, [System.Text.Encoding]::UTF8)
 $externalScript = "<script src=`"js/app.ff.js`"></script>"
@@ -69,10 +74,10 @@ if ($updated -eq $html) {
   )
 }
 
-if ($updated -eq $html) {
+if ($updated -eq $html -and $html -notmatch '<script\s+src="js/app\.ff\.js"\s*></script>') {
   throw "newtab.html missing app script tag"
 }
 
-[System.IO.File]::WriteAllText($htmlPath, $updated, [System.Text.Encoding]::UTF8)
+[System.IO.File]::WriteAllText($htmlPath, $updated, [System.Text.UTF8Encoding]::new($false))
 
 Write-Output "Firefox bundle generated (PowerShell)"

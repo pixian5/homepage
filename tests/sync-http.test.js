@@ -1,17 +1,14 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { httpHealth, httpPullState, httpPushState } from "../src/js/sync_http_transport.js";
 import { hashSyncDocument } from "../src/js/sync_projection.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(__dirname, "..");
-const PORT = 18787;
-const BASE = `http://127.0.0.1:${PORT}`;
+import { startSyncServer, stopSyncServer } from "./helpers/sync-server.js";
+
 const TOKEN = "test-token";
 
 function makeDoc(docId = "doc_test") {
@@ -64,49 +61,21 @@ async function putRaw(baseUrl, doc, token = TOKEN, headers = {}) {
   return { response, body: await response.json() };
 }
 
-async function stopServer(child) {
-  if (!child || child.exitCode !== null || child.signalCode) return;
-  child.kill("SIGTERM");
-  await Promise.race([
-    new Promise((resolve) => child.once("exit", resolve)),
-    new Promise((resolve) => setTimeout(resolve, 500)),
-  ]);
-  if (child.exitCode === null && !child.signalCode) child.kill("SIGKILL");
-}
-
-async function waitForHealth(baseUrl) {
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
-    const health = await httpHealth({ baseUrl, token: TOKEN });
-    if (health.ok) return true;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  return false;
-}
-
 describe("sync_http_transport + server", () => {
   /** @type {import('node:child_process').ChildProcess | null} */
   let child = null;
   let tempDir = "";
+  let BASE = "";
 
   before(async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-http-test."));
-    child = spawn(process.execPath, [path.join(root, "scripts/sync-server.mjs")], {
-      cwd: root,
-      env: {
-        ...process.env,
-        PORT: String(PORT),
-        HOST: "127.0.0.1",
-        TOKEN,
-        DATA_FILE: path.join(tempDir, "state.json"),
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    assert.equal(await waitForHealth(BASE), true, "server did not start");
+    const server = await startSyncServer({ dataFile: path.join(tempDir, "state.json") });
+    child = server.child;
+    BASE = server.baseUrl;
   });
 
   after(async () => {
-    await stopServer(child);
+    await stopSyncServer(child);
     if (tempDir) await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -180,7 +149,10 @@ describe("sync_http_transport + server", () => {
   });
 
   it("retries successfully after a real network outage", async () => {
-    const retryPort = 18788;
+    // 持有端口并主动断开连接，制造真实网络错误，不访问任何未知服务。
+    const outage = createServer((socket) => socket.destroy());
+    await new Promise((resolve) => outage.listen(0, "127.0.0.1", resolve));
+    const retryPort = outage.address().port;
     const retryBase = `http://127.0.0.1:${retryPort}`;
     const retryDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-retry-test."));
     let retryServer = null;
@@ -192,18 +164,11 @@ describe("sync_http_transport + server", () => {
       assert.equal(unavailable.ok, false);
       assert.equal(unavailable.reason, "network_error");
 
-      retryServer = spawn(process.execPath, [path.join(root, "scripts/sync-server.mjs")], {
-        cwd: root,
-        env: {
-          ...process.env,
-          PORT: String(retryPort),
-          HOST: "127.0.0.1",
-          TOKEN,
-          DATA_FILE: path.join(retryDir, "state.json"),
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      assert.equal(await waitForHealth(retryBase), true, "retry server did not start");
+      await new Promise((resolve) => outage.close(resolve));
+      ({ child: retryServer } = await startSyncServer({
+        dataFile: path.join(retryDir, "state.json"),
+        port: retryPort,
+      }));
       const retried = await httpPushState({ baseUrl: retryBase, token: TOKEN }, doc, {
         idempotencyKey: "network-retry",
       });
@@ -213,24 +178,19 @@ describe("sync_http_transport + server", () => {
       });
       assert.equal(repeated.revision, retried.revision);
     } finally {
-      await stopServer(retryServer);
+      if (outage.listening) await new Promise((resolve) => outage.close(resolve));
+      await stopSyncServer(retryServer);
       await rm(retryDir, { recursive: true, force: true });
     }
   });
 
   it("serializes concurrent writes so memory and disk finish at the same revision", async () => {
-    const port = 18789;
-    const baseUrl = `http://127.0.0.1:${port}`;
+    let baseUrl;
     const concurrentDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-concurrent-test."));
     const dataFile = path.join(concurrentDir, "state.json");
     let concurrentServer = null;
     try {
-      concurrentServer = spawn(process.execPath, [path.join(root, "scripts/sync-server.mjs")], {
-        cwd: root,
-        env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", TOKEN, DATA_FILE: dataFile },
-        stdio: "ignore",
-      });
-      assert.equal(await waitForHealth(baseUrl), true, "concurrent server did not start");
+      ({ child: concurrentServer, baseUrl } = await startSyncServer({ dataFile }));
 
       const writes = Array.from({ length: 24 }, (_, index) => {
         const doc = makeDoc(`doc_concurrent_${index}`);
@@ -257,24 +217,18 @@ describe("sync_http_transport + server", () => {
       assert.equal(disk.etag, memory.etag);
       assert.deepEqual(disk.doc, memory.doc);
     } finally {
-      await stopServer(concurrentServer);
+      await stopSyncServer(concurrentServer);
       await rm(concurrentDir, { recursive: true, force: true });
     }
   });
 
   it("keeps the published state unchanged when persistence fails", async () => {
-    const port = 18790;
-    const baseUrl = `http://127.0.0.1:${port}`;
+    let baseUrl;
     const failureDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-save-failure-test."));
     const dataFile = path.join(failureDir, "state.json");
     let failureServer = null;
     try {
-      failureServer = spawn(process.execPath, [path.join(root, "scripts/sync-server.mjs")], {
-        cwd: root,
-        env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", TOKEN, DATA_FILE: dataFile },
-        stdio: "ignore",
-      });
-      assert.equal(await waitForHealth(baseUrl), true, "failure server did not start");
+      ({ child: failureServer, baseUrl } = await startSyncServer({ dataFile }));
       const baselineWrite = await httpPushState({ baseUrl, token: TOKEN }, makeDoc("doc_before_failure"));
       assert.equal(baselineWrite.ok, true);
       const before = await httpPullState({ baseUrl, token: TOKEN });
@@ -291,14 +245,13 @@ describe("sync_http_transport + server", () => {
       assert.equal(await readFile(dataFile, "utf8"), diskBefore);
     } finally {
       await chmod(failureDir, 0o700).catch(() => {});
-      await stopServer(failureServer);
+      await stopSyncServer(failureServer);
       await rm(failureDir, { recursive: true, force: true });
     }
   });
 
   it("does not load a malformed persisted document after restart", async () => {
-    const port = 18791;
-    const baseUrl = `http://127.0.0.1:${port}`;
+    let baseUrl;
     const persistedDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-invalid-disk-test."));
     const dataFile = path.join(persistedDir, "state.json");
     let persistedServer = null;
@@ -311,16 +264,11 @@ describe("sync_http_transport + server", () => {
         JSON.stringify({ revision: 7, etag: "stale", updatedAt: Date.now(), doc: malformed }),
         "utf8",
       );
-      persistedServer = spawn(process.execPath, [path.join(root, "scripts/sync-server.mjs")], {
-        cwd: root,
-        env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", TOKEN, DATA_FILE: dataFile },
-        stdio: "ignore",
-      });
-      assert.equal(await waitForHealth(baseUrl), true, "invalid disk server did not start");
+      ({ child: persistedServer, baseUrl } = await startSyncServer({ dataFile }));
       const empty = await httpPullState({ baseUrl, token: TOKEN });
       assert.equal(empty.reason, "no_remote");
     } finally {
-      await stopServer(persistedServer);
+      await stopSyncServer(persistedServer);
       await rm(persistedDir, { recursive: true, force: true });
     }
   });

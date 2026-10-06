@@ -1,0 +1,31 @@
+{
+  "app": [
+    "shared-utils.js",
+    "data-utils.js",
+    "safari_native_storage.js",
+    "storage.js",
+    "icons.js",
+    "bing-wallpaper.js",
+    "visit-history.js",
+    "sync_policy.js",
+    "sync_settings.js",
+    "sync_ids.js",
+    "sync_projection.js",
+    "sync_merge.js",
+    "sync_bundle.js",
+    "sync_pack.js",
+    "sync_outbox.js",
+    "sync_http_transport.js",
+    "sync_engine.js",
+    "app-i18n.js",
+    "ui-utils.js",
+    "app.js"
+  ],
+  "background": [
+    "shared-utils.js",
+    "data-utils.js",
+    "safari_native_storage.js",
+    "visit-history.js",
+    "background.js"
+  ]
+}

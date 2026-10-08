@@ -28,54 +28,9 @@ quit_safari_for_storage_update() {
   fi
 }
 
-detect_apple_development_identity() {
-  security find-identity -p codesigning -v 2>/dev/null \
-    | sed -n 's/.*"\(Apple Development: .* ([A-Z0-9]\{10\})\)".*/\1/p' \
-    | head -n 1
-}
-
-post_sign_safari_app() {
-  local app_path="$1"
-  local configuration="$2"
-  local identity app_xcent appex_xcent appex_path
-
-  identity="$(detect_apple_development_identity)"
-  if [[ -z "${identity}" ]]; then
-    echo "[build] Skip post-sign: no Apple Development identity found"
-    return 0
-  fi
-
-  appex_path="${app_path}/Contents/PlugIns/${SAFARI_APP_NAME} Extension.appex"
-  app_xcent="${SAFARI_BUILD_DIR}/Build/Intermediates.noindex/我的首页 Safari.build/${configuration}/我的首页 Safari (macOS).build/${SAFARI_APP_NAME}.app.xcent"
-  appex_xcent="${SAFARI_BUILD_DIR}/Build/Intermediates.noindex/我的首页 Safari.build/${configuration}/我的首页 Safari Extension (macOS).build/${SAFARI_APP_NAME} Extension.appex.xcent"
-
-  if [[ ! -d "${appex_path}" || ! -f "${app_xcent}" || ! -f "${appex_xcent}" ]]; then
-    echo "[build] Skip post-sign: signing inputs missing"
-    return 0
-  fi
-
-  echo "[build] Post-sign Safari app with Apple Development identity: ${identity}"
-  /usr/bin/codesign --force --sign "${identity}" --entitlements "${appex_xcent}" --timestamp=none --options runtime "${appex_path}"
-  /usr/bin/codesign --force --sign "${identity}" --entitlements "${app_xcent}" --timestamp=none --options runtime "${app_path}"
-  /usr/bin/codesign --verify --verbose=2 "${appex_path}"
-  /usr/bin/codesign --verify --verbose=2 "${app_path}"
-}
-
-verify_stable_storage_entitlements() {
-  local app_path="$1"
-  local appex_path="${app_path}/Contents/PlugIns/${SAFARI_APP_NAME} Extension.appex"
-  local expected_group="group.com.aeroluna.homepage.safari"
-  local target entitlements
-
-  for target in "$app_path" "$appex_path"; do
-    entitlements="$(/usr/bin/codesign -d --entitlements :- "$target" 2>/dev/null || true)"
-    if [[ "$entitlements" != *"$expected_group"* ]]; then
-      echo "[build] ERROR: stable-storage App Group missing from signed target: $target" >&2
-      exit 1
-    fi
-  done
-  echo "[build] Verified stable-storage App Group -> $expected_group"
-}
+# 签名相关公共函数抽出到 lib，供完整构建与快速续签（safari-refresh-signing.sh）共用。
+# shellcheck source=lib/safari-signing.sh
+source "${SCRIPT_DIR}/lib/safari-signing.sh"
 
 echo "[build] ROOT_DIR=${ROOT_DIR}"
 

@@ -179,6 +179,9 @@ cp -R "${APP_PATH}" "${APPS_DIR_APP}"
 lsregister_bin=/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister
 "${lsregister_bin}" -u "${APP_PATH}" 2>/dev/null || true
 
+# 光注销不够，Safari 仍会从构建目录加载那份旧扩展，直接删掉源产物
+prune_safari_build_products "${SAFARI_XCODE_CONFIGURATION:-Release}"
+
 echo "[refresh] Verifying installed app..."
 "${STATUS_CMD[@]}" >/dev/null || true
 python3 "${SCRIPT_DIR}/safari-signing-status.py" --app-path "${APPS_DIR_APP}"

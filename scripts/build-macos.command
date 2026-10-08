@@ -120,6 +120,10 @@ if [[ -n "${PROJECT_FILE}" ]]; then
     echo "[build] Unregistering build-output app from LaunchServices..."
     /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -u "${APP_PATH}" 2>/dev/null || true
 
+    # 实测：只注销不够，Safari 仍会从构建目录加载那份旧扩展，
+    # 结果是列表里两个「我的首页」且实际跑的不是正式版。直接删掉源产物。
+    prune_safari_build_products "${SAFARI_XCODE_CONFIGURATION}"
+
     if [[ "${SAFARI_LAUNCH_AFTER_BUILD:-0}" == "1" ]]; then
       open "${APPS_DIR_APP}"
       echo "[build] launched: ${APPS_DIR_APP}"

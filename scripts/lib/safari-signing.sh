@@ -94,6 +94,28 @@ post_sign_safari_app() {
   /usr/bin/codesign --verify --verbose=2 "${app_path}"
 }
 
+# 删掉构建目录里已经拷进 /Applications 的那份宿主 App 与游离扩展。
+#
+# 实测结论：只靠 lsregister -u 注销源路径**不够**。Safari 仍会从构建产物目录加载扩展，
+# 用户会在「设置 → 扩展」里看到两个同名条目，且实际运行的可能不是 /Applications 的正式版
+# ——表现为续签之后扩展依旧失效，因为 Safari 一直在跑旧的那份。
+# 彻底做法是让构建产物里那份不再存在；xcodebuild 下次会重新生成，不影响增量构建。
+prune_safari_build_products() {
+  local configuration="${1:-Release}"
+  local products_dir="${SAFARI_BUILD_DIR}/Build/Products/${configuration}"
+  local app="${products_dir}/${SAFARI_APP_NAME}.app"
+  local appex="${products_dir}/${SAFARI_APP_NAME} Extension.appex"
+  local removed=0 target
+
+  for target in "${app}" "${appex}"; do
+    if [[ -e "${target}" ]]; then
+      rm -rf "${target}"
+      removed=$((removed + 1))
+    fi
+  done
+  echo "[sign] Pruned ${removed} build product(s); Safari will only see the /Applications copy"
+}
+
 # 校验宿主 App 与扩展双方都带稳定存储的 App Group（应用组）。
 # 缺任一侧，Safari 扩展就读写不到共享数据兜底，必须让流程失败而不是静默通过。
 verify_stable_storage_entitlements() {

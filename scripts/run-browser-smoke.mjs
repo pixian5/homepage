@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { access, cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { defaultData, getStorageKey } from "../src/js/storage.js";
-import { stopSyncServer } from "../tests/helpers/sync-server.js";
+import { stopBrowser } from "../tests/helpers/browser-process.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const execFileAsync = promisify(execFile);
 const requested = process.argv.slice(2);
 const browsers = requested.length ? requested : ["chrome", "firefox"];
 assert.ok(
@@ -42,7 +44,11 @@ async function browserBinary(browser) {
         ),
       );
     }
-    candidates.push("/usr/bin/google-chrome", "/usr/bin/chromium");
+    candidates.push(
+      "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+      "/usr/bin/chromium",
+      "/usr/bin/chromium-browser",
+    );
   }
   for (const candidate of candidates.filter(Boolean)) {
     if (
@@ -58,6 +64,15 @@ async function browserBinary(browser) {
 
 async function runBrowser(browser) {
   const binary = await browserBinary(browser);
+  const { stdout } = await execFileAsync(binary, ["--version"], { timeout: 5000, maxBuffer: 16384 });
+  const version = stdout.trim();
+  // 普通 Chrome 已忽略命令行扩展加载参数；提前识别，避免无意义地等待页面回报。
+  if (browser === "chrome" && !/^(Google Chrome for Testing|Chromium)\s+\d+\./m.test(version)) {
+    throw new Error(
+      `扩展冒烟测试需要 Chrome for Testing（测试版浏览器）或 Chromium（开源浏览器）；当前为 ${version}。请用 CHROME_E2E_BINARY 指定测试版可执行文件。`,
+    );
+  }
+  console.log(`[smoke] ${browser}：${version}；可执行文件：${binary}`);
   const temp = await mkdtemp(path.join(os.tmpdir(), `homepage-smoke-${browser}-`));
   const profile = path.join(temp, "profile");
   const extension = path.join(temp, "extension");
@@ -164,6 +179,7 @@ async function runBrowser(browser) {
           'user_pref("extensions.autoDisableScopes", 0);',
           'user_pref("extensions.enabledScopes", 15);',
           'user_pref("browser.shell.checkDefaultBrowser", false);',
+          'user_pref("app.update.disabledForTesting", true);',
           'user_pref("datareporting.policy.dataSubmissionEnabled", false);',
         ].join("\n"),
       );
@@ -175,7 +191,12 @@ async function runBrowser(browser) {
       });
       args = ["--headless", "--no-remote", "--new-instance", "--profile", profile, "about:blank"];
     }
-    child = spawn(binary, args, { stdio: ["ignore", "pipe", "pipe"] });
+    child = spawn(binary, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      // 更新重启可能消费命令行参数；环境变量继续约束为独立、无界面的测试实例。
+      env: { ...process.env, ...(browser === "firefox" ? { MOZ_HEADLESS: "1", MOZ_NO_REMOTE: "1" } : {}) },
+      detached: process.platform !== "win32",
+    });
     const capture = (chunk) => {
       output = (output + chunk).slice(-6000);
     };
@@ -190,7 +211,7 @@ async function runBrowser(browser) {
     return result;
   } finally {
     clearTimeout(timer);
-    await stopSyncServer(child);
+    await stopBrowser(child);
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
     await rm(temp, { recursive: true, force: true });

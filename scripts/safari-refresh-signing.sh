@@ -64,6 +64,15 @@ NEEDS_REFRESH="$(printf '%s' "${CURRENT_STATUS}" | python3 -c 'import json,sys; 
 # 比"剩余天数是否增加"更可靠：连续两天续签时天数都是 7.0，但 UUID 必然不同。
 OLD_UUID="$(printf '%s' "${CURRENT_STATUS}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("profile",{}).get("uuid",""))')"
 
+PROFILE_FREE="$(printf '%s' "${CURRENT_STATUS}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("profile_free"))')"
+
+# 已装版本被有意去掉了内嵌描述文件：bundle 不需要 profile，也没有 7 天过期，
+# 只有签名证书（免费账号 1 年）到期才需要重建，届时跑一次 build-macos.command 即可。
+if [[ "${PROFILE_FREE}" == "True" && "${FORCE}" != "1" ]]; then
+  echo "[refresh] Installed app has no embedded profile: nothing expires in 7 days, skip"
+  exit 0
+fi
+
 echo "[refresh] Profile days remaining: ${DAYS_LEFT} (threshold ${SAFARI_REFRESH_THRESHOLD_DAYS})"
 if [[ "${FORCE}" != "1" && "${NEEDS_REFRESH}" != "True" ]]; then
   echo "[refresh] No refresh needed, exit"
@@ -115,6 +124,12 @@ if [[ ! -d "${APP_PATH}" ]]; then
 fi
 
 post_sign_safari_app "${APP_PATH}" "${SAFARI_XCODE_CONFIGURATION}"
+
+# 与完整构建保持一致：默认去掉 7 天描述文件，之后就不存在"续签"这回事了。
+if [[ "${SAFARI_STRIP_PROFILE:-1}" == "1" ]]; then
+  strip_safari_provisioning_profiles "${APP_PATH}"
+fi
+
 verify_stable_storage_entitlements "${APP_PATH}"
 
 NEW_STATUS="$(python3 "${SCRIPT_DIR}/safari-signing-status.py" --app-path "${APP_PATH}" --json 2>/dev/null || true)"
@@ -124,7 +139,9 @@ echo "[refresh] Rebuilt app profile: days=${NEW_DAYS} uuid=${NEW_UUID}"
 
 # 续签的核心目的就是拿到一份新签发的描述文件。
 # UUID 没变说明 Xcode 复用了旧 profile，装上去也是白装，直接失败由人工介入。
-if ! python3 - "${OLD_UUID}" "${NEW_UUID}" "${NEW_DAYS}" <<'PY'
+if [[ "${SAFARI_STRIP_PROFILE:-1}" == "1" ]]; then
+  echo "[refresh] Profile stripped on purpose; skip profile renewal check"
+elif ! python3 - "${OLD_UUID}" "${NEW_UUID}" "${NEW_DAYS}" <<'PY'
 import sys
 
 old_uuid, new_uuid, days_raw = sys.argv[1], sys.argv[2], sys.argv[3]

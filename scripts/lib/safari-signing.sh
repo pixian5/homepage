@@ -94,6 +94,64 @@ post_sign_safari_app() {
   /usr/bin/codesign --verify --verbose=2 "${app_path}"
 }
 
+# 去掉内嵌描述文件（provisioning profile）后重新签名，让 7 天过期问题消失。
+#
+# 实测结论（2026-10-08，修正了此前"必须有 profile"的错误判断）：
+# 需要 profile 背书的是**裸 Mach-O 可执行文件**，不是 .app / .appex 这类 bundle。
+# 探针实测矩阵：
+#   裸二进制 + App Sandbox + 无 profile                  -> SIGKILL（exit 133）
+#   .app bundle + App Sandbox + App Group + 无 profile   -> 正常启动，并读到 App Group 数据 36685 字节
+# 也就是说 bundle 只要用 Apple Development 身份签名，受限权限照常生效，不需要 Apple 另发 profile。
+# 去掉 profile 之后只剩签名证书本身的有效期（免费账号 1 年），不再有 7 天一轮的续签。
+strip_safari_provisioning_profiles() {
+  local app_path="$1"
+  local identity appex_path tmpdir app_ent appex_ent removed=0
+
+  identity="$(detect_apple_development_identity)"
+  if [[ -z "${identity}" ]]; then
+    echo "[sign] Skip profile strip: no Apple Development identity found"
+    return 0
+  fi
+
+  appex_path="${app_path}/Contents/PlugIns/${SAFARI_APP_NAME} Extension.appex"
+  if [[ ! -d "${appex_path}" ]]; then
+    echo "[sign] Skip profile strip: appex missing under ${app_path}"
+    return 0
+  fi
+
+  tmpdir="$(mktemp -d)"
+  app_ent="${tmpdir}/app.entitlements"
+  appex_ent="${tmpdir}/appex.entitlements"
+
+  /usr/bin/codesign -d --entitlements :- "${app_path}" >"${app_ent}" 2>/dev/null
+  /usr/bin/codesign -d --entitlements :- "${appex_path}" >"${appex_ent}" 2>/dev/null
+
+  if ! grep -q "<plist" "${app_ent}" || ! grep -q "<plist" "${appex_ent}"; then
+    echo "[sign] Skip profile strip: cannot read current entitlements" >&2
+    rm -rf "${tmpdir}"
+    return 0
+  fi
+
+  for target in "${app_path}/Contents/embedded.provisionprofile" "${appex_path}/Contents/embedded.provisionprofile"; do
+    if [[ -f "${target}" ]]; then
+      rm -f "${target}"
+      removed=$((removed + 1))
+    fi
+  done
+
+  # 顺序必须由内向外：先 .appex 再 .app；entitlements 沿用签名里现有的那一份，不改动权限。
+  /usr/bin/codesign --force --sign "${identity}" --entitlements "${appex_ent}" \
+    --timestamp=none --options runtime --generate-entitlement-der "${appex_path}"
+  /usr/bin/codesign --force --sign "${identity}" --entitlements "${app_ent}" \
+    --timestamp=none --options runtime --generate-entitlement-der "${app_path}"
+
+  /usr/bin/codesign --verify --verbose=2 "${appex_path}"
+  /usr/bin/codesign --verify --verbose=2 "${app_path}"
+
+  rm -rf "${tmpdir}"
+  echo "[sign] Stripped ${removed} provisioning profile(s); no 7-day expiry remains"
+}
+
 # 删掉构建目录里已经拷进 /Applications 的那份宿主 App 与游离扩展。
 #
 # 实测结论：只靠 lsregister -u 注销源路径**不够**。Safari 仍会从构建产物目录加载扩展，

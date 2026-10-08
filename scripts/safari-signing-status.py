@@ -148,12 +148,16 @@ def collect(
     profile = read_embedded_profile(app_path)
 
     days_left = profile.get("days_remaining")
-    # 描述文件缺失、已过期或剩余不足阈值，都需要续签
+    signature_verified = bool(signature.get("verified"))
+    # 去掉内嵌描述文件是有意的做法：bundle 不需要 profile，也没有 7 天过期。
+    # 只有签名本身失效才需要重建。
+    profile_free = (
+        not profile.get("present") and signature_verified and not signature.get("adhoc")
+    )
     needs_refresh = (
-        not profile.get("present")
-        or profile.get("parse_error", False)
-        or days_left is None
-        or days_left < threshold
+        profile.get("parse_error", False)
+        or (days_left is not None and days_left < threshold)
+        or (not profile.get("present") and not profile_free)
     )
 
     return {
@@ -170,6 +174,7 @@ def collect(
             "appex": has_app_group(appex, group) if appex.exists() else False,
         },
         "safari_running": safari_running(),
+        "profile_free": profile_free,
         "needs_refresh": needs_refresh,
         "refresh_threshold_days": threshold,
     }
@@ -189,7 +194,7 @@ def render(status: dict[str, object]) -> str:
 
     profile = status.get("profile") or {}
     if not profile.get("present"):
-        lines.append("描述文件 : 缺失")
+        lines.append("描述文件 : 无（已去除，不受 7 天过期约束）")
     elif profile.get("parse_error"):
         lines.append("描述文件 : 解析失败")
     else:
@@ -205,6 +210,10 @@ def render(status: dict[str, object]) -> str:
         lines.append("")
         lines.append(f"结论     : 需要续签（阈值 {status.get('refresh_threshold_days')} 天）——"
                      "执行 bash scripts/safari-refresh-signing.sh")
+    elif status.get("profile_free"):
+        lines.append("")
+        lines.append("结论     : 无描述文件，不受 7 天过期约束；"
+                     "签名证书到期前（免费账号 1 年）无需续签")
     else:
         lines.append("")
         lines.append("结论     : 状态正常，暂不需要续签")

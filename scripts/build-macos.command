@@ -96,6 +96,13 @@ if [[ -n "${PROJECT_FILE}" ]]; then
       exit 1
     fi
     post_sign_safari_app "${APP_PATH}" "${SAFARI_XCODE_CONFIGURATION}"
+
+    # 去掉 Xcode 自动签进去的 7 天描述文件：bundle 不需要它，沙箱与 App Group 照样生效。
+    # 设 SAFARI_STRIP_PROFILE=0 可保留描述文件（例如需要分发给别的机器时）。
+    if [[ "${SAFARI_STRIP_PROFILE:-1}" == "1" ]]; then
+      strip_safari_provisioning_profiles "${APP_PATH}"
+    fi
+
     verify_stable_storage_entitlements "${APP_PATH}"
 
     # 复制到应用程序目录

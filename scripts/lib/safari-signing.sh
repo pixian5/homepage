@@ -1,163 +1,92 @@
 #!/usr/bin/env bash
 # Safari 宿主 App 与扩展的公共签名函数库。
-# 由 scripts/build-macos.command 与 scripts/safari-refresh-signing.sh 共同 source，
-# 避免完整构建路径与快速续签路径各自维护一份 codesign 逻辑。
+# 由 scripts/build-macos.command 与 scripts/safari-refresh-signing.sh 共同 source。
+#
+# 2026-10-24 方案 B（无沙箱共享文件）：
+#   macOS 27 上，带 App Sandbox / App Group 的 bundle 没有内嵌描述文件会被
+#   launchd/AMFI 直接 SIGKILL；扩展沙箱的 temporary-exception 也无法可靠写入
+#   真实用户目录（实测 storage_failed）。因此改为：
+#   - 宿主 App 签空 entitlement（带沙箱无 profile 会被 SIGKILL）；
+#   - 扩展保留沙箱（去掉后 Safari 根本不注册它），只给共享目录加临时例外；
+#   - 两端都不再需要 provisioning profile，也就没有 7 天续期。
 #
 # source 前调用方必须已定义：
 #   SAFARI_APP_NAME  宿主 App 名称，例如 "我的首页 Safari"
 #   SAFARI_BUILD_DIR xcodebuild 的 -derivedDataPath
 # 可选：
-#   SAFARI_APP_GROUP_ID 稳定存储的应用组标识
+#   SAFARI_APP_GROUP_ID 旧版 App Group 标识，仅用于首次迁移旧数据
 
 # 从钥匙串取第一个可用的 Apple Development（苹果开发）签名身份。
-# 免费 Apple ID（Apple 账户）与付费会员都用这一类身份，取不到就说明 Xcode 没登录。
 detect_apple_development_identity() {
   security find-identity -p codesigning -v 2>/dev/null \
     | sed -n 's/.*"\(Apple Development: .* ([A-Z0-9]\{10\})\)".*/\1/p' \
     | head -n 1
 }
 
-# 清除本项目在 Xcode（苹果开发工具）里的开发描述文件缓存。
-#
-# 关键实测结论：只要本地缓存里还留着一份**未过期**的 profile（描述文件），
-# xcodebuild -allowProvisioningUpdates 就会直接复用它，不会申请新的，
-# 续签后剩余天数纹丝不动。必须先删掉本项目的缓存，Xcode 才会重新签发一整份新的 7 天 profile。
-# 只删与本项目 Bundle ID 匹配的条目，不碰其他项目的描述文件。
-purge_safari_profile_cache() {
-  local bundle_id="${SAFARI_BUNDLE_ID:-com.aeroluna.homepage.safari}"
-  local cache_dir="${HOME}/Library/Developer/Xcode/UserData/Provisioning Profiles"
+# 稳定存储目录：用户主目录下的普通路径，宿主与扩展共享。
+safari_shared_storage_dir() {
+  printf '%s/Library/Application Support/我的首页' "${HOME}"
+}
 
-  if [[ ! -d "${cache_dir}" ]]; then
-    echo "[sign] Profile cache dir not present, nothing to purge"
+# 首次使用新路径时，把旧 App Group 文件迁移过来。
+# 只在目标不存在时复制，绝不覆盖新数据；旧文件原样保留作为备份。
+migrate_safari_app_group_storage() {
+  local target_dir target_file legacy_file
+  target_dir="$(safari_shared_storage_dir)"
+  target_file="${target_dir}/homepage-data.json"
+  legacy_file="${HOME}/Library/Group Containers/${SAFARI_APP_GROUP_ID:-group.com.aeroluna.homepage.safari}/homepage-data.json"
+
+  if [[ -f "${target_file}" ]]; then
+    echo "[sign] Shared storage already present: ${target_file}"
+    return 0
+  fi
+  if [[ ! -f "${legacy_file}" ]]; then
+    echo "[sign] No legacy App Group storage to migrate"
     return 0
   fi
 
-  python3 - "${cache_dir}" "${bundle_id}" <<'PY'
-import pathlib
-import plistlib
-import subprocess
-import sys
-
-cache_dir, bundle_id = pathlib.Path(sys.argv[1]), sys.argv[2]
-removed = []
-for path in cache_dir.glob("*.provisionprofile"):
-    # security cms 解出 CMS 信封里的 plist，失败则跳过，不误删其他项目文件
-    proc = subprocess.run(
-        ["/usr/bin/security", "cms", "-D", "-i", str(path)],
-        capture_output=True,
-        check=False,
-    )
-    if proc.returncode != 0 or not proc.stdout:
-        continue
-    try:
-        profile = plistlib.loads(proc.stdout)
-    except Exception:  # noqa: BLE001
-        continue
-    entitlements = profile.get("Entitlements") or {}
-    team = entitlements.get("com.apple.developer.team-identifier", "")
-    app_id = entitlements.get("com.apple.application-identifier", "")
-    prefix = f"{team}.{bundle_id}" if team else bundle_id
-    if app_id.startswith(prefix):
-        path.unlink()
-        removed.append(path.name)
-
-print(f"[sign] Purged {len(removed)} cached profile(s)" + (f": {', '.join(removed)}" if removed else ""))
-PY
+  mkdir -p "${target_dir}"
+  cp -p "${legacy_file}" "${target_file}"
+  if ! cmp -s "${legacy_file}" "${target_file}"; then
+    echo "[sign] ERROR: migrated storage differs from source" >&2
+    return 1
+  fi
+  echo "[sign] Migrated legacy App Group storage -> ${target_file}"
 }
 
-# 用 Apple Development 身份对扩展与宿主 App 重新签名。
+# 用 Apple Development 身份手工签名，不申请、不内嵌描述文件。
 # 顺序必须由内向外：先 .appex 再 .app，反了会破坏外层签名。
 post_sign_safari_app() {
   local app_path="$1"
-  local configuration="$2"
-  local identity app_xcent appex_xcent appex_path
+  local project_root="$2"
+  local identity appex_path app_ent appex_ent
 
   identity="$(detect_apple_development_identity)"
   if [[ -z "${identity}" ]]; then
-    echo "[sign] Skip post-sign: no Apple Development identity found"
-    return 0
+    echo "[sign] ERROR: no Apple Development identity found" >&2
+    return 1
   fi
 
   appex_path="${app_path}/Contents/PlugIns/${SAFARI_APP_NAME} Extension.appex"
-  app_xcent="${SAFARI_BUILD_DIR}/Build/Intermediates.noindex/${SAFARI_APP_NAME}.build/${configuration}/${SAFARI_APP_NAME} (macOS).build/${SAFARI_APP_NAME}.app.xcent"
-  appex_xcent="${SAFARI_BUILD_DIR}/Build/Intermediates.noindex/${SAFARI_APP_NAME}.build/${configuration}/${SAFARI_APP_NAME} Extension (macOS).build/${SAFARI_APP_NAME} Extension.appex.xcent"
+  app_ent="${project_root}/macOS (App)/HomepageSafari.entitlements"
+  appex_ent="${project_root}/macOS (Extension)/HomepageSafariExtension.entitlements"
 
-  if [[ ! -d "${appex_path}" || ! -f "${app_xcent}" || ! -f "${appex_xcent}" ]]; then
-    echo "[sign] Skip post-sign: signing inputs missing"
-    return 0
+  if [[ ! -d "${appex_path}" || ! -f "${app_ent}" || ! -f "${appex_ent}" ]]; then
+    echo "[sign] ERROR: signing inputs missing under ${app_path}" >&2
+    return 1
   fi
 
-  echo "[sign] Post-sign Safari app with Apple Development identity: ${identity}"
-  /usr/bin/codesign --force --sign "${identity}" --entitlements "${appex_xcent}" --timestamp=none --options runtime "${appex_path}"
-  /usr/bin/codesign --force --sign "${identity}" --entitlements "${app_xcent}" --timestamp=none --options runtime "${app_path}"
-  /usr/bin/codesign --verify --verbose=2 "${appex_path}"
-  /usr/bin/codesign --verify --verbose=2 "${app_path}"
-}
-
-# 去掉内嵌描述文件（provisioning profile）后重新签名，让 7 天过期问题消失。
-#
-# 实测结论（2026-10-08，修正了此前"必须有 profile"的错误判断）：
-# 需要 profile 背书的是**裸 Mach-O 可执行文件**，不是 .app / .appex 这类 bundle。
-# 探针实测矩阵：
-#   裸二进制 + App Sandbox + 无 profile                  -> SIGKILL（exit 133）
-#   .app bundle + App Sandbox + App Group + 无 profile   -> 正常启动，并读到 App Group 数据 36685 字节
-# 也就是说 bundle 只要用 Apple Development 身份签名，受限权限照常生效，不需要 Apple 另发 profile。
-# 去掉 profile 之后只剩签名证书本身的有效期（免费账号 1 年），不再有 7 天一轮的续签。
-strip_safari_provisioning_profiles() {
-  local app_path="$1"
-  local identity appex_path tmpdir app_ent appex_ent removed=0
-
-  identity="$(detect_apple_development_identity)"
-  if [[ -z "${identity}" ]]; then
-    echo "[sign] Skip profile strip: no Apple Development identity found"
-    return 0
-  fi
-
-  appex_path="${app_path}/Contents/PlugIns/${SAFARI_APP_NAME} Extension.appex"
-  if [[ ! -d "${appex_path}" ]]; then
-    echo "[sign] Skip profile strip: appex missing under ${app_path}"
-    return 0
-  fi
-
-  tmpdir="$(mktemp -d)"
-  app_ent="${tmpdir}/app.entitlements"
-  appex_ent="${tmpdir}/appex.entitlements"
-
-  /usr/bin/codesign -d --entitlements :- "${app_path}" >"${app_ent}" 2>/dev/null
-  /usr/bin/codesign -d --entitlements :- "${appex_path}" >"${appex_ent}" 2>/dev/null
-
-  if ! grep -q "<plist" "${app_ent}" || ! grep -q "<plist" "${appex_ent}"; then
-    echo "[sign] Skip profile strip: cannot read current entitlements" >&2
-    rm -rf "${tmpdir}"
-    return 0
-  fi
-
-  for target in "${app_path}/Contents/embedded.provisionprofile" "${appex_path}/Contents/embedded.provisionprofile"; do
-    if [[ -f "${target}" ]]; then
-      rm -f "${target}"
-      removed=$((removed + 1))
-    fi
-  done
-
-  # 顺序必须由内向外：先 .appex 再 .app；entitlements 沿用签名里现有的那一份，不改动权限。
+  echo "[sign] Manual sign without provisioning profile: ${identity}"
   /usr/bin/codesign --force --sign "${identity}" --entitlements "${appex_ent}" \
     --timestamp=none --options runtime --generate-entitlement-der "${appex_path}"
   /usr/bin/codesign --force --sign "${identity}" --entitlements "${app_ent}" \
     --timestamp=none --options runtime --generate-entitlement-der "${app_path}"
-
   /usr/bin/codesign --verify --verbose=2 "${appex_path}"
   /usr/bin/codesign --verify --verbose=2 "${app_path}"
-
-  rm -rf "${tmpdir}"
-  echo "[sign] Stripped ${removed} provisioning profile(s); no 7-day expiry remains"
 }
 
 # 删掉构建目录里已经拷进 /Applications 的那份宿主 App 与游离扩展。
-#
-# 实测结论：只靠 lsregister -u 注销源路径**不够**。Safari 仍会从构建产物目录加载扩展，
-# 用户会在「设置 → 扩展」里看到两个同名条目，且实际运行的可能不是 /Applications 的正式版
-# ——表现为续签之后扩展依旧失效，因为 Safari 一直在跑旧的那份。
-# 彻底做法是让构建产物里那份不再存在；xcodebuild 下次会重新生成，不影响增量构建。
+# 只靠 lsregister -u 注销源路径不够，Safari 仍会从构建产物目录加载扩展。
 prune_safari_build_products() {
   local configuration="${1:-Release}"
   local products_dir="${SAFARI_BUILD_DIR}/Build/Products/${configuration}"
@@ -174,20 +103,33 @@ prune_safari_build_products() {
   echo "[sign] Pruned ${removed} build product(s); Safari will only see the /Applications copy"
 }
 
-# 校验宿主 App 与扩展双方都带稳定存储的 App Group（应用组）。
-# 缺任一侧，Safari 扩展就读写不到共享数据兜底，必须让流程失败而不是静默通过。
-verify_stable_storage_entitlements() {
+# 校验方案 B 的权限边界：
+#   - 宿主 App 不能带沙箱（否则无 profile 会被 SIGKILL）；
+#   - 扩展必须带沙箱和共享目录例外（否则读不到数据）；
+#   - 两端都不能再出现 App Group。
+verify_shared_storage_entitlements() {
   local app_path="$1"
   local appex_path="${app_path}/Contents/PlugIns/${SAFARI_APP_NAME} Extension.appex"
-  local expected_group="${SAFARI_APP_GROUP_ID:-group.com.aeroluna.homepage.safari}"
-  local target entitlements
+  local app_ent appex_ent
 
-  for target in "$app_path" "$appex_path"; do
-    entitlements="$(/usr/bin/codesign -d --entitlements :- "$target" 2>/dev/null || true)"
-    if [[ "$entitlements" != *"$expected_group"* ]]; then
-      echo "[sign] ERROR: stable-storage App Group missing from signed target: $target" >&2
-      exit 1
-    fi
-  done
-  echo "[sign] Verified stable-storage App Group -> $expected_group"
+  app_ent="$(/usr/bin/codesign -d --entitlements :- "${app_path}" 2>/dev/null || true)"
+  appex_ent="$(/usr/bin/codesign -d --entitlements :- "${appex_path}" 2>/dev/null || true)"
+
+  if [[ "${app_ent}" == *"com.apple.security.app-sandbox"* ]]; then
+    echo "[sign] ERROR: host app still has app-sandbox; without a profile it will be SIGKILLed" >&2
+    return 1
+  fi
+  if [[ "${appex_ent}" != *"com.apple.security.app-sandbox"* ]]; then
+    echo "[sign] ERROR: appex lost its sandbox; Safari will not register it" >&2
+    return 1
+  fi
+  if [[ "${appex_ent}" != *"/Library/Application Support/我的首页/"* ]]; then
+    echo "[sign] ERROR: appex is missing the shared storage exception" >&2
+    return 1
+  fi
+  if [[ "${app_ent}" == *"application-groups"* || "${appex_ent}" == *"application-groups"* ]]; then
+    echo "[sign] ERROR: legacy App Group entitlement still present" >&2
+    return 1
+  fi
+  echo "[sign] Verified shared storage entitlements (host unsandboxed, appex scoped)"
 }

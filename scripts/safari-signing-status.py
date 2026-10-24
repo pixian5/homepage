@@ -121,15 +121,20 @@ def read_embedded_profile(app_path: Path) -> dict[str, object]:
     }
 
 
-def has_app_group(target: Path, group: str) -> bool:
-    """判断目标签名里是否带指定的 App Group（应用组）权限。"""
+def read_entitlements(target: Path) -> str:
+    """读取目标签名里的 entitlements 文本；读不到返回空字符串。"""
     proc = subprocess.run(
         ["/usr/bin/codesign", "-d", "--entitlements", ":-", str(target)],
         capture_output=True,
         text=True,
         check=False,
     )
-    return group in (proc.stdout or "")
+    return proc.stdout or ""
+
+
+def has_app_group(target: Path, group: str) -> bool:
+    """判断目标签名里是否带指定的 App Group（应用组）权限。"""
+    return group in read_entitlements(target)
 
 
 def safari_running() -> bool:
@@ -146,6 +151,11 @@ def collect(
     appex = app_path / "Contents" / "PlugIns" / f"{app_name} Extension.appex"
     signature = read_signature(app_path)
     profile = read_embedded_profile(app_path)
+    app_entitlements = read_entitlements(app_path)
+    appex_entitlements = read_entitlements(appex) if appex.exists() else ""
+    shared_exception = "/Library/Application Support/我的首页/" in appex_entitlements
+    host_sandboxed = "com.apple.security.app-sandbox" in app_entitlements
+    appex_sandboxed = "com.apple.security.app-sandbox" in appex_entitlements
 
     days_left = profile.get("days_remaining")
     signature_verified = bool(signature.get("verified"))
@@ -154,10 +164,14 @@ def collect(
     profile_free = (
         not profile.get("present") and signature_verified and not signature.get("adhoc")
     )
+    # 方案 B：宿主不能带沙箱（无 profile 会被 SIGKILL）；扩展必须带沙箱（否则不被注册）
+    # 并声明共享目录例外。权限不满足时直接判为需要重建。
+    shared_storage_ok = (not host_sandboxed) and appex_sandboxed and shared_exception
     needs_refresh = (
         profile.get("parse_error", False)
         or (days_left is not None and days_left < threshold)
         or (not profile.get("present") and not profile_free)
+        or not shared_storage_ok
     )
 
     return {
@@ -172,6 +186,12 @@ def collect(
         "app_group": {
             "app": has_app_group(app_path, group),
             "appex": has_app_group(appex, group) if appex.exists() else False,
+        },
+        "shared_storage": {
+            "host_sandboxed": host_sandboxed,
+            "appex_sandboxed": appex_sandboxed,
+            "appex_exception": shared_exception,
+            "ok": shared_storage_ok,
         },
         "safari_running": safari_running(),
         "profile_free": profile_free,
@@ -203,7 +223,16 @@ def render(status: dict[str, object]) -> str:
         lines.append(f"Xcode 托管: {'是' if profile.get('xcode_managed') else '否'}")
 
     group = status.get("app_group") or {}
-    lines.append(f"应用组   : 宿主 {'有' if group.get('app') else '缺'} / 扩展 {'有' if group.get('appex') else '缺'}")
+    shared = status.get("shared_storage") or {}
+    if shared:
+        lines.append(
+            "共享存储 : 宿主沙箱 "
+            f"{'有（会被杀）' if shared.get('host_sandboxed') else '无'}"
+            f" / 扩展沙箱 {'有' if shared.get('appex_sandboxed') else '缺（不会被注册）'}"
+            f" / 目录例外 {'有' if shared.get('appex_exception') else '缺'}"
+        )
+    else:
+        lines.append(f"应用组   : 宿主 {'有' if group.get('app') else '缺'} / 扩展 {'有' if group.get('appex') else '缺'}")
     lines.append(f"Safari   : {'运行中（续签需先退出）' if status.get('safari_running') else '未运行'}")
 
     if status.get("needs_refresh"):
@@ -212,7 +241,7 @@ def render(status: dict[str, object]) -> str:
                      "执行 bash scripts/safari-refresh-signing.sh")
     elif status.get("profile_free"):
         lines.append("")
-        lines.append("结论     : 无描述文件，不受 7 天过期约束；"
+        lines.append("结论     : 方案 B（无描述文件、无 7 天续期）；"
                      "签名证书到期前（免费账号 1 年）无需续签")
     else:
         lines.append("")

@@ -233,25 +233,45 @@ configure_safari_app_group() {
   local extension_entitlements="$project_root/macOS (Extension)/HomepageSafariExtension.entitlements"
 
   if [[ ! -f "$project_file" || ! -d "$(dirname "$app_entitlements")" || ! -d "$(dirname "$extension_entitlements")" ]]; then
-    echo "[build] Safari macOS targets not found for App Group configuration"
+    echo "[build] Safari macOS targets not found for entitlement configuration"
     return 1
   fi
 
+  # 2026-10-24 方案 B：不再使用 App Group，也不启用沙箱。
+  #
+  # macOS 27 实测：带 App Sandbox / App Group 的 bundle 没有内嵌描述文件时会被
+  # launchd/AMFI 直接 SIGKILL，宿主 App 与原生消息处理器都起不来。
+  # 另外实测：扩展沙箱内的 temporary-exception 在 macOS 27 上并不能可靠读写真实
+  # 用户目录（写入返回 storage_failed），因此两端都签空 entitlement：
+  #   - 宿主 App 与扩展处理器都能直接访问 ~/Library/Application Support/我的首页/；
+  #   - 不再需要 provisioning profile，也就没有 7 天续期。
+  # 代价：失去 App Sandbox 保护边界，不能上架 App Store（本项目为自用开发版）。
   APP_ENTITLEMENTS="$app_entitlements" EXT_ENTITLEMENTS="$extension_entitlements" \
-    APP_GROUP_ID="$SAFARI_APP_GROUP_ID" PBXPROJ_FILE="$project_file" python3 - <<'PY'
+    PBXPROJ_FILE="$project_file" python3 - <<'PY'
 import os
 import plistlib
 import re
 from pathlib import Path
 
-for env_name in ("APP_ENTITLEMENTS", "EXT_ENTITLEMENTS"):
-    path = Path(os.environ[env_name])
-    with path.open("wb") as stream:
-        plistlib.dump(
-            {"com.apple.security.application-groups": [os.environ["APP_GROUP_ID"]]},
-            stream,
-            sort_keys=True,
-        )
+# 宿主 App：空 entitlement。带沙箱又无描述文件会被 SIGKILL。
+with Path(os.environ["APP_ENTITLEMENTS"]).open("wb") as stream:
+    plistlib.dump({}, stream, sort_keys=True)
+
+# 扩展：Safari 只注册带沙箱的 appex（实测去掉沙箱后 pluginkit 不再列出扩展）。
+# 沙箱内用 home-relative-path 临时例外放行共享目录；路径必须以 "/" 开头，
+# 相对用户主目录。注意沙箱内 homeDirectoryForCurrentUser 指向容器，Swift 侧要用 getpwuid。
+with Path(os.environ["EXT_ENTITLEMENTS"]).open("wb") as stream:
+    plistlib.dump(
+        {
+            "com.apple.security.app-sandbox": True,
+            "com.apple.security.network.client": True,
+            "com.apple.security.temporary-exception.files.home-relative-path.read-write": [
+                "/Library/Application Support/我的首页/"
+            ],
+        },
+        stream,
+        sort_keys=True,
+    )
 
 pbxproj = Path(os.environ["PBXPROJ_FILE"])
 text = pbxproj.read_text(encoding="utf-8")
@@ -287,10 +307,10 @@ def update(match):
 
 updated = configuration.sub(update, text)
 if updated.count("CODE_SIGN_ENTITLEMENTS") < 4:
-    raise SystemExit("failed to configure App Group entitlements for all macOS configurations")
+    raise SystemExit("failed to configure entitlements for all macOS configurations")
 pbxproj.write_text(updated, encoding="utf-8")
 PY
-  echo "[build] Configure stable Safari App Group -> $SAFARI_APP_GROUP_ID"
+  echo "[build] Configure Safari shared storage -> ~/Library/Application Support/我的首页/"
 }
 
 fix_safari_extension_info_plist() {

@@ -55,6 +55,7 @@ fi
 SAFARI_SKIP_APP_BUILD=1 bash "${ROOT_DIR}/scripts/build.sh"
 
 PROJECT_FILE="$(find "${SAFARI_PROJECT_DIR}" -maxdepth 3 -name '*.xcodeproj' -print -quit)"
+PROJECT_ROOT="$(dirname "${PROJECT_FILE}")"
 if [[ -n "${PROJECT_FILE}" ]]; then
   SCHEME_NAME="$(
     xcodebuild -list -project "${PROJECT_FILE}" 2>/dev/null \
@@ -73,19 +74,17 @@ if [[ -n "${PROJECT_FILE}" ]]; then
   pkill -f "${APP_PROCESS_NAME}.app" >/dev/null 2>&1 || true
   rm -rf "${SAFARI_BUILD_DIR}"
 
-  XCODEBUILD_ARGS=(
-    -project "${PROJECT_FILE}"
-    -scheme "${SCHEME_NAME}"
-    -configuration "${SAFARI_XCODE_CONFIGURATION}"
-    -derivedDataPath "${SAFARI_BUILD_DIR}"
-  )
-
-  # App Group capability 需要 Xcode 自动创建/刷新开发描述文件；允许显式设为 0 关闭。
-  if [[ "${SAFARI_ENABLE_TEAM_SIGNING:-1}" == "1" ]]; then
-    XCODEBUILD_ARGS+=(-allowProvisioningUpdates)
-  fi
-
-  xcodebuild "${XCODEBUILD_ARGS[@]}" build
+  # 方案 B：工程签名与描述文件全部关闭，只编译出未签名产物，随后用脚本手工签名。
+  # 这样不依赖 Xcode 账户登录，产物也不内嵌任何会过期的 profile。
+  xcodebuild \
+    -project "${PROJECT_FILE}" \
+    -scheme "${SCHEME_NAME}" \
+    -configuration "${SAFARI_XCODE_CONFIGURATION}" \
+    -derivedDataPath "${SAFARI_BUILD_DIR}" \
+    CODE_SIGNING_ALLOWED=NO \
+    CODE_SIGNING_REQUIRED=NO \
+    CODE_SIGN_IDENTITY="" \
+    build
 
   APP_PATH="${SAFARI_BUILD_DIR}/Build/Products/${SAFARI_XCODE_CONFIGURATION}/${SAFARI_APP_NAME}.app"
   if [[ -d "${APP_PATH}" ]]; then
@@ -95,15 +94,11 @@ if [[ -n "${PROJECT_FILE}" ]]; then
       echo "[build] ERROR: Safari extension icon missing from built appex: ${APPEX_ICON}" >&2
       exit 1
     fi
-    post_sign_safari_app "${APP_PATH}" "${SAFARI_XCODE_CONFIGURATION}"
+    post_sign_safari_app "${APP_PATH}" "${PROJECT_ROOT}"
+    verify_shared_storage_entitlements "${APP_PATH}"
 
-    # 去掉 Xcode 自动签进去的 7 天描述文件：bundle 不需要它，沙箱与 App Group 照样生效。
-    # 设 SAFARI_STRIP_PROFILE=0 可保留描述文件（例如需要分发给别的机器时）。
-    if [[ "${SAFARI_STRIP_PROFILE:-1}" == "1" ]]; then
-      strip_safari_provisioning_profiles "${APP_PATH}"
-    fi
-
-    verify_stable_storage_entitlements "${APP_PATH}"
+    # 首次切换存储路径：把旧 App Group 文件复制到共享目录（不覆盖、不删除）
+    migrate_safari_app_group_storage
 
     # 复制到应用程序目录
     APPS_DIR_APP="/Applications/${SAFARI_APP_NAME}.app"

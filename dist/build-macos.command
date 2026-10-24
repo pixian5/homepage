@@ -28,54 +28,9 @@ quit_safari_for_storage_update() {
   fi
 }
 
-detect_apple_development_identity() {
-  security find-identity -p codesigning -v 2>/dev/null \
-    | sed -n 's/.*"\(Apple Development: .* ([A-Z0-9]\{10\})\)".*/\1/p' \
-    | head -n 1
-}
-
-post_sign_safari_app() {
-  local app_path="$1"
-  local configuration="$2"
-  local identity app_xcent appex_xcent appex_path
-
-  identity="$(detect_apple_development_identity)"
-  if [[ -z "${identity}" ]]; then
-    echo "[build] Skip post-sign: no Apple Development identity found"
-    return 0
-  fi
-
-  appex_path="${app_path}/Contents/PlugIns/${SAFARI_APP_NAME} Extension.appex"
-  app_xcent="${SAFARI_BUILD_DIR}/Build/Intermediates.noindex/我的首页 Safari.build/${configuration}/我的首页 Safari (macOS).build/${SAFARI_APP_NAME}.app.xcent"
-  appex_xcent="${SAFARI_BUILD_DIR}/Build/Intermediates.noindex/我的首页 Safari.build/${configuration}/我的首页 Safari Extension (macOS).build/${SAFARI_APP_NAME} Extension.appex.xcent"
-
-  if [[ ! -d "${appex_path}" || ! -f "${app_xcent}" || ! -f "${appex_xcent}" ]]; then
-    echo "[build] Skip post-sign: signing inputs missing"
-    return 0
-  fi
-
-  echo "[build] Post-sign Safari app with Apple Development identity: ${identity}"
-  /usr/bin/codesign --force --sign "${identity}" --entitlements "${appex_xcent}" --timestamp=none --options runtime "${appex_path}"
-  /usr/bin/codesign --force --sign "${identity}" --entitlements "${app_xcent}" --timestamp=none --options runtime "${app_path}"
-  /usr/bin/codesign --verify --verbose=2 "${appex_path}"
-  /usr/bin/codesign --verify --verbose=2 "${app_path}"
-}
-
-verify_stable_storage_entitlements() {
-  local app_path="$1"
-  local appex_path="${app_path}/Contents/PlugIns/${SAFARI_APP_NAME} Extension.appex"
-  local expected_group="group.com.aeroluna.homepage.safari"
-  local target entitlements
-
-  for target in "$app_path" "$appex_path"; do
-    entitlements="$(/usr/bin/codesign -d --entitlements :- "$target" 2>/dev/null || true)"
-    if [[ "$entitlements" != *"$expected_group"* ]]; then
-      echo "[build] ERROR: stable-storage App Group missing from signed target: $target" >&2
-      exit 1
-    fi
-  done
-  echo "[build] Verified stable-storage App Group -> $expected_group"
-}
+# 签名相关公共函数抽出到 lib，供完整构建与快速续签（safari-refresh-signing.sh）共用。
+# shellcheck source=lib/safari-signing.sh
+source "${SCRIPT_DIR}/lib/safari-signing.sh"
 
 echo "[build] ROOT_DIR=${ROOT_DIR}"
 
@@ -100,6 +55,7 @@ fi
 SAFARI_SKIP_APP_BUILD=1 bash "${ROOT_DIR}/scripts/build.sh"
 
 PROJECT_FILE="$(find "${SAFARI_PROJECT_DIR}" -maxdepth 3 -name '*.xcodeproj' -print -quit)"
+PROJECT_ROOT="$(dirname "${PROJECT_FILE}")"
 if [[ -n "${PROJECT_FILE}" ]]; then
   SCHEME_NAME="$(
     xcodebuild -list -project "${PROJECT_FILE}" 2>/dev/null \
@@ -118,19 +74,17 @@ if [[ -n "${PROJECT_FILE}" ]]; then
   pkill -f "${APP_PROCESS_NAME}.app" >/dev/null 2>&1 || true
   rm -rf "${SAFARI_BUILD_DIR}"
 
-  XCODEBUILD_ARGS=(
-    -project "${PROJECT_FILE}"
-    -scheme "${SCHEME_NAME}"
-    -configuration "${SAFARI_XCODE_CONFIGURATION}"
-    -derivedDataPath "${SAFARI_BUILD_DIR}"
-  )
-
-  # App Group capability 需要 Xcode 自动创建/刷新开发描述文件；允许显式设为 0 关闭。
-  if [[ "${SAFARI_ENABLE_TEAM_SIGNING:-1}" == "1" ]]; then
-    XCODEBUILD_ARGS+=(-allowProvisioningUpdates)
-  fi
-
-  xcodebuild "${XCODEBUILD_ARGS[@]}" build
+  # 方案 B：工程签名与描述文件全部关闭，只编译出未签名产物，随后用脚本手工签名。
+  # 这样不依赖 Xcode 账户登录，产物也不内嵌任何会过期的 profile。
+  xcodebuild \
+    -project "${PROJECT_FILE}" \
+    -scheme "${SCHEME_NAME}" \
+    -configuration "${SAFARI_XCODE_CONFIGURATION}" \
+    -derivedDataPath "${SAFARI_BUILD_DIR}" \
+    CODE_SIGNING_ALLOWED=NO \
+    CODE_SIGNING_REQUIRED=NO \
+    CODE_SIGN_IDENTITY="" \
+    build
 
   APP_PATH="${SAFARI_BUILD_DIR}/Build/Products/${SAFARI_XCODE_CONFIGURATION}/${SAFARI_APP_NAME}.app"
   if [[ -d "${APP_PATH}" ]]; then
@@ -140,8 +94,11 @@ if [[ -n "${PROJECT_FILE}" ]]; then
       echo "[build] ERROR: Safari extension icon missing from built appex: ${APPEX_ICON}" >&2
       exit 1
     fi
-    post_sign_safari_app "${APP_PATH}" "${SAFARI_XCODE_CONFIGURATION}"
-    verify_stable_storage_entitlements "${APP_PATH}"
+    post_sign_safari_app "${APP_PATH}" "${PROJECT_ROOT}"
+    verify_shared_storage_entitlements "${APP_PATH}"
+
+    # 首次切换存储路径：把旧 App Group 文件复制到共享目录（不覆盖、不删除）
+    migrate_safari_app_group_storage
 
     # 复制到应用程序目录
     APPS_DIR_APP="/Applications/${SAFARI_APP_NAME}.app"
@@ -164,6 +121,10 @@ if [[ -n "${PROJECT_FILE}" ]]; then
     # 安装到 /Applications 后如果不注销源路径，Safari 扩展列表会出现重复条目。
     echo "[build] Unregistering build-output app from LaunchServices..."
     /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -u "${APP_PATH}" 2>/dev/null || true
+
+    # 实测：只注销不够，Safari 仍会从构建目录加载那份旧扩展，
+    # 结果是列表里两个「我的首页」且实际跑的不是正式版。直接删掉源产物。
+    prune_safari_build_products "${SAFARI_XCODE_CONFIGURATION}"
 
     if [[ "${SAFARI_LAUNCH_AFTER_BUILD:-0}" == "1" ]]; then
       open "${APPS_DIR_APP}"

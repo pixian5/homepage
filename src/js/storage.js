@@ -53,7 +53,8 @@ const DEFAULT_SETTINGS = {
   toastDuration: 5,
   tooltipEnabled: true,
   emptyHintDisabled: false,
-  backgroundType: "bing",
+  // 默认纯色：Bing 壁纸每次缓存过期都会重新下载，默认值不该产生网络请求
+  backgroundType: "color",
   backgroundColor: "#0b0f14",
   backgroundGradient: "linear-gradient(120deg,#1d2a3b,#0b0f14)",
   backgroundGradientA: "#1d2a3b",
@@ -89,7 +90,7 @@ function nowTs() {
 function createDefaultData() {
   const language = detectPreferredLanguage(STORAGE_SUPPORTED_LANGUAGES);
   const data = {
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     settings: { ...DEFAULT_SETTINGS, language },
     groups: [{ id: "grp_all", name: "全部", order: -1, nodes: [], systemAllGroup: true }],
     nodes: {},
@@ -216,7 +217,7 @@ async function storageRemoveLocal(area, key) {
   });
 }
 
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 
 /**
  * 已注册的迁移函数：键为起始版本号，值为将该版本数据升级到下一版本的函数。
@@ -224,12 +225,16 @@ const CURRENT_SCHEMA_VERSION = 1;
  * 每个迁移函数必须返回新数据对象（或原对象），并保证不抛错。
  */
 const MIGRATIONS = {
-  // 示例（保留以便未来追加）：
-  // 1: (data) => {
-  //   data.schemaVersion = 2;
-  //   // ... 字段调整 ...
-  //   return data;
-  // },
+  // v1 -> v2：默认背景从 Bing 壁纸改为纯色。
+  // 旧版本把 "bing" 作为默认值写进了数据，无法区分“用户主动选的”和“从没改过”，
+  // 按项目约定（开发测试版、可合理重构）统一改为纯色；需要壁纸仍可在设置里重新选。
+  1: (data) => {
+    if (data?.settings?.backgroundType === "bing") {
+      data.settings.backgroundType = "color";
+    }
+    data.schemaVersion = 2;
+    return data;
+  },
 };
 
 /**
@@ -304,11 +309,13 @@ export async function loadData() {
     await writeSafariStableHomepage(base, api);
     return base;
   }
+  const schemaBeforeMigration = Number(data?.schemaVersion) || 0;
   data = migrateData(data) || base;
   data.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
   const migratedRootModel = Array.isArray(data.groups) && data.groups.some((group) => !isAllBookmarksGroup(group));
+  const migratedSchema = Number(data.schemaVersion) > schemaBeforeMigration;
   data = repairHomepageData(data, DEFAULT_SETTINGS);
-  if (migratedRootModel) await storageSetLocal(local, { [ROOT_KEY]: data });
+  if (migratedRootModel || migratedSchema) await storageSetLocal(local, { [ROOT_KEY]: data });
   if (!stableData) await writeSafariStableHomepage(data, api);
   return data;
 }

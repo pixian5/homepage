@@ -109,7 +109,7 @@ describe("storage", async () => {
 
   it("defaultData has required structure", () => {
     const data = defaultData();
-    assert.equal(data.schemaVersion, 1);
+    assert.equal(data.schemaVersion, 2);
     assert.ok(data.groups.length > 0);
     assert.ok(data.settings.language);
     assert.equal(data.settings.syncTransport, "http");
@@ -239,17 +239,45 @@ describe("storage", async () => {
   it("migrateData keeps data unchanged at current version", () => {
     const data = defaultData();
     const result = migrateData(data);
-    assert.equal(result.schemaVersion, 1);
+    assert.equal(result.schemaVersion, 2);
     assert.deepEqual(result.groups, data.groups);
     assert.deepEqual(result.settings, data.settings);
   });
 
   it("migrateData bumps version when missing migrator", () => {
-    // 模拟一个未来的旧版本数据：没有对应迁移函数时直接抬升版本号
-    const data = { schemaVersion: 1, settings: { language: "en" }, groups: [], nodes: {}, backups: [] };
+    // 模拟一个没有对应迁移函数的未知版本（负数不会被当成“缺失”），应直接抬升到当前版本
+    const data = { schemaVersion: -1, settings: { language: "en" }, groups: [], nodes: {}, backups: [] };
     const result = migrateData(data);
-    assert.equal(result.schemaVersion, 1);
+    assert.equal(result.schemaVersion, 2);
     assert.equal(result.settings.language, "en");
+  });
+
+  it("migrateData v1 -> v2 turns the default bing wallpaper into a solid color", () => {
+    const data = {
+      schemaVersion: 1,
+      settings: { backgroundType: "bing", language: "zh-CN" },
+      groups: [],
+      nodes: {},
+      backups: [],
+    };
+    const result = migrateData(data);
+    assert.equal(result.schemaVersion, 2);
+    assert.equal(result.settings.backgroundType, "color");
+    // 其它设置保持不变
+    assert.equal(result.settings.language, "zh-CN");
+    // 输入对象不被修改
+    assert.equal(data.settings.backgroundType, "bing");
+  });
+
+  it("migrateData keeps an explicitly chosen custom background", () => {
+    const data = {
+      schemaVersion: 1,
+      settings: { backgroundType: "gradient" },
+      groups: [],
+      nodes: {},
+      backups: [],
+    };
+    assert.equal(migrateData(data).settings.backgroundType, "gradient");
   });
 
   it("migrateData does not mutate input", () => {

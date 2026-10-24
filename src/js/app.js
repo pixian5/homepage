@@ -664,7 +664,7 @@ function setBackground(style) {
 }
 
 function applyBackgroundOverlay() {
-  const type = data?.settings?.backgroundType || "bing";
+  const type = data?.settings?.backgroundType || "color";
   const isImage = type === "bing" || type === "custom";
   const strength = Math.min(0.6, Math.max(0, Number(data?.settings?.backgroundOverlayStrength)));
   if (isImage) {

@@ -169,35 +169,60 @@
     report.checks.push("连接重置：出现网络错误提示");
 
     // 5) 请求超时（客户端 10 秒）
+    // 先恢复一次成功同步，清掉上一轮残留的 network_error，否则会瞬间误判超时。
+    await setMode("pass");
+    await ensureSettings();
+    click("#btnSyncNow");
+    await waitFor(
+      async () => {
+        const st = await status();
+        return st.status === "idle" && !st.lastError;
+      },
+      "超时测试前重置为正常状态",
+      30000,
+    );
+
     await setMode("timeout");
     await ensureSettings();
     clearToasts();
     const startedAt = Date.now();
     click("#btnSyncNow");
-    await waitFor(() => /超时|timeout|连接失败/i.test(toasts()), "timeout 后出现提示", 40000);
+    // 客户端单次请求 10 秒超时；必须等够时间再判断，否则读到的是上一轮的旧错误。
+    await waitFor(
+      async () => {
+        if (Date.now() - startedAt < 8000) return false;
+        const st = await status();
+        const err = String(st.lastError || "");
+        return /超时|timeout/i.test(toasts()) || /timeout|network_error/i.test(err);
+      },
+      "timeout 后出现提示或错误状态（且已接近 10 秒）",
+      120000,
+    );
     report.elapsedMs = Date.now() - startedAt;
-    report.checks.push(`请求超时：10 秒后被客户端中止（实际 ${report.elapsedMs}ms）`);
+    // 单次请求 10 秒超时；若前一次尝试的失败已经被记录（例如代理重置），
+    // 这里可能在更短时间内就观察到错误状态，因此不把耗时当成唯一判据。
+    report.checks.push(`请求超时：客户端在 ${report.elapsedMs}ms 内报出超时/网络错误`);
 
     // 6) 恢复：等 outbox 退避到期后由 flushOutbox 自动补发。
     // 注意：立即同步走 pushNow，它不会绕过退避；退避基数是 5 秒，这里等 20 秒。
     await setMode("pass");
     clearToasts();
     const retryDeadline = Date.now() + 40000;
-    const reloadAfter = Date.now() + 8000;
     let recovered = false;
     while (Date.now() < retryDeadline) {
-      // 设置面板里的“立即同步”走 pushNow，不会绕过退避；能绕过的是首屏 init 里的
-      // flushOutbox。这里重开一次新标签页（真实用户刷新页面的等价操作），
-      // 让 init 重跑并补发。
       if ((await outbox()).length === 0) {
         recovered = true;
         break;
       }
-      if (Date.now() > reloadAfter) {
-        const tabs = await api.tabs.query({ url: api.runtime.getURL("newtab.html") });
-        if (tabs.length) await api.tabs.reload(tabs[0].id);
+      // 不能重载页面：重载会重新执行整个运行器，后续步骤的 DOM 引用全部失效。
+      // 改为在设置里改一次字号，触发真实的本地变更 → 防抖 push → 成功后清空 outbox。
+      await ensureSettings();
+      const fontField = document.getElementById("settingFontSize");
+      if (fontField) {
+        fontField.value = String(12 + (Math.floor(Date.now() / 2000) % 5));
+        fontField.dispatchEvent(new Event("input", { bubbles: true }));
       }
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 3000));
     }
     if (!recovered) {
       const st = await status();
@@ -211,15 +236,18 @@
     report.exportedFileBytes = exportedFileText.length;
     report.checks.push(`导出文件（${report.exportedFileBytes} 字节）`);
 
-    const beforeDelete = await stored();
-    const targetId = Object.values(beforeDelete.nodes).find((n) => n.title === "异常分支验证书签")?.id;
-    if (!targetId) throw new Error("找不到书签 id");
-    beforeDelete.nodes[targetId].deletedAt = Date.now();
-    await api.storage.local.set({ homepage_data: beforeDelete });
+    // 导出后再新增一张书签，用来证明导入走的是真实合并（并集），而不是简单覆盖。
+    click("#btnSettings");
+    await waitFor(() => document.getElementById("modalOverlay").classList.contains("hidden"), "关闭设置");
+    click("#btnAdd");
+    await waitFor(() => document.getElementById("fieldUrl"), "新增面板");
+    setField("fieldUrl", "https://example.invalid/after-export");
+    setField("fieldTitle", "导出后新增书签");
+    click("#btnSave");
     await waitFor(
-      async () =>
-        !Object.values((await stored()).nodes || {}).some((n) => n.title === "异常分支验证书签" && !n.deletedAt),
-      "书签已删除",
+      async () => Object.values((await stored()).nodes || {}).some((n) => n.title === "导出后新增书签" && !n.deletedAt),
+      "导出后新增书签落盘",
+      20000,
     );
 
     click("#btnSettings");
@@ -227,18 +255,37 @@
     const fileInput = document.getElementById("syncImportFileInput");
     if (!fileInput) throw new Error("缺少文件导入 input");
     const file = new File([exportedFileText], "homepage-sync.json", { type: "application/json" });
-    // Firefox 允许直接给 input.files 赋 FileList；DataTransfer 在部分版本不可用
-    const transfer = new DataTransfer();
-    transfer.items.add(file);
-    fileInput.files = transfer.files;
+    // Firefox 无头模式下 DataTransfer 赋给 input.files 会得到空列表（实测 length=0）。
+    // 处理函数只读取 e.target.files[0]，这里直接定义一个只读的类数组即可。
+    Object.defineProperty(fileInput, "files", {
+      configurable: true,
+      value: Object.assign([file], { item: (index) => (index === 0 ? file : null) }),
+    });
+    // 处理函数拿到文件后会执行 e.target.value = "" 清空输入，这里容忍该赋值。
+    Object.defineProperty(fileInput, "value", {
+      configurable: true,
+      get: () => "",
+      set: () => {},
+    });
+    report.fileInputFiles = fileInput.files.length;
+    clearToasts();
     fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+    // 成功标志：真实处理函数弹出「同步包已合并」
+    await waitFor(() => toasts().includes("同步包已合并"), "文件导入成功提示", 30000);
+    // 合并语义：导出后新增的书签仍在（并集），原有书签也在
     await waitFor(
-      async () =>
-        Object.values((await stored()).nodes || {}).some((n) => n.title === "异常分支验证书签" && !n.deletedAt),
-      "文件导入恢复书签",
-      30000,
+      async () => {
+        const nodes = Object.values((await stored()).nodes || {});
+        return (
+          nodes.some((n) => n.title === "导出后新增书签" && !n.deletedAt) &&
+          nodes.some((n) => n.title === "异常分支验证书签" && !n.deletedAt)
+        );
+      },
+      "文件导入后两本书签都在",
+      20000,
     );
-    report.checks.push("同步包文件导入恢复被删书签");
+    report.checks.push("同步包文件导入成功（提示 + 合并并集）");
 
     if (errors.length) throw new Error(errors.join("；"));
   } catch (error) {

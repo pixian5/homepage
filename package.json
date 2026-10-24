@@ -12,7 +12,8 @@
     "test:sync-e2e": "node scripts/run-browser-sync-e2e.mjs",
     "clean:safari-registrations": "node scripts/clean-safari-homepage-registrations.mjs",
     "sync-server": "node scripts/sync-server.mjs",
-    "test:browser-smoke": "node scripts/run-browser-smoke.mjs"
+    "test:browser-smoke": "node scripts/run-browser-smoke.mjs",
+    "test:firefox-persistence": "node scripts/run-firefox-persistence.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.4"

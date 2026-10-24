@@ -42,7 +42,10 @@ const report = {
 
 function normalizedHash(doc) {
   const value = structuredClone(doc);
+  // revision 每次推送都会被服务端递增；contentHash 又是对包含 revision 的整份文档
+  // 计算的，所以两者都必须排除，否则“恢复后内容一致”会被误判为不一致。
   delete value.revision;
+  delete value.contentHash;
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
@@ -171,6 +174,22 @@ async function patchExtension(extensionDir, role, browser, coordinatorUrl) {
   const injected = html.replace("</body>", `  <script src="js/e2e-config.js"></script>\n  ${runnerTag}\n</body>`);
   assert.notEqual(injected, html, `${browser} newtab injection failed`);
   await writeFile(htmlPath, injected, "utf8");
+
+  // Chrome 无头模式下直接导航 chrome-extension:// 页面会被 ERR_BLOCKED_BY_CLIENT 拦截，
+  // 扩展的 newtab 覆盖页也不会在启动时打开。改为安装完成后由扩展自己开标签页，
+  // 与冒烟脚本使用的方案一致（见 tests/browser-smoke 的 smoke-open）。
+  if (browser === "chrome") {
+    const manifest = JSON.parse(await readFile(path.join(extensionDir, "manifest.json"), "utf8"));
+    const backgroundFile = path.join(extensionDir, manifest.background.service_worker);
+    const existing = await readFile(backgroundFile, "utf8");
+    if (!existing.includes("e2e-open-newtab")) {
+      await writeFile(
+        backgroundFile,
+        `${existing}\n// e2e-open-newtab\n(globalThis.browser || chrome).runtime.onInstalled.addListener(() => (globalThis.browser || chrome).tabs.create({ url: "newtab.html" }));\n`,
+        "utf8",
+      );
+    }
+  }
 }
 
 function spawnBrowser(binary, args, logName) {
@@ -306,6 +325,9 @@ async function main() {
     'user_pref("browser.shell.checkDefaultBrowser", false);',
     'user_pref("browser.aboutwelcome.enabled", false);',
     'user_pref("browser.startup.homepage_override.mstone", "ignore");',
+    'user_pref("browser.startup.page", 0);',
+    'user_pref("browser.sessionstore.resume_from_crash", false);',
+    'user_pref("browser.sessionstore.max_resumed_crashes", 0);',
     'user_pref("termsofuse.bypassNotification", true);',
     'user_pref("extensions.autoDisableScopes", 0);',
     'user_pref("extensions.enabledScopes", 15);',
@@ -336,9 +358,13 @@ async function main() {
   await copyFirefoxHomepageStorage(firefoxSource, firefoxProfile);
   await copyFirefoxSyncStorage(firefoxSource, firefoxProfile);
 
+  // 默认开真实窗口（窗口移到屏幕外，不打断用户）；CI 或无图形环境可设
+  // HOMEPAGE_E2E_CHROME_HEADLESS=1 切到无头模式。
+  const chromeHeadless = process.env.HOMEPAGE_E2E_CHROME_HEADLESS === "1";
   spawnBrowser(
     chromeBinary,
     [
+      ...(chromeHeadless ? ["--headless=new", "--no-sandbox"] : []),
       `--user-data-dir=${chromeProfile}`,
       "--no-first-run",
       "--no-default-browser-check",
@@ -347,9 +373,14 @@ async function main() {
       "--disable-sync",
       "--window-size=1280,800",
       "--window-position=-4000,200",
+      // Chrome 137+ 默认忽略命令行加载扩展；与冒烟脚本保持一致，显式关掉该限制。
+      // Chrome 137+ 把 --load-extension 视作过期参数；这类开关只能通过
+      // 逗号分隔的单条 --disable-features 传入，不能重复传多次。
+      "--disable-features=DisableLoadExtensionCommandLineSwitch",
+      // 无头模式夺不走扩展 newtab 的焦点，这里显式打开扩展页面，等扩展解析出 ID 后再导航。
       `--load-extension=${chromeExtension}`,
       `--disable-extensions-except=${chromeExtension}`,
-      "chrome://newtab",
+      "about:blank",
     ],
     "chrome.log",
   );

@@ -1,6 +1,6 @@
 {
   "name": "newtab-extension",
-  "version": "26.0.0",
+  "version": "26.0.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,7 +13,8 @@
     "clean:safari-registrations": "node scripts/clean-safari-homepage-registrations.mjs",
     "sync-server": "node scripts/sync-server.mjs",
     "test:browser-smoke": "node scripts/run-browser-smoke.mjs",
-    "test:firefox-persistence": "node scripts/run-firefox-persistence.mjs"
+    "test:firefox-persistence": "node scripts/run-firefox-persistence.mjs",
+    "test:firefox-sync-ui": "node scripts/run-firefox-sync-ui.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.4"

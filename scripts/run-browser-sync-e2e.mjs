@@ -332,6 +332,20 @@ async function main() {
     'user_pref("extensions.autoDisableScopes", 0);',
     'user_pref("extensions.enabledScopes", 15);',
     'user_pref("xpinstall.signatures.required", false);',
+    // 真实书签会被复制进临时 profile；关闭图标抓取相关页面与所有后台拉取，
+    // 避免测试时真的访问几十个站点、下载 Bing 壁纸或连 Firefox 账号同步。
+    'user_pref("identity.fxaccounts.enabled", false);',
+    'user_pref("services.sync.engine.addons", false);',
+    'user_pref("services.sync.engine.bookmarks", false);',
+    'user_pref("services.sync.engine.history", false);',
+    'user_pref("services.sync.engine.prefs", false);',
+    'user_pref("services.sync.engine.tabs", false);',
+    'user_pref("extensions.getAddons.cache.enabled", false);',
+    'user_pref("browser.discovery.enabled", false);',
+    'user_pref("app.update.auto", false);',
+    'user_pref("app.update.enabled", false);',
+    'user_pref("toolkit.telemetry.enabled", false);',
+    'user_pref("browser.newtabpage.activity-stream.feeds.section.topstories", false);',
     `user_pref("extensions.webextensions.uuids", ${JSON.stringify(JSON.stringify({ "homepage@pixian5.github.io": firefoxUuid }))});`,
     "",
   ].join("\n");
@@ -356,6 +370,7 @@ async function main() {
   // 在扩展尚未注册时落到空白 moz-extension URL。
   await initializeFirefoxProfile(firefoxBinary, firefoxProfile);
   await copyFirefoxHomepageStorage(firefoxSource, firefoxProfile);
+
   await copyFirefoxSyncStorage(firefoxSource, firefoxProfile);
 
   // 默认开真实窗口（窗口移到屏幕外，不打断用户）；CI 或无图形环境可设

@@ -181,6 +181,22 @@ async function runBrowser(browser) {
           'user_pref("browser.shell.checkDefaultBrowser", false);',
           'user_pref("app.update.disabledForTesting", true);',
           'user_pref("datareporting.policy.dataSubmissionEnabled", false);',
+          // 临时 profile 默认仍可能连 Firefox 账号同步/扩展推荐/遥测，测一次冒烟就会拉一堆数据。
+          'user_pref("services.sync.engine.tabs", false);',
+          'user_pref("services.sync.engine.bookmarks", false);',
+          'user_pref("services.sync.engine.history", false);',
+          'user_pref("services.sync.engine.prefs", false);',
+          'user_pref("services.sync.engine.addons", false);',
+          'user_pref("identity.fxaccounts.enabled", false);',
+          'user_pref("extensions.getAddons.cache.enabled", false);',
+          'user_pref("extensions.systemAddon.update.enabled", false);',
+          'user_pref("browser.discovery.enabled", false);',
+          'user_pref("app.update.auto", false);',
+          'user_pref("app.update.enabled", false);',
+          'user_pref("toolkit.telemetry.enabled", false);',
+          'user_pref("toolkit.telemetry.archive.enabled", false);',
+          'user_pref("browser.newtabpage.activity-stream.feeds.system.topstories", false);',
+          'user_pref("browser.newtabpage.activity-stream.feeds.section.topstories", false);',
         ].join("\n"),
       );
       const xpi = path.join(profile, "extensions", `${manifest.browser_specific_settings.gecko.id}.xpi`);

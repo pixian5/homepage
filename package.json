@@ -1,6 +1,6 @@
 {
   "name": "newtab-extension",
-  "version": "26.0.2",
+  "version": "26.0.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,7 +15,8 @@
     "test:browser-smoke": "node scripts/run-browser-smoke.mjs",
     "test:firefox-persistence": "node scripts/run-firefox-persistence.mjs",
     "test:firefox-sync-ui": "node scripts/run-firefox-sync-ui.mjs",
-    "test:firefox-sync-flows": "node scripts/run-firefox-sync-flows.mjs"
+    "test:firefox-sync-flows": "node scripts/run-firefox-sync-flows.mjs",
+    "test:firefox-sync-errors": "node scripts/run-firefox-sync-errors.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.4"

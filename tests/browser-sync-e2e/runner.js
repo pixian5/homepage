@@ -155,7 +155,17 @@ import { hashSyncDocument, syncDocumentToHomepageShape, toSyncDocument } from ".
       "real Firefox homepage data is missing",
     );
     let state = clone(sourceData);
-    state.settings = { ...(state.settings || {}), syncEnabled: false, syncServerUrl: "", syncServerToken: "" };
+    // 夹具来自真实书签：必须关掉图标抓取与在线壁纸，否则测试会逐个访问站点、
+    // 下载几十个 favicon 和 Bing 壁纸，既慢又会在用户不知情时产生流量。
+    state.settings = {
+      ...(state.settings || {}),
+      syncEnabled: false,
+      syncServerUrl: "",
+      syncServerToken: "",
+      iconFetch: false,
+      iconRetryHour: -1,
+      backgroundType: "color",
+    };
     if (role === "B") await event("source-data", { homepageData: state });
     const targetNodeId = Object.keys(state.nodes)[0];
     await chrome.storage.local.clear();

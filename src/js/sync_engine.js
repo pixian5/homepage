@@ -149,7 +149,8 @@ export function getSyncStatus() {
     enabled: !!data?.settings?.syncEnabled,
     transport: transport.mode,
     serverUrl: transport.baseUrl,
-    hasConflict: _status.status === "need_setup" && !!_pendingConflictRemote,
+    // need_setup 即代表存在待处理冲突；resolveDocConflict 会按需恢复上下文。
+    hasConflict: _status.status === "need_setup",
     bytesEstimate: data ? estimateSyncProjectionBytes(data, { deviceId: "x", docId: _status.docId || "y" }) : 0,
     budgetLevel: syncBytesBudgetLevel(
       data ? estimateSyncProjectionBytes(data, { deviceId: "x", docId: _status.docId || "y" }) : 0,
@@ -164,6 +165,12 @@ async function loadState() {
   const st = got.value?.[SYNC_STATE_KEY];
   if (st && typeof st === "object") {
     _status = { ..._status, ...st };
+    // 恢复冲突标记：只要状态仍是 need_setup 就构造占位远端文档，
+    // 让「解决冲突」按钮可用；真正内容在 resolve 时重新拉取。
+    // 老状态可能没有 conflictRemoteDocId，此时 docId 留空，由 resolve 现场识别。
+    if (_status.status === "need_setup") {
+      _pendingConflictRemote = { docId: _status.conflictRemoteDocId || "" };
+    }
   }
 }
 
@@ -181,6 +188,10 @@ async function saveState() {
       lastRemoteEtag: _status.lastRemoteEtag || "",
       bytesEstimate: _status.bytesEstimate,
       transport: getTransportConfig().mode,
+      // 冲突上下文必须持久化：新标签页/刷新后内存会重建，
+      // 否则 UI 显示“需要处理冲突”，但「解决冲突」找不到待处理文档而无法执行。
+      conflictLocalDocId: _status.conflictLocalDocId || "",
+      conflictRemoteDocId: _status.conflictRemoteDocId || "",
     },
   });
 }
@@ -368,6 +379,10 @@ async function pushNowImpl(reason = "manual") {
     if (remote.doc.docId && _status.docId && remote.doc.docId !== _status.docId) {
       _status.status = "need_setup";
       _status.lastError = "doc_conflict";
+      // 记录冲突双方 docId，刷新/新标签页后才能恢复「解决冲突」
+      _pendingConflictRemote = remote.doc;
+      _status.conflictRemoteDocId = remote.doc.docId;
+      _status.conflictLocalDocId = _status.docId;
       await saveState();
       return { ok: false, reason: "doc_conflict" };
     }
@@ -520,9 +535,46 @@ export async function flushOutbox() {
  */
 export async function resolveDocConflict(choice) {
   return enqueue(async () => {
-    const remote = _pendingConflictRemote;
+    let remote = _pendingConflictRemote;
     if (!remote) {
-      return { ok: false, reason: "no_conflict" };
+      // 老版本写入的状态可能只有 need_setup 而没有冲突上下文；
+      // 只要云端确实与本机 docId 不同，就现场恢复上下文，而不是让按钮点了没反应。
+      if (_status.status !== "need_setup") {
+        return { ok: false, reason: "no_conflict" };
+      }
+      const current = await readRemoteSyncDocument();
+      if (!current.ok) return { ok: false, reason: current.reason || "remote_unavailable" };
+      if (!_status.docId || current.doc.docId === _status.docId) {
+        // 云端已经不是冲突文档了，清掉过期状态
+        _status.status = "idle";
+        _status.lastError = "";
+        await saveState();
+        return { ok: false, reason: "no_conflict" };
+      }
+      remote = current.doc;
+      _pendingConflictRemote = remote;
+      _status.conflictRemoteDocId = remote.docId;
+      _status.conflictLocalDocId = _status.docId;
+      await saveState();
+    }
+    // 状态从存储恢复时只有 docId（占位对象），没有节点/分组内容。
+    // merge/remote 分支都需要完整远端文档，这里重新拉取一次。
+    if (!Array.isArray(remote.nodes) && !Array.isArray(remote.groups)) {
+      const fresh = await readRemoteSyncDocument();
+      if (!fresh.ok) {
+        return { ok: false, reason: fresh.reason || "remote_unavailable" };
+      }
+      if (remote.docId && fresh.doc.docId !== remote.docId) {
+        // 云端在这期间又被换成了第三个文档，保持冲突状态让用户重新判断
+        _pendingConflictRemote = fresh.doc;
+        _status.conflictRemoteDocId = fresh.doc.docId;
+        await saveState();
+        return { ok: false, reason: "doc_conflict" };
+      }
+      // remote.docId 为空表示老状态没有记录，直接采用现场拉到的文档
+
+      remote = fresh.doc;
+      _pendingConflictRemote = remote;
     }
     const deviceId = await getOrCreateDeviceId();
     const local = _getData();
@@ -562,6 +614,8 @@ export async function resolveDocConflict(choice) {
       _status.lastPushAt = Date.now();
       _status.lastRemoteRevision = doc.revision;
       _status.status = "idle";
+      // 冲突已解决，必须清掉 doc_conflict，否则状态栏会一直显示上一次的错误
+      _status.lastError = "";
       await saveState();
       return { ok: true, choice: "local" };
     }

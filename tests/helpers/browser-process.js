@@ -1,5 +1,25 @@
+import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { stopSyncServer } from "./sync-server.js";
+
+/**
+ * 列出属于指定进程组的 PID。
+ * 对整组发信号偶尔返回 EPERM（组里混入不可信号的进程），
+ * 这时逐个结束组内成员比直接放弃更可靠。
+ */
+function pidsInGroup(pgid) {
+  try {
+    const output = execFileSync("/bin/ps", ["-axo", "pid=,pgid="], { encoding: "utf8" });
+    return output
+      .split("\n")
+      .map((line) => line.trim().split(/\s+/))
+      .filter((parts) => parts.length === 2 && Number(parts[1]) === pgid)
+      .map((parts) => Number(parts[0]))
+      .filter((pid) => Number.isInteger(pid) && pid > 0);
+  } catch {
+    return [];
+  }
+}
 
 /** 配合独立进程组启动浏览器，父进程重启退出后仍要清理整组，再删除临时配置。 */
 export async function stopBrowser(child) {
@@ -21,6 +41,25 @@ export async function stopBrowser(child) {
   // 注意：父进程已退出不代表进程组已清空（浏览器更新重启会把子进程留在同一组），
   // 因此即使 child.exitCode 非空也要继续向进程组发信号。
   if (!signalGroup("SIGTERM")) {
+    // 整组信号不可用（EPERM/ESRCH）：退回逐个结束组内成员，
+    // 否则浏览器更新重启后留在组里的子进程会变成孤儿。
+    const members = pidsInGroup(child.pid);
+    for (const pid of members) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        // 已退出或无权，忽略
+      }
+    }
+    const deadline = Date.now() + 2000;
+    while (pidsInGroup(child.pid).length && Date.now() < deadline) await delay(25);
+    for (const pid of pidsInGroup(child.pid)) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // 忽略
+      }
+    }
     try {
       child.kill("SIGTERM");
     } catch {

@@ -30,7 +30,23 @@ it("浏览器父进程提前退出后，清理仍会结束其存活子进程", {
     assert.ok(Number.isInteger(descendantPid) && descendantPid > 0);
     assert.doesNotThrow(() => process.kill(descendantPid, 0));
     await stopBrowser(browser);
-    assert.throws(() => process.kill(descendantPid, 0), { code: "ESRCH" });
+    // 进程组已消失后，内核可能极短暂地仍能对僵尸 PID 返回成功（SIGTERM 已排队但尚未回收）。
+    // 这里最多重试 2 秒，确认它最终确实不可再被 signalling，而不是偶发误判测试失败。
+    const deadline = Date.now() + 2000;
+    let gone = false;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(descendantPid, 0);
+      } catch (error) {
+        if (error.code === "ESRCH") {
+          gone = true;
+          break;
+        }
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(gone, true, `子进程 ${descendantPid} 在清理后仍可被 signalling`);
   } finally {
     await stopBrowser(browser);
   }

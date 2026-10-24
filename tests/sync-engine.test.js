@@ -293,3 +293,123 @@ describe("sync_engine conflict resolution", () => {
     }
   });
 });
+
+describe("sync_engine conflict persistence", () => {
+  // 关键回归：冲突上下文原本只存在内存，刷新/新标签页后「解决冲突」会失效。
+  async function startServer() {
+    const port = 26000 + (process.pid % 2000);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const token = "sync-engine-conflict-persist-token";
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-conflict-persist."));
+    const child = spawn(process.execPath, [path.join(root, "scripts", "sync-server.mjs")], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HOST: "127.0.0.1",
+        TOKEN: token,
+        DATA_FILE: path.join(tempDir, "state.json"),
+      },
+      stdio: "ignore",
+    });
+    await waitForHealth(baseUrl, token);
+    return { baseUrl, token, tempDir, child };
+  }
+
+  function installStorageMock() {
+    const store = {};
+    globalThis.chrome = {
+      runtime: { lastError: null },
+      storage: {
+        local: {
+          get(keys, callback) {
+            const result = {};
+            for (const key of Array.isArray(keys) ? keys : [keys]) {
+              if (key in store) result[key] = structuredClone(store[key]);
+            }
+            callback(result);
+          },
+          set(obj, callback) {
+            for (const [key, value] of Object.entries(obj)) store[key] = structuredClone(value);
+            if (callback) callback();
+          },
+        },
+        sync: {
+          get(_k, cb) {
+            if (cb) cb({});
+          },
+          set(_o, cb) {
+            if (cb) cb();
+          },
+        },
+      },
+    };
+    return store;
+  }
+
+  it("restores the pending conflict after a fresh page load", async () => {
+    const { baseUrl, token, tempDir, child } = await startServer();
+    const store = installStorageMock();
+    try {
+      const engine = await import(`../src/js/sync_engine.js?persist=${Date.now()}`);
+      let data = baseData(baseUrl, token);
+      _setDeviceIdForTests("dev_persist_local");
+      engine.initSyncEngine({
+        getData: () => data,
+        setData: (n) => {
+          data = n;
+        },
+        saveLocal: async () => null,
+      });
+      assert.equal((await engine.pushNow("initial")).ok, true);
+
+      // 另一台设备换掉 docId，制造 doc_conflict
+      const remote = await httpPullState({ baseUrl, token });
+      const conflicting = structuredClone(remote.doc);
+      conflicting.docId = "doc_persist_remote";
+      conflicting.deviceId = "dev_persist_remote";
+      conflicting.writtenAt += 1;
+      conflicting.contentHash = hashSyncDocument(conflicting);
+      assert.equal((await httpPushState({ baseUrl, token }, conflicting, { ifMatch: remote.etag })).ok, true);
+
+      const detected = await engine.pullNow("detect");
+      assert.equal(detected.reason, "doc_conflict");
+      assert.equal(engine.getSyncStatus().hasConflict, true);
+
+      // 状态必须写进存储，新页面才能恢复
+      const saved = store["homepage_sync_state"];
+      assert.equal(saved.status, "need_setup");
+
+      // 模拟更老的状态：只有 need_setup、没有冲突 docId，也要能自愈
+      delete store["homepage_sync_state"].conflictRemoteDocId;
+      delete store["homepage_sync_state"].conflictLocalDocId;
+
+      // 模拟新标签页：重新加载模块（内存清空）后仅靠存储恢复
+      const reloaded = await import(`../src/js/sync_engine.js?reload=${Date.now()}`);
+      reloaded.initSyncEngine({
+        getData: () => data,
+        setData: (n) => {
+          data = n;
+        },
+        saveLocal: async () => null,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const pending = reloaded.getPendingConflict();
+      assert.ok(pending, "刷新后应能恢复待处理冲突（老状态没有 docId 时也要可用）");
+      assert.equal(reloaded.getSyncStatus().hasConflict, true);
+
+      // 用恢复出来的上下文直接解决：合并应成功，且远端节点被并入
+      const resolved = await reloaded.resolveDocConflict("merge");
+      assert.equal(resolved.ok, true, `merge failed: ${resolved.reason}`);
+      assert.equal(reloaded.getSyncStatus().hasConflict, false);
+      assert.equal(reloaded.getSyncStatus().lastError, "", "解决后不应残留 doc_conflict");
+      const after = await httpPullState({ baseUrl, token });
+      assert.ok(Object.keys(after.doc.nodes).length >= 1);
+    } finally {
+      delete globalThis.chrome;
+      _setDeviceIdForTests("");
+      await stopServer(child);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});

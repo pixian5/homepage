@@ -117,6 +117,25 @@ if [[ -n "${PROJECT_FILE}" ]]; then
     python3 "${ROOT_DIR}/scripts/safari-newtab-selection.py" configure \
       --app-path "${APPS_DIR_APP}"
 
+    # Safari 正在运行时重装 app，pluginkit 可能不会登记新扩展，
+    # 表现为“扩展突然没了、新标签页回落 favorites://”。
+    # 这里显式注册并校验；Safari 运行中注册可能延迟生效，所以只告警不失败。
+    echo "[build] Registering Safari extension with pluginkit..."
+    pluginkit -a "${APPS_DIR_APP}/Contents/PlugIns/${SAFARI_APP_NAME} Extension.appex" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      pluginkit -m -p com.apple.Safari.web-extension 2>/dev/null \
+        | grep -q "com.aeroluna.homepage.safari.extension" && break
+      sleep 0.25
+    done
+    if pluginkit -m -p com.apple.Safari.web-extension 2>/dev/null \
+      | grep -q "com.aeroluna.homepage.safari.extension"; then
+      echo "[build] Safari extension registered"
+    else
+      echo "[build] WARNING: Safari extension is not registered yet." >&2
+      echo "[build]           Quit Safari, then run:" >&2
+      echo "[build]           pluginkit -a \"${APPS_DIR_APP}/Contents/PlugIns/${SAFARI_APP_NAME} Extension.appex\"" >&2
+    fi
+
     # Xcode 构建时会将 build-output 里的 .app 注册到 LaunchServices，
     # 安装到 /Applications 后如果不注销源路径，Safari 扩展列表会出现重复条目。
     echo "[build] Unregistering build-output app from LaunchServices..."

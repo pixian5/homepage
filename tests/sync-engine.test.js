@@ -377,12 +377,12 @@ describe("sync_engine conflict persistence", () => {
       assert.equal(engine.getSyncStatus().hasConflict, true);
 
       // 状态必须写进存储，新页面才能恢复
-      const saved = store["homepage_sync_state"];
+      const saved = store.homepage_sync_state;
       assert.equal(saved.status, "need_setup");
 
       // 模拟更老的状态：只有 need_setup、没有冲突 docId，也要能自愈
-      delete store["homepage_sync_state"].conflictRemoteDocId;
-      delete store["homepage_sync_state"].conflictLocalDocId;
+      delete store.homepage_sync_state.conflictRemoteDocId;
+      delete store.homepage_sync_state.conflictLocalDocId;
 
       // 模拟新标签页：重新加载模块（内存清空）后仅靠存储恢复
       const reloaded = await import(`../src/js/sync_engine.js?reload=${Date.now()}`);
@@ -627,13 +627,13 @@ describe("sync_engine multi-tab conflict isolation", () => {
       // A 解决冲突
       const resolved = await tabA.resolveDocConflict("merge");
       assert.equal(resolved.ok, true, `resolve failed: ${resolved.reason}`);
-      assert.equal(store["homepage_sync_state"].status, "idle");
+      assert.equal(store.homepage_sync_state.status, "idle");
 
       // B 再次同步：必须先采纳存储里的新 docId，不能把冲突写回去
       await tabB.pushNow("stale-tab");
       await new Promise((resolve) => setTimeout(resolve, 150));
-      assert.equal(store["homepage_sync_state"].status, "idle", "旧标签页不应恢复已解决的冲突");
-      assert.notEqual(store["homepage_sync_state"].lastError, "doc_conflict");
+      assert.equal(store.homepage_sync_state.status, "idle", "旧标签页不应恢复已解决的冲突");
+      assert.notEqual(store.homepage_sync_state.lastError, "doc_conflict");
     } finally {
       delete globalThis.chrome;
       _setDeviceIdForTests("");

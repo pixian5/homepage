@@ -137,9 +137,45 @@ export async function httpHealth(cfg) {
     });
     if (!res.ok) return { ok: false, reason: "http_error", status: res.status };
     const body = await res.json().catch(() => ({}));
-    return { ok: true, body };
+    // 展开常用字段，调用方不必再写 health.body.xxx
+    return { ok: true, body, ...body };
   } catch (e) {
     const detail = e?.name === "AbortError" ? "请求超时（10 秒）" : e?.message || String(e);
     return { ok: false, reason: "network_error", error: `${detail} · ${joinUrl(baseUrl, "/health")}` };
+  }
+}
+
+/**
+ * 设备确认：本地已把远端 revision 持久保存后调用。
+ * 服务端只记录“这台设备确认到了哪个版本”，不会因此删除任何数据。
+ * 失败不应影响同步本身，调用方可以忽略返回值。
+ *
+ * @param {HttpSyncConfig} cfg
+ * @param {{ deviceId: string, revision: number, protocol?: number }} payload
+ */
+export async function httpConfirmSyncState(cfg, payload) {
+  const baseUrl = String(cfg?.baseUrl || "").trim();
+  if (!baseUrl) return { ok: false, reason: "no_url" };
+  const url = joinUrl(baseUrl, "/v1/sync/confirm");
+  try {
+    const res = await syncHttpFetchWithTimeout(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...authHeaders(cfg.token),
+      },
+      body: JSON.stringify(payload),
+    });
+    if (res.status === 401) return { ok: false, reason: "unauthorized", status: 401 };
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { ok: false, reason: "http_error", status: res.status, error: text.slice(0, 200) };
+    }
+    const body = await res.json().catch(() => ({}));
+    return { ok: true, revision: Number(body.revision) || 0, epoch: Number(body.epoch) || 0 };
+  } catch (e) {
+    const detail = e?.name === "AbortError" ? "请求超时（10 秒）" : e?.message || String(e);
+    return { ok: false, reason: "network_error", error: `${detail} · ${url}` };
   }
 }

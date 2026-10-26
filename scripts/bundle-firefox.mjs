@@ -14,7 +14,10 @@ const { app: files, background: backgroundFiles } = JSON.parse(
 );
 
 export function stripImports(code) {
-  return code.replace(/^\s*import[\s\S]*?;\s*/gm, "");
+  // 只匹配真正的 import 语句：`import` 后面必须跟空白或 `{`。
+  // 旧写法 `^\s*import[\s\S]*?;` 会把对象字面量里以 import 开头的属性
+  // （例如 importSyncBundle,）连同后续代码一起吃掉。
+  return code.replace(/^\s*import\s+(?:[\s\S]*?);\s*/gm, "");
 }
 
 /**

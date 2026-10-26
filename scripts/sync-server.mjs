@@ -35,8 +35,24 @@ const PORT = process.env.PORT === "0" ? 0 : Number(process.env.PORT) || 8787;
 const HOST = process.env.HOST || "0.0.0.0";
 const TOKEN = String(process.env.TOKEN || "").trim();
 const DATA_FILE = process.env.DATA_FILE || path.join(ROOT, "data", "homepage-sync-state.json");
+/** 当前服务端协议版本；设备表随协议一起演进。 */
+const SERVER_PROTOCOL = 2;
+/** 设备列表上限，防止异常客户端无限撑大状态文件。 */
+const MAX_DEVICES = 200;
 
-/** @type {{ revision: number, etag: string, doc: object, updatedAt: number } | null} */
+/**
+ * 服务端状态。
+ * devices 只在第一阶段用于收集设备与确认信息，暂不触发回收。
+ * @type {{
+ *   revision: number,
+ *   etag: string,
+ *   doc: object,
+ *   updatedAt: number,
+ *   epoch: number,
+ *   devices: Record<string, {deviceId: string, firstSeenAt: number, lastSeenAt: number,
+ *     lastConfirmedRevision: number, lastConfirmedEpoch: number, protocol: number}>,
+ * } | null}
+ */
 let state = null;
 const idempotency = new Map(); // key -> { status, body, at }
 let writeChain = Promise.resolve();
@@ -55,7 +71,7 @@ function json(res, status, body, extraHeaders = {}) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, PUT, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, If-Match, Idempotency-Key",
     "Access-Control-Expose-Headers": "ETag, X-Sync-Revision",
     ...extraHeaders,
@@ -103,6 +119,9 @@ async function loadFromDisk() {
         etag: etagOf(parsed.doc, revision),
         doc: parsed.doc,
         updatedAt: parsed.updatedAt,
+        // 旧状态文件没有 epoch/devices：按 0 / 空表补齐，迁移是只读的，不改盘
+        epoch: Number.isSafeInteger(parsed.epoch) ? Math.max(0, parsed.epoch) : 0,
+        devices: normalizeDevices(parsed.devices),
       };
       console.log(`[sync-server] loaded ${DATA_FILE} revision=${state.revision}`);
       return;
@@ -124,6 +143,8 @@ async function saveToDisk(snapshot = state) {
       revision: snapshot.revision,
       etag: snapshot.etag,
       updatedAt: snapshot.updatedAt,
+      epoch: snapshot.epoch || 0,
+      devices: snapshot.devices || {},
       doc: snapshot.doc,
     },
     null,
@@ -231,6 +252,59 @@ function validateSyncDocument(doc) {
   return null;
 }
 
+/**
+ * 规范化设备表：丢弃结构不合法的条目，并限制总数。
+ * 设备表只保存标识与确认进度，不保存任何书签内容。
+ */
+function normalizeDevices(input) {
+  const out = {};
+  if (!isRecord(input)) return out;
+  const entries = Object.entries(input)
+    .filter(([id, value]) => typeof id === "string" && id && isRecord(value))
+    .map(([id, value]) => [
+      id,
+      {
+        deviceId: id,
+        firstSeenAt: isTimestamp(value.firstSeenAt) ? value.firstSeenAt : 0,
+        lastSeenAt: isTimestamp(value.lastSeenAt) ? value.lastSeenAt : 0,
+        lastConfirmedRevision: Number.isSafeInteger(value.lastConfirmedRevision)
+          ? Math.max(0, value.lastConfirmedRevision)
+          : 0,
+        lastConfirmedEpoch: Number.isSafeInteger(value.lastConfirmedEpoch) ? Math.max(0, value.lastConfirmedEpoch) : 0,
+        protocol: Number.isSafeInteger(value.protocol) ? value.protocol : 1,
+      },
+    ])
+    .sort((a, b) => b[1].lastSeenAt - a[1].lastSeenAt)
+    .slice(0, MAX_DEVICES);
+  for (const [id, value] of entries) out[id] = value;
+  return out;
+}
+
+/**
+ * 返回登记了一次设备活动后的新设备表（纯函数，不改入参）。
+ * 只在写入成功或设备确认时调用。
+ */
+function withDeviceTouched(devices, deviceId, { now = Date.now(), confirmedRevision, epoch, protocol } = {}) {
+  if (typeof deviceId !== "string" || !deviceId.trim()) return normalizeDevices(devices);
+  const id = deviceId.trim();
+  const previous = devices?.[id];
+  const next = {
+    deviceId: id,
+    firstSeenAt: previous?.firstSeenAt || now,
+    lastSeenAt: now,
+    lastConfirmedRevision: previous?.lastConfirmedRevision || 0,
+    lastConfirmedEpoch: previous?.lastConfirmedEpoch || 0,
+    protocol: Number.isSafeInteger(protocol) ? protocol : previous?.protocol || SERVER_PROTOCOL,
+  };
+  if (Number.isSafeInteger(confirmedRevision)) {
+    next.lastConfirmedRevision = Math.max(next.lastConfirmedRevision, confirmedRevision);
+  }
+  if (Number.isSafeInteger(epoch)) {
+    next.lastConfirmedEpoch = Math.max(next.lastConfirmedEpoch, epoch);
+  }
+  return normalizeDevices({ ...devices, [id]: next });
+}
+
 function readBody(req, limit = 2 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -264,7 +338,7 @@ const server = createServer(async (req, res) => {
   if (method === "OPTIONS") {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, PUT, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Authorization, If-Match, Idempotency-Key",
       "Access-Control-Max-Age": "86400",
     });
@@ -279,6 +353,12 @@ const server = createServer(async (req, res) => {
       hasState: !!state,
       // 客户端可据此区分：open 时可留空 Token；true 时需填与启动 TOKEN 一致
       authRequired: !!TOKEN,
+      // 便于判断「服务活着但数据停滞」：revision/updatedAt 是否在推进
+      revision: state?.revision ?? null,
+      updatedAt: state?.updatedAt ?? null,
+      epoch: state?.epoch ?? 0,
+      deviceCount: state ? Object.keys(state.devices || {}).length : 0,
+      protocol: SERVER_PROTOCOL,
     });
     return;
   }
@@ -287,6 +367,81 @@ const server = createServer(async (req, res) => {
   const authOk = checkAuth(req);
   if (url.pathname.startsWith("/v1/") && !authOk) {
     unauthorized(res);
+    return;
+  }
+
+  // 设备确认：客户端已把 revision 持久保存到本地后调用。
+  // 只记录确认进度，不做任何删除或回收决定。
+  if (url.pathname === "/v1/sync/confirm" && method === "POST") {
+    let raw;
+    try {
+      raw = await readBody(req, 64 * 1024);
+    } catch (e) {
+      json(res, e.message === "body_too_large" ? 413 : 400, { error: e.message || "bad_body" });
+      return;
+    }
+    let body;
+    try {
+      body = JSON.parse(raw || "null");
+    } catch {
+      json(res, 400, { error: "invalid_json" });
+      return;
+    }
+    const deviceId = typeof body?.deviceId === "string" ? body.deviceId.trim() : "";
+    const confirmedRevision = body?.revision;
+    if (!deviceId) {
+      json(res, 400, { error: "invalid_device_id" });
+      return;
+    }
+    if (!Number.isSafeInteger(confirmedRevision) || confirmedRevision < 0) {
+      json(res, 400, { error: "invalid_revision" });
+      return;
+    }
+    const result = await enqueueWrite(async () => {
+      if (!state) {
+        return { status: 409, body: { error: "no_state" }, headers: {} };
+      }
+      // 只接受不超前于当前服务端 revision 的确认，防止伪造未来确认。
+      if (confirmedRevision > state.revision) {
+        return { status: 409, body: { error: "revision_ahead", revision: state.revision }, headers: {} };
+      }
+      const nextState = {
+        ...state,
+        devices: withDeviceTouched(state.devices, deviceId, {
+          now: Date.now(),
+          confirmedRevision,
+          epoch: state.epoch || 0,
+          protocol: Number.isSafeInteger(body?.protocol) ? body.protocol : SERVER_PROTOCOL,
+        }),
+      };
+      try {
+        await saveToDisk(nextState);
+      } catch (e) {
+        console.error("[sync-server] confirm save failed", e);
+        return { status: 500, body: { error: "save_failed" }, headers: {} };
+      }
+      state = nextState;
+      return {
+        status: 200,
+        body: { ok: true, revision: state.revision, epoch: state.epoch || 0 },
+        headers: {},
+      };
+    });
+    json(res, result.status, result.body, result.headers || {});
+    return;
+  }
+
+  // 设备表只读视图：用于排查「谁确认到哪个版本」，不含任何书签内容。
+  if (url.pathname === "/v1/sync/devices" && method === "GET") {
+    if (!state) {
+      json(res, 404, { error: "not_found" });
+      return;
+    }
+    json(res, 200, {
+      revision: state.revision,
+      epoch: state.epoch || 0,
+      devices: Object.values(state.devices || {}),
+    });
     return;
   }
 
@@ -367,11 +522,19 @@ const server = createServer(async (req, res) => {
       const nextRevision = state ? state.revision + 1 : Math.max(1, Number(doc.revision) || 1);
       const nextDoc = { ...doc, revision: nextRevision };
       nextDoc.contentHash = hashSyncDocument(nextDoc);
+      const now = Date.now();
+      // 第一阶段：只记录设备与它最后写入的 revision，不做任何回收。
+      // 文档与设备表在同一次落盘里提交，避免只写一半。
       const nextState = {
         revision: nextRevision,
         etag: etagOf(nextDoc, nextRevision),
         doc: nextDoc,
-        updatedAt: Date.now(),
+        updatedAt: now,
+        epoch: state?.epoch || 0,
+        devices: withDeviceTouched(state?.devices, doc.deviceId, {
+          now,
+          confirmedRevision: nextRevision,
+        }),
       };
       try {
         await saveToDisk(nextState);

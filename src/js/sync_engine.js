@@ -3,7 +3,7 @@
  */
 
 import { getLastError, storageArea } from "./shared-utils.js";
-import { httpPullState, httpPushState } from "./sync_http_transport.js";
+import { httpConfirmSyncState, httpPullState, httpPushState } from "./sync_http_transport.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
 import { mergeHomepage } from "./sync_merge.js";
 import {
@@ -364,12 +364,33 @@ async function applyRemoteDoc(doc, deviceId, reason) {
   _status.lastError = "";
   _status.docId = doc.docId || _status.docId;
   await saveState();
+  // 只有“本地已保存且状态已落盘”之后才确认 revision；
+  // 保存失败在上面的分支已经提前返回，不会走到这里。
+  await confirmRemoteRevision(remoteRevision, deviceId);
   return {
     ok: true,
     merged: !!merged.stats?.applied,
     stats: { ...merged.stats, remoteNewer, remoteRevision, remoteDeviceId },
     reason,
   };
+}
+
+/**
+ * 本地已把远端 revision 持久保存后，向服务端确认进度。
+ * 第一阶段服务端只记录、不回收；确认失败也不影响同步结果，因此吞掉错误。
+ */
+async function confirmRemoteRevision(revision, deviceId) {
+  const transport = getTransportConfig();
+  if (!transport.baseUrl || !deviceId) return;
+  if (!Number.isSafeInteger(revision) || revision <= 0) return;
+  try {
+    await httpConfirmSyncState(
+      { baseUrl: transport.baseUrl, token: transport.token },
+      { deviceId, revision, protocol: 2 },
+    );
+  } catch (e) {
+    console.warn("confirm sync revision failed", e);
+  }
 }
 
 /**
@@ -431,6 +452,8 @@ async function pushNowImpl(reason = "manual") {
       _status.lastError = "";
       await clearOutboxSuccess();
       await saveState();
+      // 推送成功说明本机持有该版本，可以确认
+      await confirmRemoteRevision(revision, deviceId);
       return { ok: true, revision, reason };
     }
     // HTTP 412：服务端返回最新状态

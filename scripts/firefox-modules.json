@@ -19,6 +19,7 @@
     "sync_engine.js",
     "app-i18n.js",
     "ui-utils.js",
+    "settings-controller.js",
     "app.js"
   ],
   "background": [

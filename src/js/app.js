@@ -34,6 +34,7 @@ import {
   retryFailedIconsIfDue,
   withIconFetchConcurrency,
 } from "./icons.js";
+import { createSettingsController } from "./settings-controller.js";
 import { normalizeUrl, SAFE_URL_PROTOCOLS } from "./shared-utils.js";
 import {
   clearData,
@@ -157,7 +158,8 @@ let settingsOpen = false;
 let settingsSaving = false;
 let settingsSaveTimer = null;
 let settingsSaveQueued = false;
-let _settingsSaveNow = null;
+/** 设置面板控制器（settings-controller.js），init 时注入依赖。 */
+let settingsCtl = null;
 let renderSeq = 0;
 let lastMainLayout = null;
 let storageReloadTimer = null;
@@ -2088,7 +2090,7 @@ async function closeModal() {
     clearTimeout(settingsSaveTimer);
     settingsSaveTimer = null;
   }
-  const pendingSave = _settingsSaveNow;
+  const pendingSave = settingsCtl?.saveNow;
   if (settingsOpen && typeof pendingSave === "function" && !settingsSaving) {
     try {
       await pendingSave();
@@ -2108,7 +2110,6 @@ async function closeModal() {
   settingsOpen = false;
   settingsSaving = false;
   settingsSaveQueued = false;
-  _settingsSaveNow = null;
   if (pendingStorageReload) {
     pendingStorageReload = false;
     scheduleStorageReload();
@@ -2537,7 +2538,7 @@ async function leaveSettingsForSubpanel() {
     clearTimeout(settingsSaveTimer);
     settingsSaveTimer = null;
   }
-  const pending = _settingsSaveNow;
+  const pending = settingsCtl?.saveNow;
   if (typeof pending === "function" && !settingsSaving) {
     try {
       await pending();
@@ -2546,7 +2547,6 @@ async function leaveSettingsForSubpanel() {
     }
   }
   settingsOpen = false;
-  _settingsSaveNow = null;
 }
 
 function isSafariBrowser() {
@@ -2558,1181 +2558,6 @@ function detectExtensionPlatform() {
   if (/firefox/i.test(navigator.userAgent || "")) return "firefox";
   if (isSafariBrowser()) return "safari";
   return "chrome";
-}
-
-function downloadJsonFile(filename, obj) {
-  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function openSyncConflictModal() {
-  const pending = getPendingConflict();
-  if (!pending) {
-    toast(t("settings.sync.state.idle"));
-    return;
-  }
-  const modalHtml = html`
-    <h2>${t("settings.sync.conflict.title")}</h2>
-    <div class="section">
-      <p>${t("settings.sync.conflict.desc")}</p>
-      <p class="settings-sync-hint">local: ${pending.localDocId || "-"}<br/>remote: ${pending.remoteDocId || "-"}</p>
-    </div>
-    <div class="actions">
-      <button type="button" id="btnConflictMerge" class="icon-btn">${t("settings.sync.conflict.merge")}</button>
-      <button type="button" id="btnConflictLocal" class="icon-btn">${t("settings.sync.conflict.local")}</button>
-      <button type="button" id="btnConflictRemote" class="icon-btn">${t("settings.sync.conflict.remote")}</button>
-      <button type="button" id="btnConflictCancel" class="icon-btn">${t("common.cancel")}</button>
-    </div>
-  `;
-  openModal(modalHtml);
-  const run = async (choice) => {
-    const btnIds = ["btnConflictMerge", "btnConflictLocal", "btnConflictRemote", "btnConflictCancel"];
-    for (const id of btnIds) {
-      const b = $(id);
-      if (b) b.disabled = true;
-    }
-    try {
-      const res = await resolveDocConflict(choice);
-      if (!res?.ok) {
-        toast(t("settings.sync.importFail", { reason: res?.reason || "conflict" }), "error");
-        return;
-      }
-      closeModal();
-      toast(t("settings.sync.conflict.done"));
-      render();
-      processPendingIconFetches();
-      // 若设置仍打开则刷新状态（关闭后由下次打开刷新）
-    } catch (e) {
-      toast(t("settings.sync.importFail", { reason: e?.message || "conflict" }), "error");
-    }
-  };
-  $("btnConflictMerge")?.addEventListener("click", () => void run("merge"));
-  $("btnConflictLocal")?.addEventListener("click", () => void run("local"));
-  $("btnConflictRemote")?.addEventListener("click", () => void run("remote"));
-  $("btnConflictCancel")?.addEventListener("click", () => closeModal());
-}
-
-/** 从设置表单即时读入同步相关字段（不依赖 debounce 保存） */
-function applySyncSettingsFromForm() {
-  if (!data.settings) data.settings = {};
-  const syncEl = $("settingSync");
-  const intervalEl = $("settingSyncInterval");
-  const urlEl = $("settingSyncServerUrl");
-  const tokenEl = $("settingSyncServerToken");
-  if (syncEl) data.settings.syncEnabled = !!syncEl.checked;
-  data.settings.syncTransport = "http";
-  if (intervalEl) data.settings.syncInterval = normalizeSyncInterval(intervalEl.value);
-  if (urlEl) data.settings.syncServerUrl = (urlEl.value || "").trim();
-  if (tokenEl) data.settings.syncServerToken = (tokenEl.value || "").trim();
-  return {
-    enabled: !!data.settings.syncEnabled,
-    transport: "http",
-    interval: data.settings.syncInterval || "5m",
-    url: data.settings.syncServerUrl || "",
-    token: data.settings.syncServerToken || "",
-  };
-}
-
-async function refreshSyncStatusLine() {
-  const el = $("syncStatusLine");
-  if (!el) return;
-  try {
-    // 状态可能由 background 或别的标签页写入；先同步一次存储再渲染，
-    // 避免打开设置时把 need_setup 显示成 idle（进而隐藏「解决冲突」）。
-    const st = await reloadSyncState();
-    const deviceId = await getOrCreateDeviceId();
-    const bytes = st.bytesEstimate || estimateSyncProjectionBytes(data, { deviceId, docId: st.docId || "doc_ui" });
-    const level = st.budgetLevel || syncBytesBudgetLevel(bytes);
-    const kb = bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
-    const budgetKey =
-      level === "red"
-        ? "settings.sync.budget.red"
-        : level === "yellow"
-          ? "settings.sync.budget.yellow"
-          : "settings.sync.budget.green";
-    const statusKey =
-      st.status === "syncing"
-        ? "settings.sync.state.syncing"
-        : st.status === "quota"
-          ? "settings.sync.state.quota"
-          : st.status === "error"
-            ? "settings.sync.state.error"
-            : st.status === "need_setup"
-              ? "settings.sync.state.conflict"
-              : data.settings.syncEnabled
-                ? "settings.sync.state.idle"
-                : "settings.sync.state.off";
-    const err = st.lastError ? ` · ${st.lastError}` : "";
-    const via = t("settings.sync.transport.http");
-    const intervalKey = normalizeSyncInterval(data.settings?.syncInterval);
-    const intervalLabel = data.settings?.syncEnabled
-      ? ` · ${t("settings.sync.interval")}: ${t(`settings.sync.interval.${intervalKey}`)}`
-      : "";
-    el.textContent = `${t(statusKey)} · ${via}${intervalLabel} · ${t("settings.sync.size", { size: kb })} · ${t(budgetKey)}${err}`;
-    el.dataset.level = st.status === "error" || st.status === "quota" || st.status === "need_setup" ? "red" : level;
-    const resolveBtn = $("btnSyncResolveConflict");
-    if (resolveBtn) {
-      resolveBtn.classList.toggle("hidden", !(st.hasConflict || st.status === "need_setup"));
-    }
-  } catch (e) {
-    console.warn("refreshSyncStatusLine failed", e);
-    el.textContent = "";
-  }
-}
-
-function openSettingsModal() {
-  settingsOpen = true;
-  const modalHtml = html`
-    <div class="section settings-actions">
-      <button id="btnExport" class="icon-btn">${t("settings.action.export")}</button>
-      <button id="btnImport" class="icon-btn">${t("settings.action.import")}</button>
-      <button id="btnImportUrl" class="icon-btn">${t("settings.action.importUrl")}</button>
-      <button id="btnBackupManage" class="icon-btn">${t("settings.action.backup")}</button>
-      <button id="btnClearData" class="icon-btn danger strong-label">${t("settings.action.clearData")}</button>
-      <button id="btnClearCards" class="icon-btn danger">${t("settings.action.clearCards")}</button>
-      <button id="btnRefreshIcons" class="icon-btn">${t("settings.action.refreshIcons")}</button>
-    </div>
-    <div class="section settings-language-row">
-      <div class="row-inline settings-language-wrap">
-        <span class="settings-language-hint">中/臺/EN/JP/KR/DE/FR/ES</span>
-        <select id="settingLanguage" class="inline-select settings-language-select">${rawHtml(buildLanguageOptions(data.settings.language))}</select>
-      </div>
-      <span id="settingsVersion" class="build-version"></span>
-    </div>
-
-    <div class="section">
-      <label><input id="settingShowSearch" type="checkbox"> ${t("settings.showSearch")}</label>
-      <div class="row-inline">
-        <span class="inline-label">${t("settings.searchEngine")}</span>
-        <select id="settingSearchEnginePreset" class="inline-select">
-          <option value="https://www.google.com/search?q=">Google</option>
-          <option value="https://www.baidu.com/s?wd=">百度</option>
-          <option value="https://www.bing.com/search?q=">Bing</option>
-          <option value="https://www.so.com/s?q=">360</option>
-          <option value="https://www.yandex.com/search/?text=">Yandex</option>
-          <option value="custom">${t("settings.searchEngine.custom")}</option>
-        </select>
-      </div>
-      <input id="settingSearchEngine" type="text" placeholder="https://www.bing.com/search?q=" class="inline-text" />
-    </div>
-
-
-    <div class="section">
-      <div class="row-inline">
-        <label><input id="settingFixedLayout" type="checkbox"> ${t("settings.fixedLayout")}</label>
-        <div class="inline-field">
-          <input id="settingCols" type="number" min="1" />
-        </div>
-      </div>
-      <div class="row-inline density-row">
-        <span class="inline-label">${t("settings.tileGap")}</span>
-        <label><input type="radio" name="density" value="compact" /> ${t("settings.density.compact")}</label>
-        <label><input type="radio" name="density" value="standard" /> ${t("settings.density.standard")}</label>
-        <label><input type="radio" name="density" value="spacious" /> ${t("settings.density.spacious")}</label>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="row-inline">
-        <span class="inline-label">${t("settings.background")}</span>
-        <select id="settingBgType" class="inline-select">
-          <option value="bing">${t("settings.background.bing")}</option>
-          <option value="color">${t("settings.background.color")}</option>
-          <option value="gradient">${t("settings.background.gradient")}</option>
-          <option value="custom">${t("settings.background.custom")}</option>
-        </select>
-      </div>
-      <div id="bgColorWrap">
-        
-        <input id="settingBgColor" type="color" />
-      </div>
-      <div id="bgGradientWrap">
-        <label>${t("settings.gradientColor")}</label>
-        <div class="row">
-          <input id="settingBgGradientA" type="color" />
-          <input id="settingBgGradientB" type="color" />
-        </div>
-      </div>
-      <input id="settingBgGradient" type="hidden" />
-      <input id="settingBgFile" type="file" accept="image/*" />
-    </div>
-
-    <div class="section">
-      <div class="row-inline">
-        <span class="inline-label">${t("settings.bgOverlay")}</span>
-        <input id="settingBgOverlay" type="range" min="0" max="0.6" step="0.01" class="inline-range" />
-        <span id="settingBgOverlayValue" class="inline-value"></span>
-      </div>
-    </div>
-
-    <div class="section">
-      <label><input id="settingTooltip" type="checkbox"> ${t("settings.tooltip")}</label>
-      <label><input id="settingKeyboard" type="checkbox"> ${t("settings.keyboard")}</label>
-    </div>
-
-    <div class="section">
-      <div class="row-inline">
-        <span class="inline-label">${t("settings.theme")}</span>
-        <select id="settingTheme" class="inline-select">
-          <option value="system">${t("settings.theme.system")}</option>
-          <option value="light">${t("settings.theme.light")}</option>
-          <option value="dark">${t("settings.theme.dark")}</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="row-inline">
-        <span class="inline-label">${t("settings.fontSize")}</span>
-        <input id="settingFontSize" type="number" min="10" max="24" class="inline-number" />
-      </div>
-      <div class="row-inline">
-        <span class="inline-label">${t("settings.toastDuration")}</span>
-        <input id="settingToastDuration" type="number" min="1" max="60" step="1" class="inline-number" />
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="row-inline">
-        <span class="inline-label">${t("settings.defaultGroup")}</span>
-      </div>
-      <div class="row-inline">
-        <select id="settingDefaultGroupId" class="inline-select"></select>
-      </div>
-    </div>
-
-    <div class="section">
-      <label><input id="settingSidebarCollapsed" type="checkbox"> ${t("settings.hideSidebar")}</label>
-    </div>
-
-    <div class="section">
-      <label><input id="settingSync" type="checkbox"> ${t("settings.sync")}</label>
-      <div class="row-inline">
-        <span class="inline-label">${t("settings.sync.interval")}</span>
-        <select id="settingSyncInterval" class="inline-select">
-          ${rawHtml(
-            SYNC_INTERVAL_OPTIONS.map(
-              (o) =>
-                `<option value="${escapeHtml(o.value)}">${escapeHtml(t(`settings.sync.interval.${o.value}`))}</option>`,
-            ).join(""),
-          )}
-        </select>
-      </div>
-      <div id="syncHttpFields" class="settings-sync-http">
-        <div class="row-inline">
-          <span class="inline-label">${t("settings.sync.serverUrl")}</span>
-          <input id="settingSyncServerUrl" type="url" class="inline-text" placeholder="${t("settings.sync.serverUrlPh")}" />
-        </div>
-        <div class="row-inline">
-          <span class="inline-label">${t("settings.sync.serverToken")}</span>
-          <input id="settingSyncServerToken" type="password" class="inline-text" autocomplete="off" />
-        </div>
-        <div class="row-inline settings-sync-actions">
-          <button type="button" id="btnSyncTestServer" class="icon-btn">${t("settings.sync.testServer")}</button>
-          <button type="button" id="btnSyncNow" class="icon-btn">${t("settings.sync.now")}</button>
-        </div>
-      </div>
-      <div id="syncStatusLine" class="settings-sync-status"></div>
-      <div class="row-inline settings-sync-actions">
-        <button type="button" id="btnSyncResolveConflict" class="icon-btn hidden">${t("settings.sync.state.conflict")}</button>
-        <button type="button" id="btnSyncExportBundle" class="icon-btn">${t("settings.sync.exportBundle")}</button>
-        <button type="button" id="btnSyncImportBundle" class="icon-btn">${t("settings.sync.importBundle")}</button>
-        <button type="button" id="btnSyncExportFile" class="icon-btn">${t("settings.sync.exportFile")}</button>
-        <button type="button" id="btnSyncImportFile" class="icon-btn">${t("settings.sync.importFile")}</button>
-      </div>
-      <input id="syncImportFileInput" type="file" accept="application/json,.json" class="hidden" />
-      <p class="settings-sync-hint">${t("settings.sync.hint")}</p>
-      <div class="row-inline">
-        <span class="inline-label">${t("settings.openMode")}</span>
-        <select id="settingOpenMode" class="inline-select">
-          <option value="current">${t("openMode.current")}</option>
-          <option value="new">${t("openMode.new")}</option>
-          <option value="background">${t("openMode.background")}</option>
-        </select>
-      </div>
-      <div class="row-inline">
-        <span class="inline-label">${t("settings.maxBackups")}</span>
-        <input id="settingBackup" type="number" min="0" class="inline-number" />
-      </div>
-      <div class="row-inline">
-        <span class="inline-label">${t("settings.iconRetry")}</span>
-        <select id="settingIconRetryHour" class="inline-select">
-          <option value="">${t("settings.retryDisabled")}</option>
-          <option value="0">00:00</option>
-          <option value="1">01:00</option>
-          <option value="2">02:00</option>
-          <option value="3">03:00</option>
-          <option value="4">04:00</option>
-          <option value="5">05:00</option>
-          <option value="6">06:00</option>
-          <option value="7">07:00</option>
-          <option value="8">08:00</option>
-          <option value="9">09:00</option>
-          <option value="10">10:00</option>
-          <option value="11">11:00</option>
-          <option value="12">12:00</option>
-          <option value="13">13:00</option>
-          <option value="14">14:00</option>
-          <option value="15">15:00</option>
-          <option value="16">16:00</option>
-          <option value="17">17:00</option>
-          <option value="18">18:00</option>
-          <option value="19">19:00</option>
-          <option value="20">20:00</option>
-          <option value="21">21:00</option>
-          <option value="22">22:00</option>
-          <option value="23">23:00</option>
-        </select>
-      </div>
-    </div>
-
-  `;
-  openModal(modalHtml);
-
-  $("settingShowSearch").checked = data.settings.showSearch;
-  $("settingSearchEngine").value = data.settings.searchEngineUrl;
-  const presets = {
-    "https://www.google.com/search?q=": "https://www.google.com/search?q=",
-    "https://www.baidu.com/s?wd=": "https://www.baidu.com/s?wd=",
-    "https://www.bing.com/search?q=": "https://www.bing.com/search?q=",
-    "https://www.so.com/s?q=": "https://www.so.com/s?q=",
-    "https://www.yandex.com/search/?text=": "https://www.yandex.com/search/?text=",
-  };
-  const presetValue = presets[data.settings.searchEngineUrl] || "custom";
-  $("settingSearchEnginePreset").value = presetValue;
-  $("settingSearchEngine").disabled = presetValue !== "custom";
-  $("settingFixedLayout").checked = data.settings.fixedLayout;
-  $("settingCols").value = data.settings.fixedCols;
-  const densityRadios = qsa("input[name='density']", elements.modal);
-  densityRadios.forEach((radio) => {
-    radio.checked = radio.value === data.settings.gridDensity;
-  });
-  $("settingBgType").value = data.settings.backgroundType;
-  $("settingBgColor").value = data.settings.backgroundColor;
-  $("settingBgGradient").value = data.settings.backgroundGradient;
-  // 形如 "linear-gradient(120deg, #aaa, #bbb)"，跳过角度，直接取两个颜色
-  const match = /linear-gradient\([^,]+,\s*([^,]+),\s*([^)]+)\)/.exec(data.settings.backgroundGradient || "");
-  const gA = data.settings.backgroundGradientA || match?.[1]?.trim() || "#1d2a3b";
-  const gB = data.settings.backgroundGradientB || match?.[2]?.trim() || "#0b0f14";
-  $("settingBgGradientA").value = gA;
-  $("settingBgGradientB").value = gB;
-  $("settingBgOverlay").value = Number(data.settings.backgroundOverlayStrength ?? 0.08);
-  $("settingBgOverlayValue").textContent = `${Math.round(Number($("settingBgOverlay").value) * 100)}%`;
-  $("settingTooltip").checked = data.settings.tooltipEnabled;
-  $("settingKeyboard").checked = data.settings.keyboardNav;
-  $("settingTheme").value = data.settings.theme || "system";
-  $("settingFontSize").value = data.settings.fontSize || 13;
-  $("settingToastDuration").value = Math.min(
-    60,
-    Math.max(1, Number(data.settings.toastDuration) || DEFAULT_TOAST_DURATION_SECONDS),
-  );
-  $("settingLanguage").value = currentLang();
-  $("settingSync").checked = data.settings.syncEnabled;
-  data.settings.syncTransport = "http";
-  const intervalSel = $("settingSyncInterval");
-  if (intervalSel) intervalSel.value = normalizeSyncInterval(data.settings.syncInterval);
-  const urlInput = $("settingSyncServerUrl");
-  if (urlInput) urlInput.value = data.settings.syncServerUrl || "";
-  const tokenInput = $("settingSyncServerToken");
-  if (tokenInput) tokenInput.value = data.settings.syncServerToken || "";
-  $("btnSyncTestServer")?.addEventListener("click", async () => {
-    const btn = $("btnSyncTestServer");
-    await runWithButtonState(btn, t("settings.sync.testing"), async () => {
-      const cfg = applySyncSettingsFromForm();
-      const baseUrl = cfg.url;
-      const token = cfg.token;
-      if (!baseUrl) {
-        toast(t("settings.sync.testFail", { reason: "no_url" }), "error");
-        return;
-      }
-      // 先 health（可达性 + 是否需要鉴权），再 pull state（404 表示空库也算鉴权通过）
-      const health = await httpHealth({ baseUrl, token });
-      if (!health.ok && health.reason === "network_error") {
-        toast(
-          t("settings.sync.testFail", {
-            reason: `network_error · ${health.error || "服务未启动？"}`,
-          }),
-          "error",
-        );
-        return;
-      }
-      const pull = await httpPullState({ baseUrl, token });
-      if (pull.reason === "unauthorized") {
-        const need = health?.body?.authRequired === true;
-        toast(
-          need || !token
-            ? t("settings.sync.unauthorized")
-            : t("settings.sync.testFail", { reason: "unauthorized · Token 不正确" }),
-          "error",
-        );
-        return;
-      }
-      if (pull.ok || pull.reason === "no_remote") {
-        toast(t("settings.sync.testOk"));
-        return;
-      }
-      const detail = [pull.reason, pull.error, pull.status != null ? `HTTP ${pull.status}` : ""]
-        .filter(Boolean)
-        .join(" · ");
-      toast(t("settings.sync.testFail", { reason: detail || health.reason || "error" }), "error");
-    }).catch((e) => {
-      console.warn("sync server test failed", e);
-      toast(t("settings.sync.testFail", { reason: e?.message || "error" }), "error");
-    });
-  });
-  void refreshSyncStatusLine();
-  $("btnSyncNow")?.addEventListener("click", async () => {
-    const btn = $("btnSyncNow");
-    const originalLabel = btn?.textContent || t("settings.sync.now");
-    if (btn) {
-      btn.disabled = true;
-      btn.setAttribute("aria-busy", "true");
-      btn.textContent = t("settings.sync.state.syncing");
-    }
-    toast(t("settings.sync.state.syncing"));
-    try {
-      // 立即同步前先把表单里的同步配置写入 data（避免只改了 UI 未保存）
-      const prevEnabled = !!data.settings.syncEnabled;
-      const prevUrl = data.settings.syncServerUrl || "";
-      const prevToken = data.settings.syncServerToken || "";
-      const cfg = applySyncSettingsFromForm();
-      if (!cfg.enabled) {
-        toast(t("settings.sync.state.off"), "warning");
-        void refreshSyncStatusLine();
-        return;
-      }
-      if (!cfg.url) {
-        toast(t("settings.sync.testFail", { reason: "no_url" }), "error");
-        void refreshSyncStatusLine();
-        return;
-      }
-      // 落盘配置（仅 local），再触发同步
-      await persistData();
-      // persistData 的变更防抖与下面的手动 pull + push 是同一次操作，只保留后者。
-      cancelScheduledPush();
-      // 间隔可能刚在表单里改过
-      refreshSyncInterval();
-      const serverChanged = prevUrl !== cfg.url || prevToken !== cfg.token || prevEnabled !== cfg.enabled;
-      if (serverChanged) {
-        await onSyncEnabledChanged(true);
-        const st = getSyncStatus();
-        if (String(st.lastError || "").includes("unauthorized")) toast(t("settings.sync.unauthorized"), "error");
-        else if (st.status === "error" && st.lastError)
-          toast(t("settings.sync.testFail", { reason: st.lastError }), "error");
-        else if (st.status === "quota") toast(t("settings.sync.state.quota"), "warning");
-        else toast(t("settings.sync.nowOk"));
-      } else {
-        const pull = await pullNow("manual");
-        if (pull?.reason === "doc_conflict") {
-          openSyncConflictModal();
-          void refreshSyncStatusLine();
-          return;
-        }
-        if (pull?.reason === "unauthorized") {
-          toast(t("settings.sync.unauthorized"), "error");
-          void refreshSyncStatusLine();
-          return;
-        }
-        if (pull?.reason === "network_error" || pull?.reason === "no_url") {
-          toast(
-            t("settings.sync.testFail", {
-              reason: (pull.reason || "") + (pull.error ? ` · ${pull.error}` : ""),
-            }),
-            "error",
-          );
-          void refreshSyncStatusLine();
-          return;
-        }
-        const res = await pushNow("manual");
-        if (res?.reason === "doc_conflict") {
-          openSyncConflictModal();
-        } else if (res?.reason === "sync_quota_total") toast(t("settings.sync.state.quota"), "warning");
-        else if (res?.reason === "unauthorized") {
-          toast(t("settings.sync.unauthorized"), "error");
-        } else if (res?.reason === "network_error" || res?.reason === "no_url") {
-          const r = res?.reason || "error";
-          const err = res?.error || "";
-          toast(t("settings.sync.testFail", { reason: err ? `${r} · ${err}` : r }), "error");
-        } else if (res && res.ok === false) {
-          toast(t("settings.sync.importFail", { reason: res.reason || "push" }), "error");
-        } else toast(t("settings.sync.nowOk"));
-      }
-      void refreshSyncStatusLine();
-      render();
-    } catch (e) {
-      toast(t("settings.sync.importFail", { reason: e?.message || "sync" }), "error");
-    } finally {
-      const live = $("btnSyncNow");
-      if (live) {
-        live.disabled = false;
-        live.removeAttribute("aria-busy");
-        live.textContent = originalLabel;
-      }
-    }
-  });
-  $("btnSyncExportBundle")?.addEventListener("click", async () => {
-    await runWithButtonState($("btnSyncExportBundle"), t("settings.sync.exporting"), async () => {
-      try {
-        const deviceId = await getOrCreateDeviceId();
-        const bundle = exportSyncBundle(data, {
-          deviceId,
-          docId: createDocId(),
-          platform: /firefox/i.test(navigator.userAgent)
-            ? "firefox"
-            : /safari/i.test(navigator.userAgent) && !/chrome|crios|android/i.test(navigator.userAgent)
-              ? "safari"
-              : "chrome",
-        });
-        await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
-        toast(t("settings.sync.exportOk"));
-      } catch (e) {
-        toast(t("settings.sync.importFail", { reason: e?.message || "export" }), "error");
-      }
-    });
-  });
-  $("btnSyncImportBundle")?.addEventListener("click", async () => {
-    await runWithButtonState($("btnSyncImportBundle"), t("settings.sync.importing"), async () => {
-      try {
-        const text = await navigator.clipboard.readText();
-        const bundle = JSON.parse(text);
-        const deviceId = await getOrCreateDeviceId();
-        const result = importSyncBundle(data, bundle, { deviceId });
-        if (!result.ok) {
-          toast(t("settings.sync.importFail", { reason: result.reason || "merge" }), "error");
-          return;
-        }
-        pushBackup();
-        data = result.state;
-        if (!data.settings) data.settings = {};
-        resetSettingsClockBaseline(data);
-        resetPlacementClockBaseline(data);
-        // 保持用户当前同步开关
-        await persistData();
-        render();
-        processPendingIconFetches();
-        toast(t("settings.sync.importOk"));
-        void refreshSyncStatusLine();
-      } catch (e) {
-        toast(t("settings.sync.importFail", { reason: e?.message || "parse" }), "error");
-      }
-    });
-  });
-
-  $("btnSyncResolveConflict")?.addEventListener("click", () => openSyncConflictModal());
-  $("btnSyncExportFile")?.addEventListener("click", async () => {
-    await runWithButtonState($("btnSyncExportFile"), t("settings.sync.exportingFile"), async () => {
-      try {
-        const deviceId = await getOrCreateDeviceId();
-        const st = getSyncStatus();
-        const bundle = exportSyncBundle(data, {
-          deviceId,
-          docId: st.docId || createDocId(),
-          platform: detectExtensionPlatform(),
-        });
-        const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-        downloadJsonFile(`homepage-sync-${stamp}.json`, bundle);
-        toast(t("settings.sync.exportOk"));
-      } catch (e) {
-        toast(t("settings.sync.importFail", { reason: e?.message || "export" }), "error");
-      }
-    });
-  });
-  $("btnSyncImportFile")?.addEventListener("click", () => {
-    $("syncImportFileInput")?.click();
-  });
-  $("syncImportFileInput")?.addEventListener("change", async (e) => {
-    const file = e.target?.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    await runWithButtonState($("btnSyncImportFile"), t("settings.sync.importingFile"), async () => {
-      try {
-        const text = await file.text();
-        const bundle = JSON.parse(text);
-        const deviceId = await getOrCreateDeviceId();
-        const result = importSyncBundle(data, bundle, { deviceId });
-        if (!result.ok) {
-          toast(t("settings.sync.importFail", { reason: result.reason || "merge" }), "error");
-          return;
-        }
-        pushBackup();
-        data = result.state;
-        if (!data.settings) data.settings = {};
-        resetSettingsClockBaseline(data);
-        resetPlacementClockBaseline(data);
-        await persistData();
-        render();
-        processPendingIconFetches();
-        toast(t("settings.sync.importOk"));
-        void refreshSyncStatusLine();
-      } catch (err) {
-        toast(t("settings.sync.importFail", { reason: err?.message || "parse" }), "error");
-      }
-    });
-  });
-
-  $("settingOpenMode").value = data.settings.openMode || "current";
-  $("settingBackup").value = data.settings.maxBackups;
-  const retryHour = data.settings.iconRetryHour ?? (data.settings.iconRetryAtSix ? 18 : "");
-  $("settingIconRetryHour").value = retryHour === "" ? "" : String(retryHour);
-  $("settingSidebarCollapsed").checked = data.settings.sidebarHidden;
-  $("settingSidebarCollapsed").addEventListener("change", (e) => {
-    data.settings.sidebarHidden = e.target.checked;
-    applySidebarState();
-  });
-
-  const defaultGroupId = $("settingDefaultGroupId");
-  defaultGroupId.replaceChildren();
-  const lastOpt = document.createElement("option");
-  lastOpt.value = "";
-  lastOpt.textContent = t("settings.lastAddedGroup");
-  defaultGroupId.appendChild(lastOpt);
-  getRootContainers().forEach((g) => {
-    const opt = document.createElement("option");
-    opt.value = g.id;
-    opt.textContent = isAllBookmarksGroup(g) ? g.name : g.title;
-    defaultGroupId.appendChild(opt);
-  });
-  const useFixed = data.settings.defaultGroupMode === "fixed" && data.settings.defaultGroupId;
-  defaultGroupId.value = useFixed ? data.settings.defaultGroupId : "";
-
-  $("settingSearchEnginePreset").addEventListener("change", (e) => {
-    const val = e.target.value;
-    if (val === "custom") {
-      $("settingSearchEngine").disabled = false;
-      $("settingSearchEngine").focus();
-    } else {
-      $("settingSearchEngine").value = val;
-      $("settingSearchEngine").disabled = true;
-    }
-  });
-  $("settingLanguage").addEventListener("change", async () => {
-    data.settings.language = normalizeLanguage($("settingLanguage").value) || detectPreferredLanguage();
-    applyStaticI18n();
-    render();
-    await persistData();
-    if (settingsOpen) openSettingsModal();
-  });
-
-  $("btnExport").addEventListener("click", async () => {
-    await runWithButtonState($("btnExport"), t("settings.action.exporting"), () => exportJsonToClipboard());
-  });
-  $("btnImport").addEventListener("click", () => openImportModal());
-  $("btnImportUrl").addEventListener("click", () => openImportUrlModal());
-  $("btnBackupManage").addEventListener("click", () => openBackupModal());
-  $("btnClearData").addEventListener("click", async () => {
-    if (!confirm(t("confirm.clearData"))) return;
-    await runWithButtonState($("btnClearData"), t("settings.action.clearing"), async () => {
-      const keepLanguage = currentLang();
-      // 必须在重置前记下是否开过同步，否则 defaultData 会把 syncEnabled 置 false，云端清不掉
-      const prevSync = !!data?.settings?.syncEnabled;
-      await clearData(false);
-      if (prevSync) await clearData(true);
-      data = defaultData();
-      data.settings.language = keepLanguage;
-      data.settings.syncEnabled = false;
-      activeGroupId = getRootGroup().id;
-      await persistData();
-      closeModal();
-      render();
-      toast(t("toast.cleared"));
-    });
-  });
-  $("btnClearCards").addEventListener("click", async () => {
-    if (!confirm(t("confirm.clearCards"))) return;
-    await runWithButtonState($("btnClearCards"), t("settings.action.clearing"), async () => {
-      pushBackup();
-      const preservedSettings = deepClone(data.settings || {});
-      for (const id of Object.keys(data.nodes || {})) markNodeDeleted(data, id);
-      data.nodes = {};
-      data.groups = [{ id: ALL_BOOKMARKS_GROUP_ID, name: "全部", order: -1, nodes: [], systemAllGroup: true }];
-      data.settings = preservedSettings;
-      activeGroupId = ALL_BOOKMARKS_GROUP_ID;
-      await persistData();
-      closeModal();
-      render();
-      toast(t("toast.cardsCleared"));
-    });
-  });
-  $("btnRefreshIcons").addEventListener("click", async () => {
-    const btn = $("btnRefreshIcons");
-    if (!btn || btn.disabled) return;
-    const originalLabel = t("settings.action.refreshIcons");
-    btn.disabled = true;
-    btn.setAttribute("aria-busy", "true");
-    btn.textContent = t("settings.action.refreshingIcons");
-    try {
-      await refreshAllIcons(Object.values(data.nodes || {}));
-      render();
-      toast(t("toast.iconsRefreshed"));
-    } catch (e) {
-      console.warn("refreshAllIcons failed", e);
-      toast(t("toast.iconsRefreshed"), "warning");
-    } finally {
-      // 设置面板可能仍开着；若按钮还在 DOM 上则恢复文案
-      const live = $("btnRefreshIcons");
-      if (live) {
-        live.disabled = false;
-        live.removeAttribute("aria-busy");
-        live.textContent = originalLabel;
-      }
-    }
-  });
-
-  const saveSettings = async ({ close = false, toastOnSave = false } = {}) => {
-    if (settingsSaving) {
-      settingsSaveQueued = true;
-      return;
-    }
-    // 设置表单不在 DOM（已进入导入/导出等子面板）时不要读 null
-    if (!$("settingShowSearch")) {
-      return;
-    }
-    settingsSaving = true;
-    try {
-      qsa(".group-name", elements.modal).forEach((input) => {
-        const row = input.closest("[data-group]");
-        const id = row.dataset.group;
-        const group = getRootContainerById(id);
-        if (group && !isAllBookmarksGroup(group)) {
-          const nextTitle = input.value.trim() || group.title;
-          if (nextTitle !== group.title) {
-            stampNodeFieldChanges(group, { titleChanged: true });
-            group.title = nextTitle;
-          }
-        }
-      });
-
-      data.settings.showSearch = $("settingShowSearch").checked;
-      data.settings.enableSearchEngine = true;
-      {
-        const engineInput = $("settingSearchEngine").value.trim();
-        if (engineInput) {
-          const normalizedEngine = normalizeUrl(engineInput);
-          data.settings.searchEngineUrl = normalizedEngine || data.settings.searchEngineUrl;
-        }
-      }
-      data.settings.fixedLayout = $("settingFixedLayout").checked;
-      data.settings.fixedCols = Number($("settingCols").value) || 8;
-      const selectedDensity = qsa("input[name='density']", elements.modal).find((r) => r.checked);
-      data.settings.gridDensity = selectedDensity ? selectedDensity.value : data.settings.gridDensity;
-      data.settings.backgroundType = $("settingBgType").value;
-      data.settings.backgroundColor = $("settingBgColor").value;
-      const gA = $("settingBgGradientA").value || "#1d2a3b";
-      const gB = $("settingBgGradientB").value || "#0b0f14";
-      data.settings.backgroundGradientA = gA;
-      data.settings.backgroundGradientB = gB;
-      data.settings.backgroundGradient = `linear-gradient(120deg, ${gA}, ${gB})`;
-      data.settings.backgroundOverlayStrength = Number($("settingBgOverlay").value);
-      data.settings.tooltipEnabled = $("settingTooltip").checked;
-      data.settings.keyboardNav = $("settingKeyboard").checked;
-      data.settings.fontSize = Number($("settingFontSize").value) || data.settings.fontSize;
-      data.settings.toastDuration = Math.min(
-        60,
-        Math.max(1, Math.round(Number($("settingToastDuration").value) || DEFAULT_TOAST_DURATION_SECONDS)),
-      );
-      data.settings.theme = $("settingTheme").value;
-      data.settings.language = normalizeLanguage($("settingLanguage").value) || detectPreferredLanguage();
-      const selectedDefaultGroupId = $("settingDefaultGroupId").value;
-      data.settings.defaultGroupMode = selectedDefaultGroupId ? "fixed" : "last";
-      data.settings.defaultGroupId = selectedDefaultGroupId;
-      data.settings.sidebarHidden = $("settingSidebarCollapsed").checked;
-      const prevSyncEnabled = !!data.settings.syncEnabled;
-      const prevUrl = data.settings.syncServerUrl || "";
-      const prevToken = data.settings.syncServerToken || "";
-      const prevInterval = normalizeSyncInterval(data.settings.syncInterval);
-      data.settings.syncEnabled = $("settingSync").checked;
-      data.settings.syncTransport = "http";
-      data.settings.syncInterval = normalizeSyncInterval($("settingSyncInterval")?.value);
-      data.settings.syncServerUrl = ($("settingSyncServerUrl")?.value || "").trim();
-      data.settings.syncServerToken = ($("settingSyncServerToken")?.value || "").trim();
-      const serverChanged = prevUrl !== data.settings.syncServerUrl || prevToken !== data.settings.syncServerToken;
-      const intervalChanged = prevInterval !== data.settings.syncInterval;
-      const connectionChanged =
-        prevSyncEnabled !== data.settings.syncEnabled || (data.settings.syncEnabled && serverChanged);
-      data.settings.openMode = $("settingOpenMode").value || "current";
-      const nextMaxBackups = Number($("settingBackup").value) || 0;
-      if (nextMaxBackups > 0 && data.backups.length > nextMaxBackups) {
-        data.backups = data.backups.slice(0, nextMaxBackups);
-      }
-      data.settings.maxBackups = nextMaxBackups;
-      const retryVal = $("settingIconRetryHour").value;
-      if (retryVal === "") {
-        data.settings.iconRetryHour = "";
-        data.settings.iconRetryAtSix = false;
-      } else {
-        data.settings.iconRetryHour = Number(retryVal);
-        data.settings.iconRetryAtSix = Number(retryVal) === 18;
-      }
-
-      const bgFile = $("settingBgFile").files?.[0];
-      if (bgFile) {
-        data.settings.backgroundCustom = await readFileAsDataUrl(bgFile);
-      }
-
-      applyDensity();
-      applyTheme();
-      applyStaticI18n();
-      await persistData();
-      if (connectionChanged) {
-        // persistData 会为本地写入安排防抖 push；首次同步已自行 pull + push，避免重复写远端。
-        cancelScheduledPush();
-        await onSyncEnabledChanged(data.settings.syncEnabled);
-      } else if (data.settings.syncEnabled && intervalChanged) {
-        refreshSyncInterval();
-      }
-      if (intervalChanged || connectionChanged) void refreshSyncStatusLine();
-      render();
-      loadBackground();
-      if (toastOnSave) toast(t("settings.saved"));
-      if (close) closeModal();
-    } finally {
-      settingsSaving = false;
-    }
-    if (settingsSaveQueued) {
-      settingsSaveQueued = false;
-      void saveSettings({ close: false, toastOnSave: false });
-      return;
-    }
-  };
-  _settingsSaveNow = saveSettings;
-
-  const scheduleSettingsSave = (immediate = false) => {
-    if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
-    if (immediate) {
-      saveSettings({ close: false, toastOnSave: false });
-      return;
-    }
-    const delay = immediate ? 0 : SETTINGS_SAVE_DELAY_MS;
-    settingsSaveTimer = setTimeout(() => {
-      settingsSaveTimer = null;
-      saveSettings({ close: false, toastOnSave: false });
-    }, delay);
-  };
-
-  const updateBgControls = (triggerSave = true) => {
-    const type = $("settingBgType").value;
-    $("bgColorWrap").classList.toggle("hidden", type !== "color");
-    $("bgGradientWrap").classList.toggle("hidden", type !== "gradient");
-    const bgFile = $("settingBgFile");
-    bgFile.classList.toggle("hidden", type !== "custom");
-    bgFile.disabled = type !== "custom";
-    if (triggerSave) scheduleSettingsSave(true);
-  };
-  $("settingBgType").addEventListener("change", () => updateBgControls(true));
-  updateBgControls(false);
-
-  qsa("input, select, textarea", elements.modal).forEach((el) => {
-    const type = el.getAttribute("type") || "";
-    const eventName = type === "checkbox" || el.tagName === "SELECT" ? "change" : "input";
-    el.addEventListener(eventName, () => scheduleSettingsSave(false));
-  });
-  $("settingBgFile").addEventListener("change", () => scheduleSettingsSave(true));
-  $("settingBgOverlay").addEventListener("input", () => {
-    $("settingBgOverlayValue").textContent = `${Math.round(Number($("settingBgOverlay").value) * 100)}%`;
-  });
-  const version = getAppVersion();
-  $("settingsVersion").textContent = version || "";
-}
-
-async function exportJsonToClipboard() {
-  try {
-    const payload = JSON.stringify(data, null, 2);
-    await navigator.clipboard.writeText(payload);
-    toast("设置、卡片、分组数据都已复制到剪切板", "success");
-  } catch (err) {
-    toast(`导出设置失败：${err.message || "无法写入剪切板"}`, "error");
-    openManualExportModal();
-  }
-}
-
-function openManualExportModal() {
-  void leaveSettingsForSubpanel();
-  const payload = JSON.stringify(data, null, 2);
-  const modalHtml = html`
-    <h2>导出设置</h2>
-    <div class="section">
-      <textarea readonly>${payload}</textarea>
-    </div>
-    <div class="actions">
-      <button id="btnCopy" class="icon-btn">复制</button>
-      <button id="btnClose" class="icon-btn">关闭</button>
-    </div>
-  `;
-  openModal(modalHtml);
-  $("btnCopy").addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(payload);
-      toast("已复制到剪切板", "success");
-    } catch (err) {
-      toast(`复制失败：${err.message || "无法写入剪切板"}`, "error");
-    }
-  });
-  $("btnClose").addEventListener("click", closeModal);
-}
-
-async function openImportModal() {
-  await leaveSettingsForSubpanel();
-
-  const modalHtml = html`
-    <h2>导入设置</h2>
-    <div class="section">
-      <label>导入策略</label>
-      <select id="importMode">
-        <option value="replace">覆盖所有</option>
-        <option value="merge">合并现有</option>
-        <option value="add">仅新增不覆盖</option>
-      </select>
-    </div>
-    <div class="section">
-      <textarea id="importText" placeholder="正在读取剪切板内设置，如果没导出设置你得先从你其它浏览器导出设置才能导入设置..."></textarea>
-    </div>
-    <div class="actions">
-      <button id="btnCancel" class="icon-btn">取消</button>
-      <button id="btnImportNow" class="icon-btn">导入</button>
-    </div>
-  `;
-  openModal(modalHtml);
-  $("btnCancel").addEventListener("click", closeModal);
-  $("btnImportNow").addEventListener("click", async () => {
-    try {
-      const incoming = JSON.parse($("importText").value.trim());
-      const mode = $("importMode").value;
-      if (!incoming || typeof incoming !== "object") throw new Error("数据格式不合法");
-      // 运行时 schema 校验：修复非法字段、清理悬空引用、合并默认 settings
-      const repairedIncoming = repairHomepageData(incoming, defaultSettings());
-      if (!repairedIncoming.schemaVersion) throw new Error("无 schemaVersion");
-      pushBackup();
-      if (mode === "replace") {
-        data = repairedIncoming;
-        resetSettingsClockBaseline(data);
-        resetPlacementClockBaseline(data);
-      } else if (mode === "merge") {
-        const deviceId = await getOrCreateDeviceId();
-        const incomingDoc = toSyncDocument(repairedIncoming, {
-          deviceId: `import_${deviceId}`,
-          docId: repairedIncoming?._syncMeta?.docId || createDocId(),
-          revision: Number(repairedIncoming?._syncMeta?.revision || 1),
-          writtenAt: Number(repairedIncoming.lastUpdated || Date.now()),
-        });
-        const merged = mergeHomepage(data, incomingDoc, { deviceId, now: Date.now() });
-        if (!merged.ok) throw new Error(merged.reason || "合并失败");
-        data = merged.state;
-        resetSettingsClockBaseline(data);
-        resetPlacementClockBaseline(data);
-      } else if (mode === "add") {
-        mergeRootBookmarkData(data, repairedIncoming);
-      }
-      // 导入完成后对所有节点 URL 做协议白名单校验，丢弃危险协议
-      if (data?.nodes) {
-        for (const id of Object.keys(data.nodes)) {
-          const node = data.nodes[id];
-          if (!node || node.type === "folder") continue;
-          const safe = normalizeUrl(node.url);
-          if (!safe) {
-            markNodeDeleted(data, id);
-            for (const g of data.groups || []) {
-              if (Array.isArray(g.nodes)) g.nodes = g.nodes.filter((nid) => nid !== id);
-            }
-          } else {
-            if (node.url !== safe) stampNodeFieldChanges(node, { urlChanged: true });
-            node.url = safe;
-          }
-        }
-      }
-      await persistData();
-      closeModal();
-      render();
-      processPendingIconFetches();
-      toast("导入设置成功", "success");
-    } catch (err) {
-      toast(`导入设置失败，你检查一下你的设置对了嘛，先去你其它浏览器导出设置才能导入设置：${err.message}`, "error");
-    }
-  });
-
-  try {
-    const text = await navigator.clipboard.readText();
-    if (text) {
-      $("importText").value = text;
-      toast("已从剪切板读取", "success");
-    } else {
-      toast("剪切板为空", "warning");
-    }
-  } catch (err) {
-    toast(`读取剪切板失败：${err.message || "权限受限"}`, "error");
-  }
-}
-
-function openImportUrlModal() {
-  void leaveSettingsForSubpanel();
-
-  if (!getRootGroup()) {
-    toast(t("group.noneAvailable"), "warning");
-    return;
-  }
-  const options = rawHtml(
-    getRootContainers()
-      .map((g) => html`<option value="${g.id}">${isAllBookmarksGroup(g) ? g.name : g.title}</option>`)
-      .join(""),
-  );
-  const modalHtml = html`
-    <h2>导入网址</h2>
-    <div class="section">
-      <label>选择分组</label>
-      <select id="importUrlGroup">${options}</select>
-    </div>
-    <div class="section">
-      <div class="row-inline">
-        <button id="btnImportUrlHttp" class="icon-btn">导入为HTTP</button>
-        <button id="btnImportUrlHttps" class="icon-btn">导入为HTTPS</button>
-        <button id="btnImportUrlCancel" class="icon-btn">取消</button>
-      </div>
-    </div>
-    <div class="section">
-      <textarea id="importUrlText" placeholder="每行一个网址"></textarea>
-    </div>
-  `;
-  openModal(modalHtml);
-  const groupSelect = $("importUrlGroup");
-  const defaultGroupId = activeGroupId && activeGroupId !== RECENT_GROUP_ID ? activeGroupId : getRootGroup().id;
-  groupSelect.value = defaultGroupId;
-
-  const closeWithCleanup = () => {
-    elements.modalOverlay.removeEventListener("click", onOverlayClick);
-    closeModal();
-  };
-  const onOverlayClick = (e) => {
-    if (e.target === elements.modalOverlay) closeWithCleanup();
-  };
-  elements.modalOverlay.addEventListener("click", onOverlayClick);
-
-  const importWithScheme = async (scheme) => {
-    const groupId = groupSelect.value;
-    const group = getRootContainerById(groupId);
-    if (!group) {
-      toast(t("group.notFound"), "error");
-      return;
-    }
-    const rawText = $("importUrlText").value || "";
-    const lines = rawText.split(/\r?\n/);
-    const urls = [];
-    let invalid = 0;
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const token = trimmed.split(/\s+/)[0];
-      const normalized = normalizeUrlWithScheme(token, scheme);
-      if (!normalized) {
-        invalid += 1;
-        continue;
-      }
-      urls.push(normalized);
-    }
-    if (!urls.length) {
-      toast(t("import.noUrls"), "warning");
-      return;
-    }
-    const targetList = getPlacementList(group);
-    pushBackup();
-    for (const url of urls) {
-      let title = "";
-      try {
-        title = new URL(url).hostname;
-      } catch (_e) {
-        title = "";
-      }
-      const node = createItemNode({ url, title, iconType: "auto", iconPending: true });
-      data.nodes[node.id] = node;
-      targetList.push(node.id);
-    }
-    setPlacementList(group, targetList);
-    touchPlacementContainer(group);
-    data.settings.lastActiveGroupId = group.id;
-    await persistData();
-    closeWithCleanup();
-    render();
-    processPendingIconFetches();
-    toast(
-      invalid ? `已导入 ${urls.length} 条，忽略 ${invalid} 条` : `已导入 ${urls.length} 条`,
-      invalid ? "warning" : "success",
-    );
-  };
-
-  $("btnImportUrlCancel").addEventListener("click", closeWithCleanup);
-  $("btnImportUrlHttp").addEventListener("click", () => importWithScheme("http"));
-  $("btnImportUrlHttps").addEventListener("click", () => importWithScheme("https"));
-}
-
-function openBackupModal() {
-  void leaveSettingsForSubpanel();
-  const list = rawHtml(
-    data.backups
-      .map(
-        (b) =>
-          html`<div class="row" data-backup="${b.id}"><div>${new Date(b.ts).toLocaleString()}</div><div class="row-actions"><button class="icon-btn backup-restore">恢复</button><button class="icon-btn backup-delete">删除</button></div></div>`,
-      )
-      .join(""),
-  );
-  const modalHtml = html`
-    <h2>备份管理</h2>
-    <div class="section">${list || "暂无备份"}</div>
-    <div class="actions"><button id="btnClose" class="icon-btn">关闭</button></div>
-  `;
-  openModal(modalHtml);
-  qsa(".backup-restore", elements.modal).forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const row = btn.closest("[data-backup]");
-      const backup = data.backups.find((b) => b.id === row.dataset.backup);
-      if (!backup) return;
-      const backupsBeforeRestore = Array.isArray(data.backups) ? cloneDataSnapshot(data.backups) : [];
-      // 恢复前先做运行时 schema 校验，避免损坏的备份快照原样进入运行态
-      const restoredData = repairHomepageData(cloneDataSnapshot(backup.data), defaultSettings());
-      restoredData.backups = backupsBeforeRestore;
-      // 恢复后对所有节点 URL 做协议白名单校验，丢弃危险协议
-      if (restoredData?.nodes) {
-        for (const id of Object.keys(restoredData.nodes)) {
-          const node = restoredData.nodes[id];
-          if (!node || node.type === "folder") continue;
-          const safe = normalizeUrl(node.url);
-          if (!safe) {
-            markNodeDeleted(restoredData, id);
-            for (const g of restoredData.groups || []) {
-              if (Array.isArray(g.nodes)) g.nodes = g.nodes.filter((nid) => nid !== id);
-            }
-          } else {
-            if (node.url !== safe) stampNodeFieldChanges(node, { urlChanged: true });
-            node.url = safe;
-          }
-        }
-      }
-      data = restoredData;
-      skipAutoBackupOnce = true;
-      queuePersist();
-      closeModal();
-      render();
-      toast("已恢复备份", "success");
-    });
-  });
-  qsa(".backup-delete", elements.modal).forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const row = btn.closest("[data-backup]");
-      if (!row) return;
-      const id = row.dataset.backup;
-      if (!id) return;
-      data.backups = (data.backups || []).filter((b) => b.id !== id);
-      queuePersist();
-      openBackupModal();
-      toast("已删除备份", "success");
-    });
-  });
-  $("btnClose").addEventListener("click", closeModal);
 }
 
 function readFileAsDataUrl(file) {
@@ -4229,6 +3054,131 @@ function getDropIndex(grid, x, y) {
 
 async function init() {
   debugLog("init_start", getRuntimeInfo());
+  // 设置面板控制器：注入数据访问、共享状态与 UI/业务依赖。
+  // 使用 getter 读取 data，保证控制器始终看到最新的主页数据。
+  settingsCtl = createSettingsController({
+    getData: () => data,
+    setData: (next) => {
+      data = next;
+    },
+    getActiveGroupId: () => activeGroupId,
+    setActiveGroupId: (id) => {
+      activeGroupId = id;
+    },
+    state: {
+      get settingsOpen() {
+        return settingsOpen;
+      },
+      set settingsOpen(value) {
+        settingsOpen = value;
+      },
+      get settingsSaving() {
+        return settingsSaving;
+      },
+      set settingsSaving(value) {
+        settingsSaving = value;
+      },
+      get settingsSaveTimer() {
+        return settingsSaveTimer;
+      },
+      set settingsSaveTimer(value) {
+        settingsSaveTimer = value;
+      },
+      get settingsSaveQueued() {
+        return settingsSaveQueued;
+      },
+      set settingsSaveQueued(value) {
+        settingsSaveQueued = value;
+      },
+      settingsSaveNow: null,
+    },
+    consumeSkipAutoBackup: () => {
+      const value = skipAutoBackupOnce;
+      skipAutoBackupOnce = false;
+      return value;
+    },
+    ui: {
+      $,
+      qsa,
+      html,
+      rawHtml,
+      escapeHtml,
+      t,
+      currentLang,
+      toast,
+      elements,
+      openModal,
+      closeModal,
+      runWithButtonState,
+      render,
+      persistData,
+      queuePersist,
+      pushBackup,
+      processPendingIconFetches,
+      loadBackground,
+      applyDensity,
+      applyTheme,
+      applyStaticI18n,
+      applySidebarState,
+      buildLanguageOptions,
+      leaveSettingsForSubpanel,
+      readFileAsDataUrl,
+      getAppVersion,
+      detectExtensionPlatform,
+      detectPreferredLanguage,
+    },
+    deps: {
+      normalizeUrl,
+      normalizeUrlWithScheme,
+      normalizeLanguage,
+      normalizeSyncInterval,
+      clearData,
+      defaultData,
+      defaultSettings,
+      deepClone,
+      cloneDataSnapshot,
+      repairHomepageData,
+      markNodeDeleted,
+      mergeRootBookmarkData,
+      mergeHomepage,
+      toSyncDocument,
+      createItemNode,
+      stampNodeFieldChanges,
+      resetSettingsClockBaseline,
+      resetPlacementClockBaseline,
+      getRootGroup,
+      getRootContainers,
+      getRootContainerById,
+      getPlacementList,
+      setPlacementList,
+      touchPlacementContainer,
+      isAllBookmarksGroup,
+      refreshAllIcons,
+      syncBytesBudgetLevel,
+      estimateSyncProjectionBytes,
+      createDocId,
+      getOrCreateDeviceId,
+      getSyncStatus,
+      getPendingConflict,
+      reloadSyncState,
+      resolveDocConflict,
+      pullNow,
+      pushNow,
+      onSyncEnabledChanged,
+      refreshSyncInterval,
+      cancelScheduledPush,
+      exportSyncBundle,
+      importSyncBundle,
+      httpHealth,
+      httpPullState,
+      ALL_BOOKMARKS_GROUP_ID,
+      RECENT_GROUP_ID,
+      SYNC_INTERVAL_OPTIONS,
+      DEFAULT_TOAST_DURATION_SECONDS,
+      SETTINGS_SAVE_DELAY_MS,
+    },
+  });
+
   initSyncEngine({
     getData: () => data,
     setData: (next) => {
@@ -4474,7 +3424,7 @@ function bindEvents() {
       closeModal();
       return;
     }
-    openSettingsModal();
+    settingsCtl.openSettingsModal();
   });
   elements.btnSearch.addEventListener("click", () => {
     const query = elements.topSearch.value.trim();

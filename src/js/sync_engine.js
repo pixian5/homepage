@@ -92,6 +92,7 @@ let _status = {
   lastError: "",
   lastRemoteRevision: 0,
   lastRemoteEtag: "",
+  lastRemoteEpoch: 0,
   bytesEstimate: 0,
   transport: "http",
 };
@@ -227,7 +228,9 @@ export async function readRemoteSyncDocument() {
     return { ok: false, reason: res.reason || "http_error", error: res.error, status: res.status };
   }
   _status.lastRemoteEtag = res.etag || "";
-  return { ok: true, doc: res.doc, etag: res.etag, revision: res.revision };
+  // epoch 由服务端在回收墓碑时递增；客户端只跟随，不自增
+  if (Number.isSafeInteger(res.epoch)) _status.lastRemoteEpoch = res.epoch;
+  return { ok: true, doc: res.doc, etag: res.etag, revision: res.revision, epoch: res.epoch };
 }
 
 /**
@@ -238,6 +241,8 @@ async function writeRemoteSyncDocument(doc) {
   if (!transport.baseUrl) return "no_url";
   const res = await httpPushState({ baseUrl: transport.baseUrl, token: transport.token }, doc, {
     ifMatch: _status.lastRemoteEtag || undefined,
+    // 告诉服务端本机所处的压缩代际；落后时服务端会以 409 stale_epoch 拒绝
+    epoch: _status.lastRemoteEpoch || 0,
     idempotencyKey: `${doc.docId || "doc"}:${doc.revision || 0}:${Date.now()}`,
   });
   if (res.ok) {
@@ -254,6 +259,10 @@ async function writeRemoteSyncDocument(doc) {
   }
   if (res.reason === "unauthorized") return "unauthorized";
   if (res.reason === "network_error") return res.error || "network_error";
+  if (res.reason === "stale_epoch" || res.status === 409) {
+    // 服务端已压缩墓碑并进入新一代：本机必须重新取基线，不能继续推送旧整包
+    return { code: "stale_epoch", epoch: res.epoch };
+  }
   return res.error || res.reason || "http_error";
 }
 
@@ -473,6 +482,18 @@ async function pushNowImpl(reason = "manual") {
       _status.lastError = "unauthorized";
       await saveState();
       return { ok: false, reason: "unauthorized" };
+    }
+    if (lastErr === "stale_epoch") {
+      // 服务端已完成墓碑回收并进入新一代：本机先拉取新基线，本轮推送作废。
+      // 不进入 outbox 重试，避免把旧整包反复推给新代际。
+      const epoch = writeErr?.epoch;
+      if (Number.isSafeInteger(epoch)) _status.lastRemoteEpoch = epoch;
+      _status.status = "error";
+      _status.lastError = "stale_epoch";
+      await saveState();
+      const refreshed = await readRemoteSyncDocument();
+      if (refreshed.ok) await applyRemoteDoc(refreshed.doc, deviceId, "push_stale_epoch");
+      return { ok: false, reason: "stale_epoch" };
     }
     const again = await readRemoteSyncDocument();
     if (again.ok) {

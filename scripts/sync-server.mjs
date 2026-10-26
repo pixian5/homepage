@@ -51,6 +51,7 @@ const MAX_DEVICES = 200;
  *   epoch: number,
  *   devices: Record<string, {deviceId: string, firstSeenAt: number, lastSeenAt: number,
  *     lastConfirmedRevision: number, lastConfirmedEpoch: number, protocol: number}>,
+ *   deletions: Record<string, number>,
  * } | null}
  */
 let state = null;
@@ -119,9 +120,10 @@ async function loadFromDisk() {
         etag: etagOf(parsed.doc, revision),
         doc: parsed.doc,
         updatedAt: parsed.updatedAt,
-        // 旧状态文件没有 epoch/devices：按 0 / 空表补齐，迁移是只读的，不改盘
+        // 旧状态文件没有 epoch/devices/deletions：按 0 / 空表补齐，迁移是只读的，不改盘
         epoch: Number.isSafeInteger(parsed.epoch) ? Math.max(0, parsed.epoch) : 0,
         devices: normalizeDevices(parsed.devices),
+        deletions: normalizeDeletions(parsed.deletions),
       };
       console.log(`[sync-server] loaded ${DATA_FILE} revision=${state.revision}`);
       return;
@@ -145,6 +147,7 @@ async function saveToDisk(snapshot = state) {
       updatedAt: snapshot.updatedAt,
       epoch: snapshot.epoch || 0,
       devices: snapshot.devices || {},
+      deletions: snapshot.deletions || {},
       doc: snapshot.doc,
     },
     null,
@@ -278,6 +281,61 @@ function normalizeDevices(input) {
     .slice(0, MAX_DEVICES);
   for (const [id, value] of entries) out[id] = value;
   return out;
+}
+
+/**
+ * 规范化删除版本索引：只保留「ID -> 正整数 revision」。
+ * 客户端传来的删除时间戳不可信，删除版本一律由服务端在提交时写入。
+ */
+function normalizeDeletions(input) {
+  const out = {};
+  if (!isRecord(input)) return out;
+  for (const [id, value] of Object.entries(input)) {
+    if (typeof id !== "string" || !id) continue;
+    if (!Number.isSafeInteger(value) || value <= 0) continue;
+    out[id] = value;
+  }
+  return out;
+}
+
+/**
+ * 计算本次提交新增的删除版本。
+ * 节点/分组在本次文档里带 deletedAt/purgedAt，且 revisions 里还没有记录时，
+ * 记为当前提交的 revision。
+ */
+function collectNewDeletions(doc, revision, previous = {}) {
+  const next = { ...normalizeDeletions(previous) };
+  const mark = (id, entity) => {
+    if (!entity || typeof id !== "string" || !id) return;
+    const deleted = Number(entity.deletedAt || entity.purgedAt || 0) > 0;
+    if (!deleted) return;
+    if (!next[id]) next[id] = revision;
+  };
+  for (const node of doc.nodes || []) mark(node.id, node);
+  for (const group of doc.groups || []) mark(group.id, group);
+  return next;
+}
+
+/**
+ * 计算「所有有效设备都已确认」的墓碑候选集。
+ * 第一阶段只输出诊断信息，不删除任何数据；真正回收需要递增 epoch 并原子落盘。
+ *
+ * 判定：某条墓碑的删除 revision 必须小于等于每台设备的 lastConfirmedRevision，
+ * 且设备确认的 epoch 与当前 epoch 一致（旧代际的确认不算数）。
+ */
+function computeReclaimCandidates(snapshot) {
+  if (!snapshot) return [];
+  const epoch = snapshot.epoch || 0;
+  const devices = Object.values(snapshot.devices || {});
+  if (!devices.length) return [];
+  const active = devices.filter((d) => (d.lastConfirmedEpoch ?? epoch) >= epoch);
+  if (!active.length) return [];
+  const minConfirmed = Math.min(...active.map((d) => Number(d.lastConfirmedRevision) || 0));
+  const out = [];
+  for (const [id, deletedAtRevision] of Object.entries(snapshot.deletions || {})) {
+    if (Number(deletedAtRevision) <= minConfirmed) out.push(id);
+  }
+  return out.sort();
 }
 
 /**
@@ -441,7 +499,99 @@ const server = createServer(async (req, res) => {
       revision: state.revision,
       epoch: state.epoch || 0,
       devices: Object.values(state.devices || {}),
+      deletions: state.deletions || {},
+      // 只读诊断：哪些墓碑已经可以被回收（本阶段不执行回收）
+      reclaimCandidates: computeReclaimCandidates(state),
     });
+    return;
+  }
+
+  // 墓碑回收：默认只做演练（dryRun），真正执行需要显式 {"dryRun": false}。
+  // 执行时递增 epoch，并原子落盘文档 + 设备表 + 删除索引。
+  if (url.pathname === "/v1/sync/reclaim" && method === "POST") {
+    let raw;
+    try {
+      raw = await readBody(req, 64 * 1024);
+    } catch (e) {
+      json(res, e.message === "body_too_large" ? 413 : 400, { error: e.message || "bad_body" });
+      return;
+    }
+    let body = {};
+    if (raw.trim()) {
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        json(res, 400, { error: "invalid_json" });
+        return;
+      }
+    }
+    const dryRun = body?.dryRun !== false;
+    const result = await enqueueWrite(async () => {
+      if (!state) return { status: 409, body: { error: "no_state" }, headers: {} };
+      const candidates = computeReclaimCandidates(state);
+      if (dryRun) {
+        return {
+          status: 200,
+          body: { ok: true, dryRun: true, candidates, epoch: state.epoch || 0, revision: state.revision },
+          headers: {},
+        };
+      }
+      if (!candidates.length) {
+        return {
+          status: 200,
+          body: { ok: true, dryRun: false, reclaimed: [], epoch: state.epoch || 0, revision: state.revision },
+          headers: {},
+        };
+      }
+      const remove = new Set(candidates);
+      const nextDoc = {
+        ...state.doc,
+        nodes: (state.doc.nodes || []).filter((node) => !remove.has(node.id)),
+        groups: (state.doc.groups || []).filter((group) => !remove.has(group.id)),
+        placements: (state.doc.placements || []).filter(
+          (p) => !remove.has(p.nodeId) && !(p.parentKind === "folder" && remove.has(p.parentId)),
+        ),
+      };
+      const nextRevision = state.revision + 1;
+      const nextEpoch = (state.epoch || 0) + 1;
+      nextDoc.revision = nextRevision;
+      nextDoc.contentHash = hashSyncDocument(nextDoc);
+      const nextDeletions = { ...state.deletions };
+      for (const id of remove) delete nextDeletions[id];
+      // 回收后所有设备必须重新确认新一代基线
+      const nextDevices = {};
+      for (const [id, device] of Object.entries(state.devices || {})) {
+        nextDevices[id] = { ...device, lastConfirmedEpoch: 0, lastConfirmedRevision: 0, lastSeenAt: device.lastSeenAt };
+      }
+      const nextState = {
+        revision: nextRevision,
+        etag: etagOf(nextDoc, nextRevision),
+        doc: nextDoc,
+        updatedAt: Date.now(),
+        epoch: nextEpoch,
+        devices: nextDevices,
+        deletions: nextDeletions,
+      };
+      try {
+        await saveToDisk(nextState);
+      } catch (e) {
+        console.error("[sync-server] reclaim save failed", e);
+        return { status: 500, body: { error: "save_failed" }, headers: {} };
+      }
+      state = nextState;
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          dryRun: false,
+          reclaimed: candidates,
+          epoch: nextEpoch,
+          revision: nextRevision,
+        },
+        headers: { "X-Sync-Epoch": String(nextEpoch) },
+      };
+    });
+    json(res, result.status, result.body, result.headers || {});
     return;
   }
 
@@ -462,6 +612,7 @@ const server = createServer(async (req, res) => {
       {
         ETag: state.etag,
         "X-Sync-Revision": String(state.revision),
+        "X-Sync-Epoch": String(state.epoch || 0),
       },
     );
     return;
@@ -502,6 +653,20 @@ const server = createServer(async (req, res) => {
         return { status: 400, body: { error: validationError }, headers: {} };
       }
 
+      // 压缩代际栅栏：客户端若显式声明 epoch 且落后，拒绝旧整包回推。
+      // 未声明 epoch 的旧客户端在第一阶段放行（继续永久保留墓碑）。
+      const clientEpoch = req.headers["x-sync-epoch"];
+      if (clientEpoch !== undefined && clientEpoch !== "") {
+        const parsed = Number(clientEpoch);
+        if (Number.isSafeInteger(parsed) && parsed < (state?.epoch || 0)) {
+          return {
+            status: 409,
+            body: { error: "stale_epoch", epoch: state.epoch, revision: state.revision },
+            headers: { "X-Sync-Epoch": String(state.epoch) },
+          };
+        }
+      }
+
       const ifMatch = String(req.headers["if-match"] || "").trim();
       if (state && ifMatch && ifMatch !== state.etag && ifMatch !== "*") {
         return {
@@ -535,6 +700,8 @@ const server = createServer(async (req, res) => {
           now,
           confirmedRevision: nextRevision,
         }),
+        // 删除版本由服务端写入，客户端不可伪造
+        deletions: collectNewDeletions(nextDoc, nextRevision, state?.deletions),
       };
       try {
         await saveToDisk(nextState);

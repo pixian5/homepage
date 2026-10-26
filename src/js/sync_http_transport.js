@@ -61,7 +61,8 @@ export async function httpPullState(cfg) {
     }
     const etag = res.headers.get("ETag") || body.etag || "";
     const revision = Number(body.revision || doc.revision) || 0;
-    return { ok: true, doc, revision, etag };
+    const epoch = Number(res.headers.get("X-Sync-Epoch") || body.epoch);
+    return { ok: true, doc, revision, etag, epoch: Number.isSafeInteger(epoch) ? epoch : undefined };
   } catch (e) {
     const detail = e?.name === "AbortError" ? "请求超时（10 秒）" : e?.message || String(e);
     return { ok: false, reason: "network_error", error: `${detail} · ${url}` };
@@ -85,6 +86,9 @@ export async function httpPushState(cfg, doc, opts = {}) {
     };
     if (opts.ifMatch) headers["If-Match"] = opts.ifMatch;
     if (opts.idempotencyKey) headers["Idempotency-Key"] = opts.idempotencyKey;
+    // 压缩代际：服务端回收墓碑后递增，旧代际写入会被拒绝（409 stale_epoch）
+    // epoch 0 也要发：服务端回收过墓碑时，代际 0 的写入必须被识别为过期
+    if (Number.isSafeInteger(opts.epoch)) headers["X-Sync-Epoch"] = String(opts.epoch);
 
     const res = await syncHttpFetchWithTimeout(url, {
       method: "PUT",
@@ -109,15 +113,28 @@ export async function httpPushState(cfg, doc, opts = {}) {
       };
     }
     if (res.status === 401) return { ok: false, reason: "unauthorized", status: 401 };
+    if (res.status === 409) {
+      const body = await res.json().catch(() => ({}));
+      const serverEpoch = Number(res.headers.get("X-Sync-Epoch") || body.epoch);
+      return {
+        ok: false,
+        reason: body.error === "stale_epoch" ? "stale_epoch" : "conflict",
+        status: 409,
+        epoch: Number.isSafeInteger(serverEpoch) ? serverEpoch : undefined,
+        error: body.error || "conflict",
+      };
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       return { ok: false, reason: "http_error", status: res.status, error: text.slice(0, 200) };
     }
     const body = await res.json().catch(() => ({}));
+    const epoch = Number(res.headers.get("X-Sync-Epoch") || body.epoch);
     return {
       ok: true,
       revision: Number(body.revision || doc.revision) || 0,
       etag: res.headers.get("ETag") || body.etag || "",
+      epoch: Number.isSafeInteger(epoch) ? epoch : undefined,
     };
   } catch (e) {
     const detail = e?.name === "AbortError" ? "请求超时（10 秒）" : e?.message || String(e);

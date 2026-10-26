@@ -413,3 +413,232 @@ describe("sync_engine conflict persistence", () => {
     }
   });
 });
+
+describe("sync_engine remote conflict branch", () => {
+  // 回归：remote 分支若拿到 loadState 恢复的占位对象（只有 docId），
+  // 曾会用空文档覆盖本地；必须重新拉取完整远端文档。
+  it("replaces local with the real remote document after a fresh page load", async () => {
+    const port = 27000 + (process.pid % 2000);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const token = "sync-engine-remote-branch-token";
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-remote-branch."));
+    const child = spawn(process.execPath, [path.join(root, "scripts", "sync-server.mjs")], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HOST: "127.0.0.1",
+        TOKEN: token,
+        DATA_FILE: path.join(tempDir, "state.json"),
+      },
+      stdio: "ignore",
+    });
+    const store = {};
+    globalThis.chrome = {
+      runtime: { lastError: null },
+      storage: {
+        local: {
+          get(keys, callback) {
+            const result = {};
+            for (const key of Array.isArray(keys) ? keys : [keys]) {
+              if (key in store) result[key] = structuredClone(store[key]);
+            }
+            callback(result);
+          },
+          set(obj, callback) {
+            for (const [key, value] of Object.entries(obj)) store[key] = structuredClone(value);
+            if (callback) callback();
+          },
+        },
+        sync: {
+          get(_k, cb) {
+            if (cb) cb({});
+          },
+          set(_o, cb) {
+            if (cb) cb();
+          },
+        },
+      },
+    };
+    try {
+      await waitForHealth(baseUrl, token);
+      const engine = await import(`../src/js/sync_engine.js?remoteBranch=${Date.now()}`);
+      let data = baseData(baseUrl, token);
+      _setDeviceIdForTests("dev_remote_local");
+      engine.initSyncEngine({
+        getData: () => data,
+        setData: (n) => {
+          data = n;
+        },
+        saveLocal: async () => null,
+      });
+      assert.equal((await engine.pushNow("initial")).ok, true);
+
+      // 云端换成另一个 docId，并只保留“云端书签”
+      const remote = await httpPullState({ baseUrl, token });
+      const cloud = structuredClone(remote.doc);
+      cloud.docId = "doc_cloud_replace_test";
+      cloud.deviceId = "cloud_device";
+      // 服务端要求 nodes 是数组；客户端投影才会转成对象
+      cloud.nodes = [
+        {
+          id: "cloud_only",
+          type: "item",
+          title: "仅云端书签",
+          url: "https://example.invalid/cloud-only",
+          iconType: "auto",
+          updatedAt: Date.now(),
+          updatedBy: "cloud_device",
+        },
+      ];
+      cloud.groups = [{ id: "grp_all", name: "全部", order: -1, updatedAt: Date.now(), updatedBy: "cloud_device" }];
+      cloud.placements = [
+        {
+          nodeId: "cloud_only",
+          parentKind: "group",
+          parentId: "grp_all",
+          index: 0,
+          updatedAt: Date.now(),
+          updatedBy: "cloud_device",
+        },
+      ];
+      cloud.revision = remote.revision + 1;
+      cloud.writtenAt = Date.now();
+      cloud.contentHash = hashSyncDocument(cloud);
+      const cloudPush = await httpPushState({ baseUrl, token }, cloud, { ifMatch: remote.etag });
+      assert.equal(cloudPush.ok, true, `cloud push failed: ${cloudPush.reason} ${cloudPush.error || ""}`);
+
+      const conflict = await engine.pullNow("detect");
+      assert.equal(conflict.reason, "doc_conflict");
+
+      // 新页面：只靠存储恢复（占位对象）
+      const reloaded = await import(`../src/js/sync_engine.js?remoteReload=${Date.now()}`);
+      reloaded.initSyncEngine({
+        getData: () => data,
+        setData: (n) => {
+          data = n;
+        },
+        saveLocal: async () => null,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const resolved = await reloaded.resolveDocConflict("remote");
+      assert.equal(resolved.ok, true, `remote resolve failed: ${resolved.reason}`);
+      assert.equal(resolved.choice, "remote");
+      // 本地应被云端内容替换，而不是被空文档清空
+      assert.ok(data.nodes.cloud_only, "云端节点应出现在本地");
+      assert.equal(
+        Object.values(data.nodes).some((n) => n.title === "Initial"),
+        false,
+        "旧本地书签应被替换",
+      );
+      assert.equal(reloaded.getSyncStatus().lastError, "");
+    } finally {
+      delete globalThis.chrome;
+      _setDeviceIdForTests("");
+      await stopServer(child);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("sync_engine multi-tab conflict isolation", () => {
+  // 回归：两个标签页各有独立引擎实例。一处解决冲突后，另一处若继续用旧 docId
+  // 会重新判定冲突并把 need_setup 写回存储。
+  it("does not resurrect a resolved conflict from a stale tab", async () => {
+    const port = 28000 + (process.pid % 2000);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const token = "sync-engine-multitab-token";
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-multitab."));
+    const child = spawn(process.execPath, [path.join(root, "scripts", "sync-server.mjs")], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HOST: "127.0.0.1",
+        TOKEN: token,
+        DATA_FILE: path.join(tempDir, "state.json"),
+      },
+      stdio: "ignore",
+    });
+    const store = {};
+    globalThis.chrome = {
+      runtime: { lastError: null },
+      storage: {
+        local: {
+          get(keys, callback) {
+            const result = {};
+            for (const key of Array.isArray(keys) ? keys : [keys]) {
+              if (key in store) result[key] = structuredClone(store[key]);
+            }
+            callback(result);
+          },
+          set(obj, callback) {
+            for (const [key, value] of Object.entries(obj)) store[key] = structuredClone(value);
+            if (callback) callback();
+          },
+        },
+        sync: {
+          get(_k, cb) {
+            if (cb) cb({});
+          },
+          set(_o, cb) {
+            if (cb) cb();
+          },
+        },
+      },
+    };
+    try {
+      await waitForHealth(baseUrl, token);
+      // 标签页 A
+      const tabA = await import(`../src/js/sync_engine.js?tabA=${Date.now()}`);
+      let data = baseData(baseUrl, token);
+      _setDeviceIdForTests("dev_multitab");
+      tabA.initSyncEngine({
+        getData: () => data,
+        setData: (n) => {
+          data = n;
+        },
+        saveLocal: async () => null,
+      });
+      assert.equal((await tabA.pushNow("init")).ok, true);
+
+      const remote = await httpPullState({ baseUrl, token });
+      const cloud = structuredClone(remote.doc);
+      cloud.docId = "doc_multitab_cloud";
+      cloud.deviceId = "cloud";
+      cloud.revision = remote.revision + 1;
+      cloud.writtenAt = Date.now();
+      cloud.contentHash = hashSyncDocument(cloud);
+      assert.equal((await httpPushState({ baseUrl, token }, cloud, { ifMatch: remote.etag })).ok, true);
+      assert.equal((await tabA.pullNow("detect")).reason, "doc_conflict");
+
+      // 标签页 B：从存储加载，看到同一个冲突
+      const tabB = await import(`../src/js/sync_engine.js?tabB=${Date.now()}`);
+      tabB.initSyncEngine({
+        getData: () => data,
+        setData: (n) => {
+          data = n;
+        },
+        saveLocal: async () => null,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      assert.equal(tabB.getSyncStatus().hasConflict, true);
+
+      // A 解决冲突
+      const resolved = await tabA.resolveDocConflict("merge");
+      assert.equal(resolved.ok, true, `resolve failed: ${resolved.reason}`);
+      assert.equal(store["homepage_sync_state"].status, "idle");
+
+      // B 再次同步：必须先采纳存储里的新 docId，不能把冲突写回去
+      await tabB.pushNow("stale-tab");
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      assert.equal(store["homepage_sync_state"].status, "idle", "旧标签页不应恢复已解决的冲突");
+      assert.notEqual(store["homepage_sync_state"].lastError, "doc_conflict");
+    } finally {
+      delete globalThis.chrome;
+      _setDeviceIdForTests("");
+      await stopServer(child);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});

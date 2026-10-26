@@ -62,6 +62,7 @@ import {
   pullNow,
   pushNow,
   refreshSyncInterval,
+  reloadSyncState,
   resolveDocConflict,
   schedulePush,
 } from "./sync_engine.js";
@@ -2644,7 +2645,9 @@ async function refreshSyncStatusLine() {
   const el = $("syncStatusLine");
   if (!el) return;
   try {
-    const st = getSyncStatus();
+    // 状态可能由 background 或别的标签页写入；先同步一次存储再渲染，
+    // 避免打开设置时把 need_setup 显示成 idle（进而隐藏「解决冲突」）。
+    const st = await reloadSyncState();
     const deviceId = await getOrCreateDeviceId();
     const bytes = st.bytesEstimate || estimateSyncProjectionBytes(data, { deviceId, docId: st.docId || "doc_ui" });
     const level = st.budgetLevel || syncBytesBudgetLevel(bytes);

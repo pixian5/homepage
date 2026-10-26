@@ -158,6 +158,16 @@ export function getSyncStatus() {
   };
 }
 
+/**
+ * 从存储重新加载同步状态（含冲突上下文）。
+ * 页面刚打开时 loadState 可能还没跑完；调用方读状态前应 await 一次，
+ * 否则会把存储里的 need_setup 误当成 idle，导致「解决冲突」按钮被隐藏。
+ */
+export async function reloadSyncState() {
+  await loadState();
+  return getSyncStatus();
+}
+
 async function loadState() {
   const local = areaLocal();
   if (!local) return;
@@ -252,6 +262,10 @@ async function writeRemoteSyncDocument(doc) {
  */
 export async function pullNow(reason = "manual") {
   return enqueue(async () => {
+    // 每个新标签页都有独立的引擎实例。解决冲突后 docId 只写进存储，
+    // 其它页面若继续用内存里的旧 docId 会再次判定冲突并覆盖回 need_setup。
+    // 因此每次同步前先采纳存储中的最新状态。
+    await loadState();
     const data = _getData();
     if (!data?.settings?.syncEnabled) {
       _status.status = "off";
@@ -362,6 +376,7 @@ async function applyRemoteDoc(doc, deviceId, reason) {
  * 推送本地投影（可在 pull 的 enqueue 内调用，勿再包 enqueue）
  */
 async function pushNowImpl(reason = "manual") {
+  await loadState();
   const data = _getData();
   if (!data?.settings?.syncEnabled) {
     _status.status = "off";
@@ -622,7 +637,17 @@ export async function resolveDocConflict(choice) {
 
     if (choice === "remote") {
       // 云端替换本机：接受远端 docId，强制应用远端（绕过 docId 检查）
-      const forceDoc = { ...remote };
+      // 重要：remote 可能是 loadState 恢复出的占位对象（只有 docId），
+      // 必须重新拉取完整文档，否则会用空对象覆盖本地。
+      let forceDoc = { ...remote };
+      if (!Array.isArray(forceDoc.nodes) || !Array.isArray(forceDoc.groups)) {
+        const fresh = await readRemoteSyncDocument();
+        if (!fresh.ok) {
+          return { ok: false, reason: fresh.reason || "remote_unavailable" };
+        }
+        forceDoc = fresh.doc;
+        _status.lastRemoteEtag = fresh.etag || _status.lastRemoteEtag;
+      }
       _status.docId = forceDoc.docId;
       _pendingConflictRemote = null;
       delete _status.conflictRemoteDocId;

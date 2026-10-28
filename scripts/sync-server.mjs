@@ -275,6 +275,10 @@ function normalizeDevices(input) {
           : 0,
         lastConfirmedEpoch: Number.isSafeInteger(value.lastConfirmedEpoch) ? Math.max(0, value.lastConfirmedEpoch) : 0,
         protocol: Number.isSafeInteger(value.protocol) ? value.protocol : 1,
+        // 退役时间戳：非 0 表示该设备已被显式退役。
+        // 服务端拒绝其写入，也不再参与墓碑回收的「所有设备已确认」判定，
+        // 否则一台废弃设备会永久卡住回收（永远等不到它的确认）。
+        retiredAt: isTimestamp(value.retiredAt) ? value.retiredAt : 0,
       },
     ])
     .sort((a, b) => b[1].lastSeenAt - a[1].lastSeenAt)
@@ -328,7 +332,7 @@ function computeReclaimCandidates(snapshot) {
   const epoch = snapshot.epoch || 0;
   const devices = Object.values(snapshot.devices || {});
   if (!devices.length) return [];
-  const active = devices.filter((d) => (d.lastConfirmedEpoch ?? epoch) >= epoch);
+  const active = devices.filter((d) => !d.retiredAt && (d.lastConfirmedEpoch ?? epoch) >= epoch);
   if (!active.length) return [];
   const minConfirmed = Math.min(...active.map((d) => Number(d.lastConfirmedRevision) || 0));
   const out = [];
@@ -459,6 +463,10 @@ const server = createServer(async (req, res) => {
       if (!state) {
         return { status: 409, body: { error: "no_state" }, headers: {} };
       }
+      // 已退役设备不得确认：否则它的确认会错误地让墓碑被判定为「全员已确认」。
+      if (state.devices?.[deviceId]?.retiredAt) {
+        return { status: 403, body: { error: "device_retired", deviceId }, headers: {} };
+      }
       // 只接受不超前于当前服务端 revision 的确认，防止伪造未来确认。
       if (confirmedRevision > state.revision) {
         return { status: 409, body: { error: "revision_ahead", revision: state.revision }, headers: {} };
@@ -503,6 +511,61 @@ const server = createServer(async (req, res) => {
       // 只读诊断：哪些墓碑已经可以被回收（本阶段不执行回收）
       reclaimCandidates: computeReclaimCandidates(state),
     });
+    return;
+  }
+
+  // 设备退役 / 复职：显式管理设备表，避免废弃设备永久卡住墓碑回收。
+  // body: { deviceId: string, retired: boolean }
+  if (url.pathname === "/v1/sync/devices/retire" && method === "POST") {
+    let raw;
+    try {
+      raw = await readBody(req, 16 * 1024);
+    } catch (e) {
+      json(res, e.message === "body_too_large" ? 413 : 400, { error: e.message || "bad_body" });
+      return;
+    }
+    let body;
+    try {
+      body = JSON.parse(raw || "{}");
+    } catch {
+      json(res, 400, { error: "invalid_json" });
+      return;
+    }
+    const deviceId = typeof body?.deviceId === "string" ? body.deviceId.trim() : "";
+    if (!deviceId) {
+      json(res, 400, { error: "invalid_device_id" });
+      return;
+    }
+    const retired = body?.retired !== false;
+    const result = await enqueueWrite(async () => {
+      if (!state) return { status: 409, body: { error: "no_state" }, headers: {} };
+      const existing = state.devices?.[deviceId];
+      if (!existing) return { status: 404, body: { error: "device_not_found", deviceId }, headers: {} };
+      const devices = normalizeDevices({
+        ...state.devices,
+        [deviceId]: { ...existing, retiredAt: retired ? Date.now() : 0 },
+      });
+      const next = { ...state, devices };
+      try {
+        await saveToDisk(next);
+      } catch (e) {
+        console.error("[sync-server] retire save failed", e);
+        return { status: 500, body: { error: "save_failed" }, headers: {} };
+      }
+      state = next;
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          deviceId,
+          retired,
+          deviceCount: Object.keys(devices).length,
+          reclaimCandidates: computeReclaimCandidates(state),
+        },
+        headers: {},
+      };
+    });
+    json(res, result.status, result.body, result.headers);
     return;
   }
 
@@ -651,6 +714,16 @@ const server = createServer(async (req, res) => {
       const validationError = validateSyncDocument(doc);
       if (validationError) {
         return { status: 400, body: { error: validationError }, headers: {} };
+      }
+
+      // 已退役设备不得写入：退役是显式动作，之后该设备再推任何数据都拒绝。
+      // 用 403 而不是 401，便于客户端区分「令牌错误」与「设备已被移除」。
+      if (state?.devices?.[doc.deviceId]?.retiredAt) {
+        return {
+          status: 403,
+          body: { error: "device_retired", deviceId: doc.deviceId },
+          headers: {},
+        };
       }
 
       // 压缩代际栅栏：客户端若显式声明 epoch 且落后，拒绝旧整包回推。

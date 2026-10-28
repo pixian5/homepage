@@ -9,6 +9,16 @@
 <body>
   <div id="background" class="background"></div>
 
+  <!-- 同步异常提示条：由 sync-banner.js 控制显隐，默认隐藏 -->
+  <div id="syncBanner" class="sync-banner hidden" role="status" aria-live="polite">
+    <span id="syncBannerText" class="sync-banner-text"></span>
+    <div class="sync-banner-actions">
+      <button id="btnSyncBannerRetry" class="sync-banner-btn" type="button">立即重试</button>
+      <button id="btnSyncBannerSettings" class="sync-banner-btn sync-banner-btn-ghost" type="button">查看设置</button>
+      <button id="btnSyncBannerDismiss" class="sync-banner-close" type="button" aria-label="关闭提示">×</button>
+    </div>
+  </div>
+
   <div id="app" class="app">
     <header class="topbar">
       <div class="top-actions">

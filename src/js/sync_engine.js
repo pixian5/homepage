@@ -160,6 +160,29 @@ export function getSyncStatus() {
 }
 
 /**
+ * 读取 outbox 概况（只读，不改状态）。
+ * 供同步异常提示条判断「自动重试是否已放弃」，不触发任何重试动作。
+ * @returns {Promise<Array<{targetKey: string, attempts: number, maxAttempts: number, lastError: string, nextRetryAtMs: number}>>}
+ */
+export async function getOutboxSummary() {
+  const local = areaLocal();
+  if (!local) return [];
+  try {
+    const got = await storageGetKeys(local, [SYNC_OUTBOX_KEY]);
+    const list = normalizeSyncOutbox(got.value?.[SYNC_OUTBOX_KEY]);
+    return list.map((item) => ({
+      targetKey: item.targetKey,
+      attempts: Number(item.attempts || 0),
+      maxAttempts: SYNC_OUTBOX_MAX_ATTEMPTS,
+      lastError: String(item.lastError || ""),
+      nextRetryAtMs: Number(item.nextRetryAtMs || 0),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
  * 从存储重新加载同步状态（含冲突上下文）。
  * 页面刚打开时 loadState 可能还没跑完；调用方读状态前应 await 一次，
  * 否则会把存储里的 need_setup 误当成 idle，导致「解决冲突」按钮被隐藏。

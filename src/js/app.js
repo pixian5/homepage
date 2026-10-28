@@ -56,6 +56,7 @@ import { exportSyncBundle, importSyncBundle } from "./sync_bundle.js";
 import {
   cancelScheduledPush,
   flushOutbox,
+  getOutboxSummary,
   getPendingConflict,
   getSyncStatus,
   initSyncEngine,
@@ -74,6 +75,8 @@ import {
   nextSyncTimestamp,
   normalizeSyncInterval,
   SYNC_INTERVAL_OPTIONS,
+  SYNC_OUTBOX_KEY,
+  SYNC_STATE_KEY,
   syncBytesBudgetLevel,
 } from "./sync_policy.js";
 import {
@@ -83,6 +86,7 @@ import {
   toSyncDocument,
 } from "./sync_projection.js";
 import { stampChangedSyncSettings } from "./sync_settings.js";
+import { createSyncBanner } from "./sync-banner.js";
 import { escapeHtml, html, rawHtml, runWithButtonState } from "./ui-utils.js";
 import { attachVisitTracking, getVisitHistoryItems, recordVisit } from "./visit-history.js";
 
@@ -166,6 +170,8 @@ let storageReloadTimer = null;
 let pendingStorageReload = false;
 let suppressStorageUntil = 0;
 let persistInFlight = 0;
+/** 同步异常提示条控制器（init 时创建；storage 监听里可能先于创建触发，故用可选链） */
+let syncBanner = null;
 let backupFingerprint = "";
 let backupBaselineSnapshot = null;
 let skipAutoBackupOnce = false;
@@ -421,18 +427,22 @@ function attachStorageListener() {
   if (!api?.storage?.onChanged) return;
   const key = getStorageKey();
   api.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local") return;
+    // 同步状态/队列变化：其它标签页解决冲突或后台推送后，本页状态栏与提示条也要跟上。
+    // 这些键不受 persistInFlight / suppressStorageUntil 影响（它们只保护数据写入）。
+    if (changes?.[SYNC_STATE_KEY] || changes?.[SYNC_OUTBOX_KEY]) {
+      void syncBanner?.refresh?.();
+      return;
+    }
     if (persistInFlight > 0) return;
     if (Date.now() < suppressStorageUntil) return;
     if (!changes?.[key]) return;
-    if (areaName !== "local") return;
     // 本地 homepage_data 变更（如 popup 写入）
-    if (areaName === "local") {
-      const incoming = changes[key].newValue;
-      const incomingTs = Number(incoming?.lastUpdated || 0);
-      const localTs = Number(data?.lastUpdated || 0);
-      if (incomingTs > 0 && localTs > 0 && incomingTs <= localTs) return;
-      scheduleStorageReload();
-    }
+    const incoming = changes[key].newValue;
+    const incomingTs = Number(incoming?.lastUpdated || 0);
+    const localTs = Number(data?.lastUpdated || 0);
+    if (incomingTs > 0 && localTs > 0 && incomingTs <= localTs) return;
+    scheduleStorageReload();
   });
 }
 
@@ -3264,6 +3274,21 @@ async function init() {
   await consumeSaveToast();
   if (data.settings.syncEnabled) {
     refreshSyncInterval();
+    // 同步异常提示条：让失败可见（此前断链两个月无人察觉）。
+    // 重试走手动 pushNow —— 它不受 outbox attempts 上限限制，是用户的唯一自救入口。
+    syncBanner = createSyncBanner({
+      getState: () => reloadSyncState(),
+      getOutbox: () => getOutboxSummary(),
+      onRetry: async () => {
+        // 先拉一次拿到最新基线（顺带刷 etag），再推本地；手动推送不受 outbox attempts 上限限制。
+        await pullNow("banner_retry");
+        return pushNow("banner_retry");
+      },
+      onOpenSettings: () => openSettingsModal(),
+      getStorage: () => getChromeApi()?.storage?.local,
+      t: (k, vars) => t(k, vars),
+    });
+    void syncBanner.start();
     const interval = normalizeSyncInterval(data.settings.syncInterval);
     // 首屏已经使用本地数据渲染；周期同步开启时才后台拉取。
     // off 表示只在手动操作或本地变更时同步，不应因打开新标签页访问云端。
@@ -3278,6 +3303,9 @@ async function init() {
         render();
       } catch (e) {
         console.warn("init sync failed", e);
+      } finally {
+        // 首次同步结束后刷新提示条：此时才拿到真实结果
+        void syncBanner?.refresh?.();
       }
     })();
   }

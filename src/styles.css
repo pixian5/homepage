@@ -1094,3 +1094,34 @@ body {
 }
 
 .settings-sync-http{margin:8px 0;padding:8px 0;border-top:1px solid rgba(127,127,127,.2);}
+
+/* 同步异常提示条：固定在顶部，不遮挡工具栏（body 额外留出空间由 JS 设置） */
+.sync-banner{
+  position:fixed;top:0;left:0;right:0;z-index:60;
+  display:flex;align-items:center;gap:12px;
+  padding:10px 16px;
+  background:rgba(229,115,115,.14);
+  border-bottom:1px solid rgba(229,115,115,.45);
+  color:var(--text,#e8eaed);
+  font-size:13px;
+  backdrop-filter:blur(12px);
+}
+.sync-banner.hidden{display:none;}
+.sync-banner-text{flex:1;min-width:0;line-height:1.4;}
+.sync-banner-actions{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.sync-banner-btn{
+  padding:5px 12px;border-radius:8px;cursor:pointer;
+  border:1px solid rgba(229,115,115,.5);
+  background:rgba(229,115,115,.22);
+  color:inherit;font-size:12px;
+}
+.sync-banner-btn:hover{background:rgba(229,115,115,.34);}
+.sync-banner-btn-ghost{background:transparent;border-color:rgba(127,127,127,.45);}
+.sync-banner-btn-ghost:hover{background:rgba(127,127,127,.18);}
+.sync-banner-close{
+  background:transparent;border:none;cursor:pointer;
+  color:inherit;font-size:18px;line-height:1;padding:2px 6px;opacity:.75;
+}
+.sync-banner-close:hover{opacity:1;}
+/* 提示条展开时给应用让出高度，避免遮住顶部工具栏 */
+body.sync-banner-open .app{padding-top:var(--sync-banner-height,0px);}

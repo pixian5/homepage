@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "我的首页",
-  "version": "26.2.2",
+  "version": "26.2.3",
   "description": "自定义新标签页",
   "action": {
     "default_title": "保存当前网页",
@@ -11,32 +11,16 @@
     "newtab": "newtab.html"
   },
   "background": {
-    "scripts": [
-      "js/background.js"
-    ],
+    "scripts": ["js/background.js"],
     "type": "module",
     "persistent": false
   },
-  "permissions": [
-    "storage",
-    "unlimitedStorage",
-    "scripting",
-    "tabs",
-    "activeTab",
-    "nativeMessaging"
-  ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
+  "permissions": ["storage", "unlimitedStorage", "scripting", "tabs", "activeTab", "nativeMessaging"],
+  "host_permissions": ["<all_urls>"],
   "content_scripts": [
     {
-      "matches": [
-        "<all_urls>"
-      ],
-      "js": [
-        "js/content-toast.js",
-        "js/bookmark-sidebar.js"
-      ]
+      "matches": ["<all_urls>"],
+      "js": ["js/content-toast.js", "js/bookmark-sidebar.js"]
     }
   ],
   "content_security_policy": {

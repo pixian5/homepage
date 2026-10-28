@@ -73,8 +73,8 @@ function json(res, status, body, extraHeaders = {}) {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, PUT, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, If-Match, Idempotency-Key",
-    "Access-Control-Expose-Headers": "ETag, X-Sync-Revision",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, If-Match, Idempotency-Key, X-Sync-Epoch",
+    "Access-Control-Expose-Headers": "ETag, X-Sync-Revision, X-Sync-Epoch",
     ...extraHeaders,
   });
   res.end(raw);
@@ -397,7 +397,7 @@ const server = createServer(async (req, res) => {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, PUT, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, If-Match, Idempotency-Key",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, If-Match, Idempotency-Key, X-Sync-Epoch",
       "Access-Control-Max-Age": "86400",
     });
     res.end();

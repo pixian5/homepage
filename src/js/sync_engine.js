@@ -197,6 +197,8 @@ async function saveState() {
       lastError: _status.lastError,
       lastRemoteRevision: _status.lastRemoteRevision,
       lastRemoteEtag: _status.lastRemoteEtag || "",
+      // epoch 必须持久化：页面重建后若跳过预拉取直接推送，仍要带上正确代际
+      lastRemoteEpoch: _status.lastRemoteEpoch || 0,
       bytesEstimate: _status.bytesEstimate,
       transport: getTransportConfig().mode,
       // 冲突上下文必须持久化：新标签页/刷新后内存会重建，
@@ -243,7 +245,8 @@ async function writeRemoteSyncDocument(doc) {
     ifMatch: _status.lastRemoteEtag || undefined,
     // 告诉服务端本机所处的压缩代际；落后时服务端会以 409 stale_epoch 拒绝
     epoch: _status.lastRemoteEpoch || 0,
-    idempotencyKey: `${doc.docId || "doc"}:${doc.revision || 0}:${Date.now()}`,
+    // 稳定幂等键（docId:revision:deviceId）：同一逻辑写入重试时服务端才能命中缓存去重
+    idempotencyKey: `${doc.docId || "doc"}:${doc.revision || 0}:${doc.deviceId || "dev"}`,
   });
   if (res.ok) {
     _status.lastRemoteEtag = res.etag || _status.lastRemoteEtag;
@@ -300,7 +303,7 @@ export async function pullNow(reason = "manual") {
         }
         return { ok: true, empty: true };
       }
-      _status.status = remote.reason === "incomplete_remote" ? "error" : "error";
+      _status.status = "error";
       _status.lastError = remote.reason || "pull_failed";
       await saveState();
       return { ok: false, reason: remote.reason };
@@ -440,9 +443,11 @@ async function pushNowImpl(reason = "manual") {
     if (again.ok) baseRevision = Number(again.doc.revision) || baseRevision;
   }
 
-  const latest = _getData();
   let lastErr = null;
   for (let attempt = 0; attempt < SYNC_REVISION_RETRY; attempt++) {
+    // 每次重取本地快照：412/重试分支可能刚把远端合并进本地（setData 整体替换引用），
+    // 沿用循环外的旧快照会把并发方刚合并进来的变更从服务端抹掉
+    const latest = _getData();
     const revision = baseRevision + 1;
     const doc = toSyncDocument(latest, {
       deviceId,
@@ -471,6 +476,9 @@ async function pushNowImpl(reason = "manual") {
       const remoteDoc = writeErr.remote?.doc;
       if (remoteDoc) {
         baseRevision = Number(writeErr.remote.revision || remoteDoc.revision) || baseRevision;
+        // 412 响应携带服务端最新 etag，必须立即采纳；
+        // 否则后续重试仍带旧 If-Match，只会一次次再 412 直到重试耗尽
+        if (writeErr.etag) _status.lastRemoteEtag = writeErr.etag;
         await applyRemoteDoc(remoteDoc, deviceId, "push_412_pull");
         continue;
       }

@@ -642,3 +642,136 @@ describe("sync_engine multi-tab conflict isolation", () => {
     }
   });
 });
+
+describe("sync_engine 412 retry", () => {
+  // 关键回归（26.2.3）：412 重试必须采纳服务端新 etag，且推送合并后的最新本地快照。
+  // 修复前：重试仍带旧 If-Match 必然再 412 直至耗尽（P1）；
+  // 只修 etag 时：重试推的是合并前快照，会把并发方刚合并进来的变更从服务端抹掉（P2）。
+  it("adopts the fresh etag from 412 and pushes the merged snapshot on retry", async () => {
+    const port = 29000 + (process.pid % 2000);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const token = "sync-engine-412-retry-token";
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-412-retry."));
+    const child = spawn(process.execPath, [path.join(root, "scripts", "sync-server.mjs")], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HOST: "127.0.0.1",
+        TOKEN: token,
+        DATA_FILE: path.join(tempDir, "state.json"),
+      },
+      stdio: "ignore",
+    });
+    const originalFetch = globalThis.fetch;
+
+    try {
+      await waitForHealth(baseUrl, token);
+      // 独立模块实例：避免其它用例在模块级 _status 里留下的 docId 干扰
+      const engine = await import(`../src/js/sync_engine.js?retry412=${Date.now()}`);
+      let data = baseData(baseUrl, token);
+      _setDeviceIdForTests("dev_retry_local");
+      engine.initSyncEngine({
+        getData: () => data,
+        setData: (next) => {
+          data = next;
+        },
+        saveLocal: async () => null,
+      });
+
+      const initial = await engine.pushNow("initial");
+      assert.equal(initial.ok, true);
+      const baseline = await httpPullState({ baseUrl, token });
+      assert.equal(baseline.ok, true);
+
+      // 基线之后本机改 n1 标题（与并发方新增的节点互不重叠，便于分别断言）
+      const localEditAt = (baseline.doc.writtenAt || 0) + 100;
+      data.nodes.n1.title = "Local edit after push";
+      data.nodes.n1.updatedAt = localEditAt;
+      data.nodes.n1.titleUpdatedAt = localEditAt;
+      data.nodes.n1.updatedBy = "dev_retry_local";
+      data.lastUpdated = localEditAt;
+
+      const enginePuts = [];
+      let injectedConcurrentWrite = false;
+      globalThis.fetch = async (input, options = {}) => {
+        const requestUrl = String(input);
+        if (requestUrl !== `${baseUrl}/v1/sync/state`) return originalFetch(input, options);
+        if (options.method === "PUT") {
+          const headers = options.headers || {};
+          if (!injectedConcurrentWrite) {
+            // 引擎第一个 PUT 到达前，并发设备 B 在同一文档上新增节点 n_peer_added
+            injectedConcurrentWrite = true;
+            const concurrent = structuredClone(baseline.doc);
+            concurrent.deviceId = "dev_b_concurrent";
+            concurrent.writtenAt = (concurrent.writtenAt || 0) + 50;
+            const peerAt = concurrent.writtenAt;
+            concurrent.nodes.push({
+              id: "n_peer_added",
+              type: "item",
+              title: "From peer",
+              url: "https://peer.test/",
+              iconType: "auto",
+              updatedAt: peerAt,
+              updatedBy: "dev_b_concurrent",
+            });
+            concurrent.placements.push({
+              nodeId: "n_peer_added",
+              parentKind: "group",
+              parentId: concurrent.groups[0].id,
+              index: concurrent.placements.length,
+              updatedAt: peerAt,
+              updatedBy: "dev_b_concurrent",
+            });
+            concurrent.contentHash = hashSyncDocument(concurrent);
+            const competing = await originalFetch(requestUrl, {
+              method: "PUT",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+                "If-Match": baseline.etag,
+              },
+              body: JSON.stringify(concurrent),
+            });
+            assert.equal(competing.status, 200);
+            const competingBody = await competing.json();
+            // 引擎的这个 PUT 带着 rev1 的旧 etag，转发后必然 412
+            const staleResponse = await originalFetch(input, options);
+            assert.equal(staleResponse.status, 412);
+            enginePuts.push({ first: true, ifMatch: headers["If-Match"], freshEtag: competingBody.etag });
+            return staleResponse;
+          }
+          enginePuts.push({
+            first: false,
+            ifMatch: headers["If-Match"],
+            idempotencyKey: headers["Idempotency-Key"],
+            body: JSON.parse(options.body),
+          });
+        }
+        return originalFetch(input, options);
+      };
+
+      const retried = await engine.pushNow("after_local_edit");
+      // 断言①：412 后重试成功，而不是三次耗尽落 outbox
+      assert.equal(retried.ok, true, `push failed: ${JSON.stringify(retried)}`);
+      assert.equal(retried.revision, 3);
+      assert.equal(enginePuts.length, 2);
+      // 断言②：重试 PUT 携带 412 响应里的新 etag（P1）
+      assert.equal(enginePuts[1].ifMatch, enginePuts[0].freshEtag);
+      // 断言②补充：幂等键为稳定键 docId:revision:deviceId，不再含时间戳
+      assert.equal(enginePuts[1].idempotencyKey, `${enginePuts[1].body.docId}:3:dev_retry_local`);
+      // 断言③：服务端最终文档同时含本机标题修改与并发方新增节点（P2：推的是合并后快照）
+      const finalState = await httpPullState({ baseUrl, token });
+      assert.equal(finalState.ok, true);
+      const finalN1 = finalState.doc.nodes.find((n) => n.id === "n1");
+      const finalPeer = finalState.doc.nodes.find((n) => n.id === "n_peer_added");
+      assert.equal(finalN1.title, "Local edit after push");
+      assert.ok(finalPeer, "重试推送必须保留并发方新增的节点");
+    } finally {
+      globalThis.fetch = originalFetch;
+      _setDeviceIdForTests("");
+      await stopServer(child);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});

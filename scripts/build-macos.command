@@ -161,6 +161,16 @@ if [[ -d "${SAFARI_PROJECT_DIR}" ]]; then
   echo "[build] done: ${SAFARI_PROJECT_DIR}"
 fi
 
+# 同步构建入口与其依赖的 lib 到 dist：dist/run-build.command 需要能独立运行。
+# 26.1.8 曾只同步 .command 而漏掉 lib/，导致 dist 入口 source lib/safari-signing.sh 失败、构建直接退出。
+if [[ -d "${DIST_DIR}" && -f "${SCRIPT_DIR}/lib/safari-signing.sh" ]]; then
+  cp "${SCRIPT_DIR}/build-macos.command" "${DIST_DIR}/build-macos.command"
+  cp "${SCRIPT_DIR}/run-build.command" "${DIST_DIR}/run-build.command"
+  mkdir -p "${DIST_DIR}/lib"
+  cp "${SCRIPT_DIR}/lib/"*.sh "${DIST_DIR}/lib/"
+  echo "[build] synced build entry + lib to ${DIST_DIR}"
+fi
+
 if [[ "${NO_PAUSE:-0}" != "1" ]]; then
   read -r -p "Build finished. Press Enter to close..."
 fi

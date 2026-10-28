@@ -59,10 +59,6 @@ describe("lockfile 依赖来源", () => {
     // 国内镜像在海外 CI runner 上会超时，导致 npm 静默跳过平台相关 optionalDependency，
     // 表现为 biome 报 MODULE_NOT_FOUND。lockfile 应指向公共 registry。
     const mirrorHosts = [...hosts].filter((h) => h !== "registry.npmjs.org");
-    assert.deepEqual(
-      mirrorHosts,
-      [],
-      `lockfile 含非官方源 ${mirrorHosts.join(", ")}；海外 CI 可能装不全平台依赖`,
-    );
+    assert.deepEqual(mirrorHosts, [], `lockfile 含非官方源 ${mirrorHosts.join(", ")}；海外 CI 可能装不全平台依赖`);
   });
 });

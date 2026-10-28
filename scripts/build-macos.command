@@ -163,11 +163,17 @@ fi
 
 # 同步构建入口与其依赖的 lib 到 dist：dist/run-build.command 需要能独立运行。
 # 26.1.8 曾只同步 .command 而漏掉 lib/，导致 dist 入口 source lib/safari-signing.sh 失败、构建直接退出。
+# 从 dist 入口启动时 SCRIPT_DIR 就是 dist，cp 源与目标为同一文件会报错退出，用 -ef 跳过。
 if [[ -d "${DIST_DIR}" && -f "${SCRIPT_DIR}/lib/safari-signing.sh" ]]; then
-  cp "${SCRIPT_DIR}/build-macos.command" "${DIST_DIR}/build-macos.command"
-  cp "${SCRIPT_DIR}/run-build.command" "${DIST_DIR}/run-build.command"
   mkdir -p "${DIST_DIR}/lib"
-  cp "${SCRIPT_DIR}/lib/"*.sh "${DIST_DIR}/lib/"
+  for src in "${SCRIPT_DIR}/build-macos.command" "${SCRIPT_DIR}/run-build.command" "${SCRIPT_DIR}/lib/"*.sh; do
+    rel="${src#"${SCRIPT_DIR}/"}"
+    dst="${DIST_DIR}/${rel}"
+    if [[ "${src}" -ef "${dst}" ]]; then
+      continue
+    fi
+    cp "${src}" "${dst}"
+  done
   echo "[build] synced build entry + lib to ${DIST_DIR}"
 fi
 

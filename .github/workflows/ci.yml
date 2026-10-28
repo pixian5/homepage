@@ -58,6 +58,26 @@ jobs:
           CHROME_E2E_BINARY: ${{ steps.chrome.outputs.chrome-path }}
         run: npm run test:browser-smoke -- chrome
 
+      # Firefox：必须用开发者版/Nightly。测试脚本通过 xpinstall.signatures.required=false
+      # 加载未签名 XPI，release 版会忽略该偏好导致扩展装不上、冒烟必然失败。
+      - name: Setup Firefox Developer Edition
+        id: firefox
+        uses: browser-actions/setup-firefox@v1
+        with:
+          firefox-version: latest-devedition
+
+      - name: Run Firefox smoke tests
+        env:
+          FIREFOX_E2E_BINARY: ${{ steps.firefox.outputs.firefox-path }}
+        run: |
+          # 脚本用 zip 把扩展打成未签名 XPI 塞进临时 profile
+          if ! command -v zip >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq zip
+          fi
+          "$FIREFOX_E2E_BINARY" --version
+          npm run test:browser-smoke -- firefox
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:

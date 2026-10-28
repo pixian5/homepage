@@ -3284,7 +3284,8 @@ async function init() {
         await pullNow("banner_retry");
         return pushNow("banner_retry");
       },
-      onOpenSettings: () => openSettingsModal(),
+      // openSettingsModal 由 settings-controller 提供，app.js 侧只能经 settingsCtl 访问
+      onOpenSettings: () => settingsCtl?.openSettingsModal(),
       getStorage: () => getChromeApi()?.storage?.local,
       t: (k, vars) => t(k, vars),
     });

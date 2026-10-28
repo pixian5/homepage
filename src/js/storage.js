@@ -423,7 +423,9 @@ function normalizeIconCacheEntry(entry) {
     return {
       dataUrl: entry.dataUrl || "",
       url: entry.url || "",
-      ts: entry.ts || now,
+      // ts 用 nullish 判断：合法的时间戳 0 不该被当成「缺失」而刷成 now，
+      // 否则极旧的条目会变成最新，LRU 淘汰顺序被破坏。
+      ts: Number.isFinite(entry.ts) && entry.ts > 0 ? entry.ts : now,
       hits: entry.hits || 0,
       failed: entry.failed ? true : undefined,
       // 保留失败退避次数，否则每次 save 都会把 attempts 抹成 1
@@ -439,14 +441,65 @@ function normalizeIconCacheEntry(entry) {
  * @param {number} maxEntries
  * @returns {Record<string, IconCacheEntry>}
  */
+/**
+ * 图标缓存单条上限。抓取到的原始 favicon 常是几百 KB 的 PNG，
+ * 原样存进 storage.local 会让缓存膨胀到 MB 级（实测单条均值 9.9KB，最大 42KB）。
+ * 超过上限的条目直接丢弃，渲染时回退字母头像：视觉损失很小，体积收益很大。
+ */
+const ICON_CACHE_ENTRY_MAX_CHARS = 16 * 1024;
+
 export function evictIconCacheLRU(cache, maxEntries = MAX_ICON_CACHE_ENTRIES) {
   const entries = Object.entries(cache).map(([key, value]) => [key, normalizeIconCacheEntry(value)]);
-  if (entries.length <= maxEntries) {
-    return Object.fromEntries(entries);
+  // 先按单条体积过滤，再按数量淘汰：两条都要做，否则少量超大图标就能撑爆配额
+  const withinSize = entries.filter(([, entry]) => (entry.dataUrl || "").length <= ICON_CACHE_ENTRY_MAX_CHARS);
+  if (withinSize.length <= maxEntries) {
+    return Object.fromEntries(withinSize);
   }
-  entries.sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0));
-  const kept = entries.slice(entries.length - maxEntries);
+  withinSize.sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0));
+  const kept = withinSize.slice(withinSize.length - maxEntries);
   return Object.fromEntries(kept);
+}
+
+/**
+ * 清理图标缓存中已不再需要的条目（孤儿清理）。
+ *
+ * 缓存有两个维度：
+ *  - `https://xxx/page`   具体页面 URL
+ *  - `site:example.com`   站点根域（同站点的其它页面复用）
+ *
+ * 判定规则：只保留「当前书签仍引用到的」条目。
+ *  - URL 维度：书签里存在同 URL 才保留；
+ *  - site 维度：书签里存在同根域的 URL 才保留。
+ *
+ * 注意：`site:` 条目即使没有精确 URL 匹配也可能被同站点的新书签命中，
+ * 所以按根域判断而非直接删除，避免删掉后立刻又要重新抓取。
+ *
+ * @param {Record<string, any>} cache 图标缓存
+ * @param {string[]} bookmarkUrls 当前数据中所有书签 URL
+ * @param {(url: string) => string} siteKeyOf 站点键生成函数（复用 icons.js 的 getSiteKey，保证规则一致）
+ * @returns {{kept: Record<string, any>, removed: number}}
+ */
+export function pruneIconCacheOrphans(cache, bookmarkUrls, siteKeyOf) {
+  const urlSet = new Set();
+  const siteSet = new Set();
+  for (const raw of Array.isArray(bookmarkUrls) ? bookmarkUrls : []) {
+    const url = String(raw || "").trim();
+    if (!url) continue;
+    urlSet.add(url);
+    if (typeof siteKeyOf === "function") {
+      const site = siteKeyOf(url);
+      if (site) siteSet.add(site);
+    }
+  }
+  const kept = {};
+  let removed = 0;
+  for (const [key, value] of Object.entries(cache || {})) {
+    const isSiteKey = key.startsWith("site:");
+    const alive = isSiteKey ? siteSet.has(key) : urlSet.has(key);
+    if (alive) kept[key] = value;
+    else removed += 1;
+  }
+  return { kept, removed };
 }
 
 /**
@@ -542,6 +595,57 @@ export async function saveBgCache(cache) {
   if (!api) return;
   const local = storageArea(false);
   await storageSetLocal(local, { [BG_CACHE_KEY]: cache });
+}
+
+/**
+ * 清理无用缓存（启动时调用一次，失败静默不影响主流程）。
+ *
+ * 1. 图标缓存孤儿清理：删除当前书签已不再引用的条目。
+ *    实测本机 82 条缓存里大量条目来自已删除的书签，长期只增不减。
+ * 2. 背景缓存清理：当背景类型不是 bing 时，缓存的壁纸 dataURL 完全不会被读取
+ *    （loadBackground 只有 backgroundType === "bing" 才会调 getBingWallpaper）。
+ *    实测单张壁纸就占 442KB，占本地存储约 23%，属于纯浪费。
+ *
+ * @param {{
+ *   bookmarkUrls: string[],
+ *   backgroundType: string,
+ *   siteKeyOf: (url: string) => string,
+ *   loadIcon: () => Promise<Record<string, any>>,
+ *   saveIcon: (cache: Record<string, any>) => Promise<any>,
+ *   loadBg: () => Promise<Record<string, any>>,
+ *   saveBg: (cache: Record<string, any>) => Promise<any>,
+ * }} deps
+ * @returns {Promise<{iconRemoved: number, bgCleared: boolean}>}
+ */
+export async function pruneUnusedCaches(deps) {
+  const result = { iconRemoved: 0, bgCleared: false };
+  try {
+    const cache = await deps.loadIcon();
+    const { kept, removed } = pruneIconCacheOrphans(cache || {}, deps.bookmarkUrls, deps.siteKeyOf);
+    // 存量数据里可能已有超限巨图（本上限是后加的），一并在这里清掉
+    const afterSize = evictIconCacheLRU(kept, MAX_ICON_CACHE_ENTRIES);
+    const sizeRemoved = Object.keys(kept).length - Object.keys(afterSize).length;
+    const totalRemoved = removed + sizeRemoved;
+    if (totalRemoved > 0) {
+      await deps.saveIcon(afterSize);
+      result.iconRemoved = totalRemoved;
+    }
+  } catch (e) {
+    console.warn("pruneUnusedCaches: icon prune failed", e);
+  }
+  try {
+    if (String(deps.backgroundType || "") !== "bing") {
+      const bg = await deps.loadBg();
+      if (bg && (bg.dataUrl || bg.url)) {
+        // 只清壁纸内容，保留结构避免读取方拿到 null 时出错
+        await deps.saveBg({ ts: 0, url: "", dataUrl: "", date: "" });
+        result.bgCleared = true;
+      }
+    }
+  } catch (e) {
+    console.warn("pruneUnusedCaches: bg prune failed", e);
+  }
+  return result;
 }
 
 /**

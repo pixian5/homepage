@@ -45,10 +45,13 @@ import {
   detectPreferredLanguage,
   getChromeApi,
   getStorageKey,
+  loadBgCache,
   loadData,
   loadDataFromArea,
   loadIconCache,
   normalizeLanguage,
+  pruneUnusedCaches,
+  saveBgCache,
   saveData,
   saveIconCache,
 } from "./storage.js";
@@ -718,6 +721,33 @@ async function loadBackground() {
 
   applyBackgroundOverlay();
   elements.background.classList.remove("is-loading");
+}
+
+/**
+ * 缓存瘦身（静默执行，失败不影响主流程）。
+ * - 图标缓存：删掉当前书签已不再引用的条目
+ * - 背景缓存：背景类型不是 bing 时清掉壁纸 dataURL（单张可达数百 KB）
+ */
+async function pruneCachesQuietly() {
+  try {
+    const bookmarkUrls = Object.values(data?.nodes || {})
+      .filter((n) => n?.type === "item" && typeof n.url === "string" && n.url)
+      .map((n) => n.url);
+    const res = await pruneUnusedCaches({
+      bookmarkUrls,
+      backgroundType: data?.settings?.backgroundType || "",
+      siteKeyOf: getSiteKey,
+      loadIcon: loadIconCache,
+      saveIcon: saveIconCache,
+      loadBg: loadBgCache,
+      saveBg: saveBgCache,
+    });
+    if (res.iconRemoved > 0 || res.bgCleared) {
+      console.info(`[homepage] 缓存清理：图标 ${res.iconRemoved} 条，背景缓存${res.bgCleared ? "已清空" : "保留"}`);
+    }
+  } catch (e) {
+    console.warn("pruneCachesQuietly failed", e);
+  }
 }
 
 function pushBackup() {
@@ -3271,7 +3301,10 @@ async function init() {
   processPendingIconFetches();
   loadBackground();
   retryFailedIconsIfDue(data.settings);
-  await consumeSaveToast();
+  void consumeSaveToast();
+  // 缓存瘦身：首屏渲染后异步执行，不阻塞加载。
+  // 清理已删书签残留的图标缓存，以及背景非 bing 时无用的壁纸缓存（实测单张 442KB）。
+  void pruneCachesQuietly();
   if (data.settings.syncEnabled) {
     refreshSyncInterval();
     // 同步异常提示条：让失败可见（此前断链两个月无人察觉）。

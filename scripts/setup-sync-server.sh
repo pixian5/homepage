@@ -133,6 +133,13 @@ fi
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$DATA_DIR"
 chown "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
 install -o root -g root -m 0644 "${SCRIPT_ROOT}/scripts/sync-server.mjs" "${INSTALL_DIR}/sync-server.mjs"
+# 备份/恢复脚本一并安装，便于运维直接调用（不自动加 cron，由管理员按需配置）
+if [[ -f "${SCRIPT_ROOT}/scripts/backup-sync-state.sh" ]]; then
+  install -o root -g root -m 0755 "${SCRIPT_ROOT}/scripts/backup-sync-state.sh" "${INSTALL_DIR}/backup-sync-state.sh"
+fi
+if [[ -f "${SCRIPT_ROOT}/scripts/restore-sync-state.sh" ]]; then
+  install -o root -g root -m 0755 "${SCRIPT_ROOT}/scripts/restore-sync-state.sh" "${INSTALL_DIR}/restore-sync-state.sh"
+fi
 
 install -d -m 0755 "$(dirname "$ENV_FILE")"
 [[ -n "$TOKEN" ]] || die "Token 不能为空；请使用 --token 或 SYNC_TOKEN"

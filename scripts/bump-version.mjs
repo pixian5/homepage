@@ -34,6 +34,19 @@ export async function run() {
     await fs.writeFile(path.join(root, file), JSON.stringify(json, null, 2) + "\n", "utf8");
   }
   await fs.writeFile(path.join(root, "VERSION"), `${version}\n`, "utf8");
+  // JSON.stringify 的数组展开格式与 Biome 要求不一致（短数组应压成单行）。
+  // 写完后走一次 Biome 格式化，避免每次构建都把 manifest 改成 Biome 眼中的错误格式。
+  try {
+    const { execFileSync } = await import("node:child_process");
+    const targets = entries.map((e) => e.file);
+    execFileSync("npx", ["biome", "check", "--write", ...targets], {
+      cwd: root,
+      stdio: "ignore",
+      timeout: 60000,
+    });
+  } catch {
+    // Biome 不可用（如 CI 精简环境）时保持原样，不阻断构建
+  }
   console.log(`版本已同步：${version}`);
 }
 

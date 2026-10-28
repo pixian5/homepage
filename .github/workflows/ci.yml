@@ -21,12 +21,15 @@ jobs:
 
       - name: Install dependencies
         run: |
-          # lockfile 里的 resolved 地址指向国内镜像（mirrors.cloud.tencent.com），
-          # GitHub runner 在海外，访问常超时，导致 @biomejs/cli-linux-x64 这类
-          # 平台相关 optionalDependency 被静默跳过，随后 `biome check` 报 MODULE_NOT_FOUND。
-          # --registry 会覆盖 lockfile 中的 resolved 主机，但不改动仓库里的 lockfile。
-          npm ci --no-audit --no-fund --registry=https://registry.npmjs.org/
-          # 校验平台二进制确实落地，否则后续 biome 步骤会以难懂的方式失败
+          # lockfile 的 resolved 已统一指向官方 registry（历史上曾指向国内镜像，
+          # 海外 runner 访问超时会让 npm 静默跳过 @biomejs/cli-linux-x64 这类平台依赖）。
+          # 这里再兜底改写一次，防止有人用国内镜像重新生成 lockfile 时 CI 又挂。
+          if grep -q "mirrors.cloud.tencent.com" package-lock.json; then
+            echo "::warning::lockfile 出现国内镜像地址，已在 runner 上临时改写"
+            sed -i 's#https://mirrors.cloud.tencent.com/npm/#https://registry.npmjs.org/#g' package-lock.json
+          fi
+          npm ci --no-audit --no-fund
+          # 校验平台二进制确实落地，否则 biome 步骤会以 MODULE_NOT_FOUND 这种难懂方式失败
           node -e "require.resolve('@biomejs/cli-linux-x64/biome')" || {
             echo "::error::@biomejs/cli-linux-x64 缺失，npm ci 未正确安装平台依赖"
             exit 1

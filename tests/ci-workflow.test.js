@@ -42,3 +42,27 @@ describe("CI 浏览器冒烟配置", () => {
     assert.match(ci, /command -v zip/, "应在运行 Firefox 冒烟前确认 zip 可用");
   });
 });
+
+describe("lockfile 依赖来源", () => {
+  it("points resolved URLs at the public npm registry", async () => {
+    const lock = JSON.parse(await readFile(path.join(root, "package-lock.json"), "utf8"));
+    const hosts = new Set();
+    for (const pkg of Object.values(lock.packages || {})) {
+      if (pkg?.resolved) {
+        try {
+          hosts.add(new URL(pkg.resolved).host);
+        } catch {
+          // 非 URL（如 file: 依赖）忽略
+        }
+      }
+    }
+    // 国内镜像在海外 CI runner 上会超时，导致 npm 静默跳过平台相关 optionalDependency，
+    // 表现为 biome 报 MODULE_NOT_FOUND。lockfile 应指向公共 registry。
+    const mirrorHosts = [...hosts].filter((h) => h !== "registry.npmjs.org");
+    assert.deepEqual(
+      mirrorHosts,
+      [],
+      `lockfile 含非官方源 ${mirrorHosts.join(", ")}；海外 CI 可能装不全平台依赖`,
+    );
+  });
+});

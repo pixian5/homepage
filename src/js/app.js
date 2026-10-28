@@ -20,6 +20,7 @@ import {
   repairHomepageData,
   stampNodeFieldChanges,
 } from "./data-utils.js";
+import { findNearestRect, isPointInsideRect, shouldInsertAfter, toPlainRect } from "./drag-geometry.js";
 import {
   applyFailureToCache,
   avatarDataUrl,
@@ -1711,8 +1712,7 @@ function isDropOnIcon(targetId, x, y) {
   if (!tile) return false;
   const icon = qs(".tile-icon", tile);
   if (!icon) return false;
-  const rect = icon.getBoundingClientRect();
-  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  return isPointInsideRect(toPlainRect(icon.getBoundingClientRect()), x, y);
 }
 
 function getInsertIndexFromTarget(list, _sourceId, targetId, x, _y) {
@@ -1720,13 +1720,10 @@ function getInsertIndexFromTarget(list, _sourceId, targetId, x, _y) {
   if (targetIndex < 0) return list.length;
   const tile = getTileElementById(targetId);
   if (!tile) return targetIndex;
-
   const rect = tile.getBoundingClientRect();
-  const centerX = rect.left + rect.width / 2;
   // 非图标区域拖放仅按左右半区判断前后，避免误判到行首/左侧。
-  const insertAfter = x >= centerX;
-  const insertIndex = targetIndex + (insertAfter ? 1 : 0);
-  return Math.max(0, Math.min(insertIndex, list.length));
+  const insertAfter = x >= rect.left + rect.width / 2;
+  return Math.max(0, Math.min(targetIndex + (insertAfter ? 1 : 0), list.length));
 }
 
 function handleDropOnTile(targetId, x, y) {
@@ -3064,32 +3061,10 @@ function selectTilesInBox(grid, x1, y1, x2, y2) {
 function getDropIndex(grid, x, y) {
   const tiles = qsa(".tile", grid).filter((tile) => tile.getClientRects().length > 0);
   if (!tiles.length) return 0;
-
-  let nearest = { index: 0, rect: tiles[0].getBoundingClientRect(), distance: Infinity };
-  for (let i = 0; i < tiles.length; i++) {
-    const rect = tiles[i].getBoundingClientRect();
-    const dx = x < rect.left ? rect.left - x : x > rect.right ? x - rect.right : 0;
-    const dy = y < rect.top ? rect.top - y : y > rect.bottom ? y - rect.bottom : 0;
-    const distance = dx + dy;
-    if (distance < nearest.distance) {
-      nearest = { index: i, rect, distance };
-    }
-  }
-
-  const rect = nearest.rect;
-  const centerX = rect.left + rect.width / 2;
-  const centerY = rect.top + rect.height / 2;
-  let insertAfter = false;
-  if (x < rect.left) insertAfter = false;
-  else if (x > rect.right) insertAfter = true;
-  else if (y < rect.top) insertAfter = false;
-  else if (y > rect.bottom) insertAfter = true;
-  else {
-    const nearRowCenter = Math.abs(y - centerY) <= rect.height * 0.35;
-    insertAfter = nearRowCenter ? x >= centerX : y >= centerY;
-  }
-
-  return nearest.index + (insertAfter ? 1 : 0);
+  // 几何判定抽到 drag-geometry.js：纯函数、有单元测试覆盖
+  const rects = tiles.map((tile) => toPlainRect(tile.getBoundingClientRect()));
+  const { index } = findNearestRect(rects, x, y);
+  return index + (shouldInsertAfter(rects[index], x, y) ? 1 : 0);
 }
 
 async function init() {

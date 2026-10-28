@@ -2,6 +2,7 @@
   "app": [
     "shared-utils.js",
     "data-utils.js",
+    "drag-geometry.js",
     "safari_native_storage.js",
     "storage.js",
     "icons.js",

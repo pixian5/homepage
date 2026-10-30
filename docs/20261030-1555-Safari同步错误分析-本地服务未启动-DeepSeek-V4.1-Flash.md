@@ -89,6 +89,33 @@ TOKEN=<原值> npm run sync-server
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8787/health   # 期望 200
 ```
 
+## 现场验证（启动服务后实测）
+
+手动跑 `node scripts/sync-server.mjs` 后逐项确认，把「服务代码坏了」「跨域被拦」两种可能排除：
+
+| 检查项 | 结果 |
+|---|---|
+| 端口监听 | `node` 进程 LISTEN `*:8787` |
+| `GET /health` | **200** |
+| `GET /v1/sync/state` | **200**，`X-Sync-Revision: 12` |
+| 带扩展 Origin（`safari-web-extension://…`）的 GET | **200**（`Access-Control-Allow-Origin: *`） |
+| PUT 预检 OPTIONS（`if-match`/`idempotency-key`/`authorization`） | **204**，允许的头齐全 + `Max-Age: 86400` |
+
+数据一致性也核对了：
+
+- 服务端 `docId = doc_13d6ed8f6e144b6d9e56335903079f8c`，与扩展本地一致。
+- 服务端 `revision = 12`，扩展本地 `_syncMeta.revision = 12`，**两边同版本**。
+- 本地 45 个节点 / 1 个分组，数据完整。
+
+所以服务端本身没问题，CSP（`connect-src * https: http:`）也不拦，跨域预检也过。**唯一的缺口就是进程没启动。**
+
+### 一个遗留小信号
+
+`homepage_sync_state.lastRemoteRevision = 91`，但实际服务端是 12。
+这是之前连生产服务器（oh.sbbz.tech）留下的旧值，切到本地服务器时没有重置。
+它不影响正确性：下一次成功 pull 会把 `lastRemoteRevision` 覆写成 12；
+`isRemoteUpdateFromAnotherDevice` 判断「远端没更新」也就不会误合并。属于可忽略的陈旧元数据。
+
 ## 长期方案（避免下次重启又断）
 
 三条路，按省事程度排：

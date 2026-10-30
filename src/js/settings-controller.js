@@ -171,6 +171,23 @@ var HomepageSettingsController = (() => {
     };
   }
 
+  /**
+   * 同步时间显示：当天只给时分，跨天补月日。
+   * 面板信息已经很长，不再加年份。
+   * @param {number} ms 毫秒时间戳
+   * @returns {string}
+   */
+  function formatSyncTime(ms) {
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return "-";
+    const pad = (n) => String(n).padStart(2, "0");
+    const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const now = new Date();
+    const sameDay =
+      d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    return sameDay ? hm : `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`;
+  }
+
   async function refreshSyncStatusLine() {
     const el = $("syncStatusLine");
     if (!el) return;
@@ -207,7 +224,12 @@ var HomepageSettingsController = (() => {
       const intervalLabel = getData().settings?.syncEnabled
         ? ` · ${t("settings.sync.interval")}: ${t(`settings.sync.interval.${intervalKey}`)}`
         : "";
-      el.textContent = `${t(statusKey)} · ${via}${intervalLabel} · ${t("settings.sync.size", { size: kb })} · ${t(budgetKey)}${err}`;
+      // 没有这一项时，用户点完「立即同步」只能靠猜——面板必须给出最近一次成功同步的时间。
+      const lastAt = Math.max(Number(st.lastPullAt) || 0, Number(st.lastPushAt) || 0);
+      const lastLabel = ` · ${
+        lastAt > 0 ? t("settings.sync.lastSync", { time: formatSyncTime(lastAt) }) : t("settings.sync.lastSync.none")
+      }`;
+      el.textContent = `${t(statusKey)} · ${via}${intervalLabel}${lastLabel} · ${t("settings.sync.size", { size: kb })} · ${t(budgetKey)}${err}`;
       el.dataset.level = st.status === "error" || st.status === "quota" || st.status === "need_setup" ? "red" : level;
       const resolveBtn = $("btnSyncResolveConflict");
       if (resolveBtn) {

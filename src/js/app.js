@@ -513,6 +513,28 @@ if (typeof window !== "undefined" && window.matchMedia) {
 }
 
 /**
+ * 「另一台设备有较新数据」的提示做了频率限制。
+ *
+ * 多设备场景下每个设备打开页面都会推进一次 revision，另一台下次加载必然看到
+ * 「远端更新」，于是每次刷新都弹一次，提示失去意义。真正需要知道的是「有没有东西被改」，
+ * 而合并结果里 applied=false 时本来就不会走到这里。
+ * 这里再做一层：30 分钟内只提示一次，时间戳写 localStorage，跨页面刷新也生效。
+ */
+const SYNC_MERGE_TOAST_INTERVAL_MS = 30 * 60 * 1000;
+const SYNC_MERGE_TOAST_KEY = "homepage_sync_merge_toast_at";
+
+function toastSyncMergedOnce() {
+  try {
+    const last = Number(localStorage.getItem(SYNC_MERGE_TOAST_KEY)) || 0;
+    if (Date.now() - last < SYNC_MERGE_TOAST_INTERVAL_MS) return;
+    localStorage.setItem(SYNC_MERGE_TOAST_KEY, String(Date.now()));
+  } catch {
+    // localStorage 不可用（隐私模式等）时退化为每次都提示
+  }
+  toast(t("toast.syncOverwritten"), "warning");
+}
+
+/**
  * 主题与卡片密度属于「副作用型」设置：它们只改 CSS 变量和 html 属性，不经过 render()。
  * 数据被整包替换（同步合并 / 跨标签页重载）后必须重新应用，
  * 否则会出现和背景同一类问题——设置值同步过来了，但页面要等用户手动改一次才变。
@@ -743,13 +765,31 @@ async function refreshBackgroundIfChanged() {
   if (!appliedBackgroundSignature) return;
   if (backgroundSignature(data.settings) === appliedBackgroundSignature) return;
   try {
-    await loadBackground();
+    await loadBackground({ silent: true });
   } catch (e) {
     console.warn("refreshBackgroundIfChanged failed", e);
   }
 }
 
-async function loadBackground() {
+/** 同一页面内并发调用合并成一次，避免多标签同时打开时重复请求壁纸 */
+let backgroundLoading = null;
+
+/**
+ * @param {{silent?: boolean}} [options]
+ *   silent=true 时不弹提示——页面加载、同步后自动刷新都属于「用户没主动操作」，
+ *   每个新标签页都弹一次「已更新今日 Bing 壁纸」会变成刷屏（实测一次开几十个标签）。
+ */
+async function loadBackground(options = {}) {
+  if (backgroundLoading) return backgroundLoading;
+  backgroundLoading = doLoadBackground(options);
+  try {
+    return await backgroundLoading;
+  } finally {
+    backgroundLoading = null;
+  }
+}
+
+async function doLoadBackground({ silent = false } = {}) {
   const settings = data.settings;
   elements.background.classList.add("is-loading");
 
@@ -757,11 +797,13 @@ async function loadBackground() {
     const info = await getBingWallpaper(settings.language);
     if (info.dataUrl) {
       setBackground(info.dataUrl);
-      if (info.failed) toast(t("background.fetchFailedCache"), "warning");
-      else if (!info.fromCache) toast(t("background.updatedToday"));
+      if (!silent) {
+        if (info.failed) toast(t("background.fetchFailedCache"), "warning");
+        else if (!info.fromCache) toast(t("background.updatedToday"));
+      }
     } else {
       setSolidBackgroundColor(settings.backgroundColor);
-      toast(t("background.failedDefault"), "error");
+      if (!silent) toast(t("background.failedDefault"), "error");
     }
   } else if (settings.backgroundType === "color") {
     setSolidBackgroundColor(settings.backgroundColor);
@@ -3269,7 +3311,8 @@ async function init() {
         resetSettingsClockBaseline(data);
         resetPlacementClockBaseline(data);
         if (stats.remoteNewer || stats.choice === "remote") {
-          toast(t("toast.syncOverwritten"), "warning");
+          // 频率限制：多设备互相推送时不至于每次刷新都弹
+          toastSyncMergedOnce();
         }
         // render() 内部会重新应用主题/密度/背景，覆盖远端改的「副作用型」设置
         render();
@@ -3328,7 +3371,7 @@ async function init() {
   // 先渲染 UI，图标走缓存瞬显；背景和图标重试后台异步进行，不阻塞首屏
   render();
   processPendingIconFetches();
-  loadBackground();
+  loadBackground({ silent: true });
   retryFailedIconsIfDue(data.settings);
   void consumeSaveToast();
   // 缓存瘦身：首屏渲染后异步执行，不阻塞加载。

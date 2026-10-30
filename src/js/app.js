@@ -145,6 +145,12 @@ const elements = {
 };
 
 let data = null;
+/**
+ * 当前已应用的背景签名。
+ * 同步合并、跨标签页重载这两条路径都会整体替换 data，但不会重跑背景初始化，
+ * 导致「从服务器同步过来的背景设置要手动切一下才生效」。用它判断背景相关设置是否变了。
+ */
+let appliedBackgroundSignature = "";
 let activeGroupId = null;
 let openFolderId = null;
 let selectionMode = false;
@@ -408,6 +414,8 @@ async function reloadFromStorage() {
   ensureLanguageSetting();
   syncBackupBaseline(data);
   render();
+  // 外部写入（另一个标签页 / popup / 同步）可能改了背景设置，整包替换后要重新应用
+  await refreshBackgroundIfChanged();
   processPendingIconFetches();
   await consumeSaveToast();
   // popup 等只写了 local：reload 后把投影推到 sync
@@ -697,6 +705,42 @@ function setSolidBackgroundColor(color) {
   elements.background.style.background = safe;
 }
 
+/**
+ * 背景相关设置的轻量签名：只取决定「显示什么背景」的字段。
+ * 自定义背景图可能有几百 KB，不做全量比较，取长度 + 前 32 字符足够区分。
+ * @param {object} settings
+ * @returns {string}
+ */
+function backgroundSignature(settings) {
+  const s = settings || {};
+  const custom = typeof s.backgroundCustom === "string" ? s.backgroundCustom : "";
+  return [
+    s.backgroundType || "",
+    s.backgroundColor || "",
+    s.backgroundGradient || "",
+    custom.length,
+    custom.slice(0, 32),
+    Number(s.backgroundOverlayStrength) || 0,
+    // 每日 Bing 按语言取图，语言变了也要重取
+    s.language || "",
+  ].join("|");
+}
+
+/**
+ * 数据被整包替换后调用：只有背景相关设置确实变了才重跑，避免每次同步都重新请求壁纸。
+ */
+async function refreshBackgroundIfChanged() {
+  if (!data?.settings) return;
+  // 首次加载背景还没跑过（签名空），交给初始化流程，避免重复请求壁纸
+  if (!appliedBackgroundSignature) return;
+  if (backgroundSignature(data.settings) === appliedBackgroundSignature) return;
+  try {
+    await loadBackground();
+  } catch (e) {
+    console.warn("refreshBackgroundIfChanged failed", e);
+  }
+}
+
 async function loadBackground() {
   const settings = data.settings;
   elements.background.classList.add("is-loading");
@@ -721,6 +765,7 @@ async function loadBackground() {
   }
 
   applyBackgroundOverlay();
+  appliedBackgroundSignature = backgroundSignature(settings);
   elements.background.classList.remove("is-loading");
 }
 
@@ -3219,6 +3264,9 @@ async function init() {
           toast(t("toast.syncOverwritten"), "warning");
         }
         render();
+        // 远端可能改的是背景设置（例如在别的设备上切成每日 Bing），
+        // 这里不重跑背景就会出现「同步完成但壁纸还是旧的，要手动切一次才生效」。
+        void refreshBackgroundIfChanged();
         processPendingIconFetches();
       }
     },

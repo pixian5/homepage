@@ -414,8 +414,6 @@ async function reloadFromStorage() {
   ensureLanguageSetting();
   syncBackupBaseline(data);
   render();
-  // 外部写入（另一个标签页 / popup / 同步）可能改了背景设置，整包替换后要重新应用
-  await refreshBackgroundIfChanged();
   processPendingIconFetches();
   await consumeSaveToast();
   // popup 等只写了 local：reload 后把投影推到 sync
@@ -512,6 +510,16 @@ if (typeof window !== "undefined" && window.matchMedia) {
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => {
     if ((data?.settings?.theme || "system") === "system") applyTheme();
   });
+}
+
+/**
+ * 主题与卡片密度属于「副作用型」设置：它们只改 CSS 变量和 html 属性，不经过 render()。
+ * 数据被整包替换（同步合并 / 跨标签页重载）后必须重新应用，
+ * 否则会出现和背景同一类问题——设置值同步过来了，但页面要等用户手动改一次才变。
+ */
+function applyThemeAndDensity() {
+  applyTheme();
+  applyDensity();
 }
 
 function applySidebarState() {
@@ -3263,10 +3271,8 @@ async function init() {
         if (stats.remoteNewer || stats.choice === "remote") {
           toast(t("toast.syncOverwritten"), "warning");
         }
+        // render() 内部会重新应用主题/密度/背景，覆盖远端改的「副作用型」设置
         render();
-        // 远端可能改的是背景设置（例如在别的设备上切成每日 Bing），
-        // 这里不重跑背景就会出现「同步完成但壁纸还是旧的，要手动切一次才生效」。
-        void refreshBackgroundIfChanged();
         processPendingIconFetches();
       }
     },
@@ -3382,6 +3388,11 @@ function render() {
   elements.btnBatchDelete.textContent = selectionMode ? t("context.delete") : t("toolbar.batchDelete");
   elements.btnFolderDissolve.classList.remove("hidden");
   updateOpenModeButton();
+  // 收口在这里：主题/密度/背景都是「副作用型」设置，不经过渲染流程。
+  // 导入、恢复备份、清空数据、同步合并、跨标签页重载最终都会走到 render()，
+  // 统一在这里重新应用，才能避免「设置变了但页面要手动切一次才生效」这一类问题。
+  applyThemeAndDensity();
+  void refreshBackgroundIfChanged();
 }
 
 function updateOpenModeButton() {

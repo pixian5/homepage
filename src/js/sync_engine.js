@@ -431,6 +431,42 @@ async function confirmRemoteRevision(revision, deviceId) {
 /**
  * 推送本地投影（可在 pull 的 enqueue 内调用，勿再包 enqueue）
  */
+/** 读取待推送队列（推送前判断有没有必须发出去的本地改动） */
+async function readOutboxItems() {
+  const got = await storageGetKeys(areaLocal(), [SYNC_OUTBOX_KEY]);
+  if (!got.ok) return [];
+  return normalizeSyncOutbox(got.value?.[SYNC_OUTBOX_KEY]);
+}
+
+/**
+ * 本地内容是否与远端那份完全一致。
+ *
+ * 不能直接比 contentHash：哈希覆盖整份文档，包含 deviceId / revision / writtenAt，
+ * 两台设备算出来天然不同。这里用**远端那份的这三个值**重建本地文档再算哈希，
+ * 内容一致时两者才会相等。
+ *
+ * @param {object} data 本地数据
+ * @param {object} remoteDoc 远端同步文档（必须带 contentHash 与 writtenAt）
+ * @param {string} [docId]
+ * @returns {boolean}
+ */
+export function isContentEqualToRemote(data, remoteDoc, docId) {
+  if (!remoteDoc?.contentHash) return false;
+  const writtenAt = Number(remoteDoc.writtenAt);
+  if (!writtenAt) return false;
+  try {
+    const localDoc = toSyncDocument(data, {
+      deviceId: remoteDoc.deviceId,
+      docId: docId || remoteDoc.docId,
+      revision: Number(remoteDoc.revision) || 0,
+      writtenAt,
+    });
+    return localDoc.contentHash === remoteDoc.contentHash;
+  } catch {
+    return false;
+  }
+}
+
 async function pushNowImpl(reason = "manual") {
   await loadState();
   const data = _getData();
@@ -445,6 +481,8 @@ async function pushNowImpl(reason = "manual") {
   if (!_status.docId) _status.docId = createDocId();
 
   let baseRevision = 0;
+  /** 本轮实际对照的远端文档（预拉取后会重取一次，可能更新） */
+  let latestRemote = null;
   const remote = await readRemoteSyncDocument();
   if (remote.ok && remote.doc) {
     if (remote.doc.docId && _status.docId && remote.doc.docId !== _status.docId) {
@@ -462,8 +500,27 @@ async function pushNowImpl(reason = "manual") {
       const pulled = await applyRemoteDoc(remote.doc, deviceId, "push_pre_pull");
       if (!pulled.ok && pulled.reason === "doc_conflict") return pulled;
     }
+    latestRemote = remote;
     const again = await readRemoteSyncDocument();
-    if (again.ok) baseRevision = Number(again.doc.revision) || baseRevision;
+    if (again.ok) {
+      baseRevision = Number(again.doc.revision) || baseRevision;
+      latestRemote = again;
+    }
+  }
+
+  // 内容与远端完全一致、且没有待推送项时，不再写新 revision。
+  // 否则多设备会「拉取 → 落盘 → 再推送」互相推高版本号：
+  // 每台设备每次打开页面都 +1，其它设备下次加载必然判「有较新数据」，提示和流量都被放大。
+  if (latestRemote?.doc && isContentEqualToRemote(_getData(), latestRemote.doc, _status.docId)) {
+    const pending = await readOutboxItems();
+    if (!pending.length) {
+      _status.status = "idle";
+      _status.lastError = "";
+      _status.lastRemoteRevision = Number(latestRemote.doc.revision) || baseRevision;
+      if (latestRemote.etag) _status.lastRemoteEtag = latestRemote.etag;
+      await saveState();
+      return { ok: true, skipped: true, reason: "unchanged" };
+    }
   }
 
   let lastErr = null;

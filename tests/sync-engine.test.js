@@ -775,3 +775,86 @@ describe("sync_engine 412 retry", () => {
     }
   });
 });
+
+describe("sync_engine no-op push", () => {
+  // 回归：内容没变也写新 revision，多设备会「拉取→落盘→再推送」互相推高版本号，
+  // 导致每次打开页面其它设备都判「有较新数据」，提示与流量被放大。
+  it("skips the write when local content already equals remote, and pushes after a real change", async () => {
+    const port = 28000 + (process.pid % 2000);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const token = "sync-engine-noop-token";
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-noop."));
+    const child = spawn(process.execPath, [path.join(root, "scripts", "sync-server.mjs")], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HOST: "127.0.0.1",
+        TOKEN: token,
+        DATA_FILE: path.join(tempDir, "state.json"),
+      },
+      stdio: "ignore",
+    });
+    const store = {};
+    globalThis.chrome = {
+      runtime: { lastError: null },
+      storage: {
+        local: {
+          get(keys, callback) {
+            const result = {};
+            for (const key of Array.isArray(keys) ? keys : [keys]) {
+              if (key in store) result[key] = structuredClone(store[key]);
+            }
+            callback(result);
+          },
+          set(obj, callback) {
+            for (const [key, value] of Object.entries(obj)) store[key] = structuredClone(value);
+            if (callback) callback();
+          },
+        },
+        sync: { get: (_k, cb) => cb?.({}), set: (_o, cb) => cb?.() },
+      },
+    };
+
+    try {
+      await waitForHealth(baseUrl, token);
+      let data = baseData(baseUrl, token);
+      _setDeviceIdForTests("dev_noop");
+      initSyncEngine({
+        getData: () => data,
+        setData: (next) => {
+          data = next;
+        },
+        saveLocal: async () => null,
+      });
+
+      const first = await pushNow("initial");
+      assert.equal(first.ok, true);
+      const afterFirst = await httpPullState({ baseUrl, token });
+      assert.equal(afterFirst.ok, true);
+
+      // 没做任何修改 → 不应再写新版本
+      const second = await pushNow("unchanged");
+      assert.equal(second.ok, true);
+      assert.equal(second.skipped, true);
+      const afterSecond = await httpPullState({ baseUrl, token });
+      assert.equal(afterSecond.revision, afterFirst.revision);
+
+      // 真的改了内容 → 必须推上去
+      data.nodes.n1.title = "Changed locally";
+      data.nodes.n1.updatedAt = 9;
+      data.nodes.n1.titleUpdatedAt = 9;
+      const third = await pushNow("changed");
+      assert.equal(third.ok, true);
+      assert.notEqual(third.skipped, true);
+      const afterThird = await httpPullState({ baseUrl, token });
+      assert.equal(afterThird.revision, afterSecond.revision + 1);
+      assert.equal(afterThird.doc.nodes[0].title, "Changed locally");
+    } finally {
+      delete globalThis.chrome;
+      _setDeviceIdForTests("");
+      await stopServer(child);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});

@@ -92,6 +92,31 @@ SAFARI_SKIP_APP_BUILD=1 bash scripts/build.sh   # 只出扩展包，不动 Safar
 3. 升级后确认同步设置里的服务器地址是 `http://127.0.0.1:8787`（26.4.0 才切到本地，
    22.0 里可能还指向旧的 `oh.sbbz.tech`）。
 
+## 已执行升级（2026-10-30 16:26）
+
+```bash
+SAFARI_SKIP_APP_BUILD=1 bash scripts/build.sh   # 26.4.3 → 26.4.4，产出 dist/firefox.xpi
+```
+
+升级前的备份（旧 xpi + `extensions.json` + 整个扩展 idb 目录）：
+
+```
+.test-backups/firefox-22.0-20261030-162507/
+```
+
+安装方式：Firefox 运行中无法用 AppleScript 退出，所以采用**原子替换**——
+新包先写到 `...xpi.new`，再 `mv` 覆盖。正在运行的进程继续持有旧 inode，不会被写坏；
+下次启动时 Firefox 重新扫描 profile 的 `extensions/` 目录即可读到新版。
+
+重启后核验：
+
+| 检查 | 结果 |
+|---|---|
+| `extensions.json` 里 `homepage@pixian5.github.io` 的 version | **26.4.4** |
+| `active` / `userDisabled` / `appDisabled` | True / False / False |
+| 扩展数据目录 | 1.2 MB，升级后仍有写入（sqlite 16:26 更新） |
+| 本地同步服务 `revision` | 21 → **30**（升级后仍在正常推拉） |
+
 ## 长期建议
 
 如果打算继续用 Firefox 这一份，别每次手动装 xpi——可以二选一：

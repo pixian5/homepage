@@ -9,6 +9,7 @@ import {
   cancelScheduledPush,
   initSyncEngine,
   isRemoteUpdateFromAnotherDevice,
+  pullNow,
   pushNow,
   schedulePush,
 } from "../src/js/sync_engine.js";
@@ -819,6 +820,7 @@ describe("sync_engine no-op push", () => {
     try {
       await waitForHealth(baseUrl, token);
       let data = baseData(baseUrl, token);
+      const merged = [];
       _setDeviceIdForTests("dev_noop");
       initSyncEngine({
         getData: () => data,
@@ -826,6 +828,7 @@ describe("sync_engine no-op push", () => {
           data = next;
         },
         saveLocal: async () => null,
+        onMerged: async (_next, stats) => merged.push(stats),
       });
 
       const first = await pushNow("initial");
@@ -850,6 +853,12 @@ describe("sync_engine no-op push", () => {
       const afterThird = await httpPullState({ baseUrl, token });
       assert.equal(afterThird.revision, afterSecond.revision + 1);
       assert.equal(afterThird.doc.nodes[0].title, "Changed locally");
+
+      // 版本号没变时的轮询必须直接返回，不能走 merge（否则会触发整页 render 与壁纸重刷）
+      const mergedBefore = merged.length;
+      const poll = await pullNow("interval");
+      assert.equal(poll.unchanged, true);
+      assert.equal(merged.length, mergedBefore);
     } finally {
       delete globalThis.chrome;
       _setDeviceIdForTests("");

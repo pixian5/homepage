@@ -332,6 +332,20 @@ export async function pullNow(reason = "manual") {
       return { ok: false, reason: remote.reason };
     }
 
+    // 版本号没变 = 服务端没有任何新内容。此时完全不必 merge：
+    // 合并会重算整份数据、必要时触发 render，而 render 会重新应用「副作用型」设置，
+    // 表现出来就是「什么都没改，壁纸却被重刷了一次」。
+    const prevRevision = Number(_status.lastRemoteRevision) || 0;
+    const remoteRevision = Number(remote.doc.revision) || 0;
+    if (prevRevision > 0 && remoteRevision === prevRevision) {
+      _status.lastPullAt = Date.now();
+      _status.status = "idle";
+      _status.lastError = "";
+      if (remote.etag) _status.lastRemoteEtag = remote.etag;
+      await saveState();
+      return { ok: true, merged: false, unchanged: true, reason };
+    }
+
     return applyRemoteDoc(remote.doc, deviceId, reason);
   });
 }
@@ -929,6 +943,8 @@ export function startSyncInterval() {
         if (!live?.settings?.syncEnabled) return;
         if (document.visibilityState && document.visibilityState === "hidden") return;
         const pull = await pullNow("interval");
+        // unchanged = 远端版本号没变，本地也没有需要补推的东西，直接结束这一轮
+        if (pull?.unchanged) return;
         if (pull?.needPush || pull?.empty || (pull?.ok && !pull?.merged && pull?.reason !== "doc_conflict")) {
           // empty / 未合并：尝试推本地；doc_conflict 交给 UI
           if (pull?.reason !== "doc_conflict") await pushNow("interval");

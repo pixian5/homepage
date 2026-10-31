@@ -71,6 +71,16 @@ sudo scripts/setup-sync-server.sh
 
 服务器数据文件必须纳入独立备份。恢复备份前应停止 Node 进程，避免并发覆盖。
 
+恢复脚本会先把归档解压到临时目录，并校验 `revision`、`doc.revision`、schema
+和 `contentHash`；正式数据目录在校验完成前不会改变。切换时采用同级目录改名，
+恢复前目录会保留为 `.homepage-sync-state.pre-restore-*`。服务启动或 `/health`
+检查失败时会自动停止服务、恢复该目录并重新启动，成功后的旧目录也不会立即删除，
+便于人工核查和二次回滚。建议在正式恢复前先执行：
+
+```bash
+sudo scripts/restore-sync-state.sh --archive /var/backups/homepage-sync/<file>.tar.gz --dry-run
+```
+
 ## 运行语义
 
 - 服务器保存单个 `SyncDocument`，不保存每台设备的 Token。

@@ -126,6 +126,10 @@ normalize_safari_project_signing() {
   local development_team
 
   if [[ ! -f "$pbxproj_file" ]]; then
+    if [[ -f "$project_file/project.xcproj" ]]; then
+      echo "[build] Xcode JSON project detected; signing is configured during manual signing"
+      return 0
+    fi
     echo "[build] Skip Safari signing normalization: pbxproj not found -> $pbxproj_file"
     return 0
   fi
@@ -149,6 +153,28 @@ normalize_safari_project_bundle_ids() {
   local app_bundle_id extension_bundle_id
 
   if [[ ! -f "$pbxproj_file" ]]; then
+    if [[ -f "$project_file/project.xcproj" ]]; then
+      SAFARI_PROJECT_JSON="$project_file/project.xcproj" SAFARI_BUNDLE_ID="$SAFARI_BUNDLE_ID" \
+        python3 - <<'PY'
+import json
+import os
+import re
+from pathlib import Path
+
+path = Path(os.environ["SAFARI_PROJECT_JSON"])
+project = json.loads(re.sub(r",(\s*[}\]])", r"\1", path.read_text(encoding="utf-8")))
+bundle_id = os.environ["SAFARI_BUNDLE_ID"]
+for target in project.get("targets", []):
+    settings = target.get("build-settings", {})
+    if target.get("name", "").endswith(" Extension (macOS)"):
+        settings["PRODUCT_BUNDLE_IDENTIFIER"] = f"{bundle_id}.extension"
+    elif target.get("name", "").endswith(" (macOS)"):
+        settings["PRODUCT_BUNDLE_IDENTIFIER"] = bundle_id
+path.write_text(json.dumps(project, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+      echo "[build] Normalize Safari bundle ids in Xcode JSON project -> $SAFARI_BUNDLE_ID"
+      return 0
+    fi
     echo "[build] Skip Safari bundle id normalization: pbxproj not found -> $pbxproj_file"
     return 0
   fi
@@ -186,6 +212,30 @@ normalize_safari_project_versions() {
   local pbxproj_file="$project_file/project.pbxproj"
 
   if [[ ! -f "$pbxproj_file" ]]; then
+    if [[ -f "$project_file/project.xcproj" ]]; then
+      SAFARI_PROJECT_JSON="$project_file/project.xcproj" PACKAGE_JSON="$ROOT_DIR/package.json" \
+        python3 - <<'PY'
+import json
+import os
+import re
+from pathlib import Path
+
+project_path = Path(os.environ["SAFARI_PROJECT_JSON"])
+package_path = Path(os.environ["PACKAGE_JSON"])
+project = json.loads(re.sub(r",(\s*[}\]])", r"\1", project_path.read_text(encoding="utf-8")))
+version = json.loads(package_path.read_text(encoding="utf-8"))["version"]
+build = str(sum(int(part) * (100 ** index) for index, part in enumerate(reversed(version.split(".")))))
+for target in project.get("targets", []):
+    settings = target.get("build-settings", {})
+    if target.get("name", "").endswith(" (macOS)") or target.get("name", "").endswith(" Extension (macOS)"):
+        settings["MARKETING_VERSION"] = version
+        settings["CURRENT_PROJECT_VERSION"] = build
+project.setdefault("build-settings", {})["MARKETING_VERSION"] = version
+project_path.write_text(json.dumps(project, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+      echo "[build] Synchronize Safari version in Xcode JSON project -> $(node -p 'require("./package.json").version')"
+      return 0
+    fi
     echo "[build] Skip Safari version synchronization: pbxproj not found"
     return 0
   fi
@@ -202,7 +252,21 @@ normalize_safari_host_app_sources() {
   local extension_handler_file="$project_root/Shared (Extension)/SafariWebExtensionHandler.swift"
   local app_bundle_id
 
-  if [[ ! -f "$project_file" || ! -f "$view_controller_template" || ! -f "$view_controller_file" ]]; then
+  if [[ ! -f "$view_controller_template" || ! -f "$view_controller_file" ]]; then
+    return 0
+  fi
+
+  if [[ ! -f "$project_file" && ! -f "$project_root/$SAFARI_APP_NAME.xcodeproj/project.xcproj" ]]; then
+    return 0
+  fi
+
+  if [[ ! -f "$project_file" ]]; then
+    local target_extension_bundle_id="${SAFARI_BUNDLE_ID}.extension"
+    echo "[build] Install Safari stable-storage native handler for Xcode JSON project"
+    perl -0pe "s/__SAFARI_EXTENSION_BUNDLE_ID__/$target_extension_bundle_id/g" "$view_controller_template" > "$view_controller_file"
+    if [[ -f "$extension_handler_template" && -f "$extension_handler_file" ]]; then
+      cp "$extension_handler_template" "$extension_handler_file"
+    fi
     return 0
   fi
 
@@ -233,6 +297,48 @@ configure_safari_app_group() {
   local extension_entitlements="$project_root/macOS (Extension)/HomepageSafariExtension.entitlements"
 
   if [[ ! -f "$project_file" || ! -d "$(dirname "$app_entitlements")" || ! -d "$(dirname "$extension_entitlements")" ]]; then
+    if [[ -f "$project_root/$SAFARI_APP_NAME.xcodeproj/project.xcproj" ]]; then
+      mkdir -p "$(dirname "$app_entitlements")" "$(dirname "$extension_entitlements")"
+      APP_ENTITLEMENTS="$app_entitlements" EXT_ENTITLEMENTS="$extension_entitlements" \
+        PROJECT_JSON="$project_root/$SAFARI_APP_NAME.xcodeproj/project.xcproj" \
+        python3 - <<'PY'
+import json
+import os
+import plistlib
+import re
+from pathlib import Path
+
+app_entitlements = Path(os.environ["APP_ENTITLEMENTS"])
+extension_entitlements = Path(os.environ["EXT_ENTITLEMENTS"])
+project_path = Path(os.environ["PROJECT_JSON"])
+plistlib.dump({}, app_entitlements.open("wb"), sort_keys=True)
+plistlib.dump(
+    {
+        "com.apple.security.app-sandbox": True,
+        "com.apple.security.network.client": True,
+        "com.apple.security.temporary-exception.files.home-relative-path.read-write": [
+            "/Library/Application Support/我的首页/"
+        ],
+    },
+    extension_entitlements.open("wb"),
+    sort_keys=True,
+)
+project = json.loads(re.sub(r",(\s*[}\]])", r"\1", project_path.read_text(encoding="utf-8")))
+for target in project.get("targets", []):
+    name = target.get("name", "")
+    settings = target.setdefault("build-settings", {})
+    if name.endswith(" Extension (macOS)"):
+        settings["ENABLE_APP_SANDBOX"] = "YES"
+        settings["CODE_SIGN_ENTITLEMENTS"] = "macOS (Extension)/HomepageSafariExtension.entitlements"
+    elif name.endswith(" (macOS)"):
+        settings.pop("ENABLE_APP_SANDBOX", None)
+        settings.pop("REGISTER_APP_GROUPS", None)
+        settings["CODE_SIGN_ENTITLEMENTS"] = "macOS (App)/HomepageSafari.entitlements"
+project_path.write_text(json.dumps(project, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+      echo "[build] Configure Safari shared storage in Xcode JSON project"
+      return 0
+    fi
     echo "[build] Safari macOS targets not found for entitlement configuration"
     return 1
   fi
@@ -387,8 +493,8 @@ install_safari_extension_icon() {
 
   project_file="$project_root/$SAFARI_APP_NAME.xcodeproj/project.pbxproj"
   if [[ ! -f "$project_file" ]]; then
-    echo "[build] Safari project file not found for extension icon registration"
-    return 1
+    echo "[build] Safari project uses the Xcode JSON project format; icon is already in Resources"
+    return 0
   fi
 
   PBXPROJ_FILE="$project_file" python3 -c '

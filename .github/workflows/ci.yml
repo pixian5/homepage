@@ -41,6 +41,9 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Validate build scripts
+        run: bash -n scripts/build.sh scripts/build-macos.command scripts/restore-sync-state.sh scripts/run-sync-recovery-drill.sh
+
       - name: Build extensions
         run: SKIP_BUMP=1 npm run build
 

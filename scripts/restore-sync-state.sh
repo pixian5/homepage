@@ -11,7 +11,8 @@ set -Eeuo pipefail
 
 DATA_DIR="/var/lib/homepage-sync"
 SERVICE_NAME="homepage-sync"
-HEALTH_URL="http://127.0.0.1:8787/health"
+HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8787/health}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 ARCHIVE=""
 DRY_RUN=0
 
@@ -101,7 +102,7 @@ fi
 
 # 2) 停服务，保证不会在替换过程中写入
 log "停止 $SERVICE_NAME ..."
-systemctl stop "$SERVICE_NAME" || die "停止服务失败"
+"$SYSTEMCTL_BIN" stop "$SERVICE_NAME" || die "停止服务失败"
 
 # 3) 用同一父目录改名实现可逆切换，不先删除现有数据。
 STAMP="$(date +%Y%m%dT%H%M%S)-$$"
@@ -112,12 +113,12 @@ CANDIDATE_DIR="${DATA_PARENT}/.${DATA_NAME}.restore-${STAMP}"
 rollback() {
   set +e
   if ((RESTORE_ACTIVE)); then
-    systemctl stop "$SERVICE_NAME" >/dev/null 2>&1
+      "$SYSTEMCTL_BIN" stop "$SERVICE_NAME" >/dev/null 2>&1
     rm -rf "$DATA_DIR"
     if [[ -d "$BACKUP_DIR" ]]; then
       mv "$BACKUP_DIR" "$DATA_DIR"
     fi
-    systemctl start "$SERVICE_NAME" >/dev/null 2>&1
+    "$SYSTEMCTL_BIN" start "$SERVICE_NAME" >/dev/null 2>&1
     RESTORE_ACTIVE=0
     log "恢复失败，已回滚到恢复前数据目录：$DATA_DIR"
   fi
@@ -127,14 +128,14 @@ trap 'if ((RESTORE_ACTIVE)); then rollback; fi; [[ -z "${TMP_DIR:-}" ]] || rm -r
 
 mkdir -p "$DATA_PARENT"
 rm -rf "$CANDIDATE_DIR"
-mv "$TMP_DIR" "$CANDIDATE_DIR" || { systemctl start "$SERVICE_NAME" || true; die "准备恢复目录失败"; }
+mv "$TMP_DIR" "$CANDIDATE_DIR" || { "$SYSTEMCTL_BIN" start "$SERVICE_NAME" || true; die "准备恢复目录失败"; }
 TMP_DIR=""
 if [[ -d "$DATA_DIR" ]]; then
   mv "$DATA_DIR" "$BACKUP_DIR" || { rm -rf "$CANDIDATE_DIR"; systemctl start "$SERVICE_NAME" || true; die "保留恢复前数据失败"; }
 fi
 mv "$CANDIDATE_DIR" "$DATA_DIR" || {
   [[ -d "$BACKUP_DIR" ]] && mv "$BACKUP_DIR" "$DATA_DIR"
-  systemctl start "$SERVICE_NAME" || true
+  "$SYSTEMCTL_BIN" start "$SERVICE_NAME" || true
   die "切换恢复目录失败"
 }
 RESTORE_ACTIVE=1
@@ -146,7 +147,7 @@ fi
 log "数据已切换，恢复前目录保留为：$BACKUP_DIR"
 
 # 4) 启动并验证；失败时自动恢复旧目录
-if ! systemctl start "$SERVICE_NAME"; then
+if ! "$SYSTEMCTL_BIN" start "$SERVICE_NAME"; then
   rollback
   die "启动服务失败，已回滚"
 fi

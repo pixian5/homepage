@@ -573,7 +573,11 @@ async function pushNowImpl(reason = "manual") {
         // 412 响应携带服务端最新 etag，必须立即采纳；
         // 否则后续重试仍带旧 If-Match，只会一次次再 412 直到重试耗尽
         if (writeErr.etag) _status.lastRemoteEtag = writeErr.etag;
-        await applyRemoteDoc(remoteDoc, deviceId, "push_412_pull");
+        const applied = await applyRemoteDoc(remoteDoc, deviceId, "push_412_pull");
+        if (!applied.ok) {
+          lastErr = applied.reason || "merge_failed";
+          break;
+        }
         continue;
       }
     } else {
@@ -601,7 +605,11 @@ async function pushNowImpl(reason = "manual") {
     if (again.ok) {
       baseRevision = Number(again.doc.revision) || baseRevision;
       if (again.etag) _status.lastRemoteEtag = again.etag;
-      await applyRemoteDoc(again.doc, deviceId, "push_retry_pull");
+      const applied = await applyRemoteDoc(again.doc, deviceId, "push_retry_pull");
+      if (!applied.ok) {
+        lastErr = applied.reason || "merge_failed";
+        break;
+      }
     }
   }
 

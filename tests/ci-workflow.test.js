@@ -17,6 +17,20 @@ describe("CI 浏览器冒烟配置", () => {
     assert.match(ci, /test:browser-smoke -- firefox/, "必须包含 Firefox 冒烟，否则 Firefox 专属回归只能手工发现");
   });
 
+  describe("构建回归门禁", () => {
+    it("checks both legacy PBX and Xcode JSON Safari project formats", async () => {
+      const build = await readFile(path.join(root, "scripts/build.sh"), "utf8");
+      assert.match(build, /project\.pbxproj/);
+      assert.match(build, /project\.xcproj/);
+      assert.match(build, /Xcode JSON project detected/);
+    });
+
+    it("runs shell syntax checks before building extensions", async () => {
+      const ci = await readCi();
+      assert.match(ci, /bash -n scripts\/build\.sh scripts\/build-macos\.command/);
+    });
+  });
+
   it("uses a Firefox build that can load unsigned temporary extensions", async () => {
     const ci = await readCi();
     // 冒烟脚本通过 xpinstall.signatures.required=false + profile 内未签名 XPI 加载扩展；

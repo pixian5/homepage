@@ -112,3 +112,28 @@ npm run test:browser-smoke
 ```
 
 HTTP 集成测试使用独立数据目录、`PORT=0` 动态端口与 IPC（进程间通信）就绪握手；端口占用或子进程提前退出会直接失败，不会把正在运行的同步服务当成测试实例。网络故障用例先持有临时端口再主动断连，重启后继续验证同一地址的重试。
+## 恢复演练
+
+提交前可在本机执行隔离演练。脚本只在临时目录创建状态、归档和模拟服务，不会连接生产服务：
+
+```bash
+bash scripts/run-sync-recovery-drill.sh
+```
+
+演练覆盖：
+
+- 有效归档的 JSON、schema、revision 和 `contentHash` 校验；
+- 恢复后的健康检查；
+- 模拟服务启动失败时的目录级自动回滚。
+
+生产恢复前先执行 dry-run：
+
+```bash
+sudo scripts/restore-sync-state.sh \
+  --archive /var/backups/homepage-sync/homepage-sync-YYYYMMDDTHHMMSSZ.tar.gz \
+  --dry-run
+```
+
+确认输出的 revision 后再去掉 `--dry-run`。恢复脚本会保留恢复前目录为同级
+`.homepage-sync.pre-restore-*`，健康检查失败会自动切回该目录。演练和生产操作都应保存
+输出日志以及恢复前后的 revision、epoch 和 contentHash。

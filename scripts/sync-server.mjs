@@ -589,20 +589,50 @@ const server = createServer(async (req, res) => {
       }
     }
     const dryRun = body?.dryRun !== false;
+    const maxCandidates =
+      Number.isSafeInteger(body?.maxCandidates) && body.maxCandidates >= 0 ? body.maxCandidates : null;
     const result = await enqueueWrite(async () => {
       if (!state) return { status: 409, body: { error: "no_state" }, headers: {} };
       const candidates = computeReclaimCandidates(state);
       if (dryRun) {
         return {
           status: 200,
-          body: { ok: true, dryRun: true, candidates, epoch: state.epoch || 0, revision: state.revision },
+          body: {
+            ok: true,
+            dryRun: true,
+            candidates,
+            candidateCount: candidates.length,
+            epoch: state.epoch || 0,
+            revision: state.revision,
+          },
+          headers: {},
+        };
+      }
+      if (body?.confirm !== "RECLAIM") {
+        return {
+          status: 400,
+          body: { error: "confirmation_required", expected: "RECLAIM" },
+          headers: {},
+        };
+      }
+      if (maxCandidates !== null && candidates.length > maxCandidates) {
+        return {
+          status: 409,
+          body: { error: "candidate_limit_exceeded", candidateCount: candidates.length, maxCandidates },
           headers: {},
         };
       }
       if (!candidates.length) {
         return {
           status: 200,
-          body: { ok: true, dryRun: false, reclaimed: [], epoch: state.epoch || 0, revision: state.revision },
+          body: {
+            ok: true,
+            dryRun: false,
+            reclaimed: [],
+            candidateCount: 0,
+            epoch: state.epoch || 0,
+            revision: state.revision,
+          },
           headers: {},
         };
       }
@@ -648,6 +678,7 @@ const server = createServer(async (req, res) => {
           ok: true,
           dryRun: false,
           reclaimed: candidates,
+          candidateCount: candidates.length,
           epoch: nextEpoch,
           revision: nextRevision,
         },

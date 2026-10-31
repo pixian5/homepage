@@ -137,3 +137,26 @@ sudo scripts/restore-sync-state.sh \
 确认输出的 revision 后再去掉 `--dry-run`。恢复脚本会保留恢复前目录为同级
 `.homepage-sync.pre-restore-*`，健康检查失败会自动切回该目录。演练和生产操作都应保存
 输出日志以及恢复前后的 revision、epoch 和 contentHash。
+
+## 墓碑回收操作
+
+`POST /v1/sync/reclaim` 默认是 dry-run，不会修改状态。先保存候选设备、revision 和 epoch：
+
+```bash
+curl -sS -X POST "$SYNC_URL/v1/sync/reclaim" \
+  -H "Authorization: Bearer $SYNC_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"dryRun":true}'
+```
+
+确认候选设备确实已退役并完成备份后，真实回收必须同时提供明确确认词和候选上限：
+
+```bash
+curl -sS -X POST "$SYNC_URL/v1/sync/reclaim" \
+  -H "Authorization: Bearer $SYNC_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"dryRun":false,"confirm":"RECLAIM","maxCandidates":10}'
+```
+
+缺少 `confirm: "RECLAIM"` 会被拒绝；候选数超过 `maxCandidates` 也会被拒绝。回收成功后
+epoch 递增，所有设备必须重新确认新基线。未完成人工核对前不要自动化调用真实回收。

@@ -178,10 +178,24 @@ describe("tombstone reclaim", () => {
       const stillThere = await httpPullState(cfg);
       assert.equal(stillThere.doc.nodes.length, 1, "dry run 不应删除节点");
 
+      const missingConfirmation = await api(server.baseUrl, TOKEN, "/v1/sync/reclaim", {
+        method: "POST",
+        body: JSON.stringify({ dryRun: false, maxCandidates: 10 }),
+      });
+      assert.equal(missingConfirmation.status, 400);
+      assert.equal(missingConfirmation.body.error, "confirmation_required");
+
+      const limited = await api(server.baseUrl, TOKEN, "/v1/sync/reclaim", {
+        method: "POST",
+        body: JSON.stringify({ dryRun: false, confirm: "RECLAIM", maxCandidates: 0 }),
+      });
+      assert.equal(limited.status, 409);
+      assert.equal(limited.body.error, "candidate_limit_exceeded");
+
       // 真正回收
       const real = await api(server.baseUrl, TOKEN, "/v1/sync/reclaim", {
         method: "POST",
-        body: JSON.stringify({ dryRun: false }),
+        body: JSON.stringify({ dryRun: false, confirm: "RECLAIM", maxCandidates: 10 }),
       });
       assert.equal(real.status, 200);
       assert.deepEqual(real.body.reclaimed, ["n1"]);
@@ -233,7 +247,7 @@ describe("tombstone reclaim", () => {
       await httpConfirmSyncState(cfg, { deviceId: "dev_a", revision: push.revision, protocol: 2 });
       const real = await api(server.baseUrl, TOKEN, "/v1/sync/reclaim", {
         method: "POST",
-        body: JSON.stringify({ dryRun: false }),
+        body: JSON.stringify({ dryRun: false, confirm: "RECLAIM", maxCandidates: 10 }),
       });
       assert.equal(real.status, 200);
       assert.equal(real.body.epoch, 1);
@@ -294,7 +308,7 @@ describe("client epoch handling", () => {
 
       const real = await api(server.baseUrl, TOKEN, "/v1/sync/reclaim", {
         method: "POST",
-        body: JSON.stringify({ dryRun: false }),
+        body: JSON.stringify({ dryRun: false, confirm: "RECLAIM", maxCandidates: 10 }),
       });
       assert.equal(real.body.epoch, 1);
 

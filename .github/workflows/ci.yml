@@ -47,6 +47,15 @@ jobs:
       - name: Build extensions
         run: SKIP_BUMP=1 npm run build
 
+      - name: Validate extension artifacts
+        run: |
+          test -s dist/chrome.zip
+          test -s dist/firefox.zip
+          test -s dist/safari.zip
+          unzip -tq dist/chrome.zip
+          unzip -tq dist/firefox.zip
+          unzip -tq dist/safari.zip
+
       - name: Resolve Chrome for Testing version
         id: chrome-version
         run: |

@@ -3,6 +3,7 @@
 完整目录和每份文档的说明见[根文档索引](../文档索引.md)。本文只提供常用入口；历史分析文档仍保留原始版本和结论，不应直接当作当前状态。
 
 - [当前项目说明](../README.md)
+- [经验库](../经验/README.md)
 - [服务器同步与恢复](server-sync.md)
 - [Safari 宿主应用](safari-host-app.md)
 - [同步冲突设计](sync-conflict-hardening.md)

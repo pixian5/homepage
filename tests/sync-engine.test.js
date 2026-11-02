@@ -7,6 +7,7 @@ import { afterEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   cancelScheduledPush,
+  getOutboxSummary,
   initSyncEngine,
   isRemoteUpdateFromAnotherDevice,
   pullNow,
@@ -864,6 +865,45 @@ describe("sync_engine no-op push", () => {
       _setDeviceIdForTests("");
       await stopServer(child);
       await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("sync_engine outbox hygiene", () => {
+  // 回归：早期走 storage.sync 时留下的队列项永远发不出去，
+  // 但 attempts 已到上限，会让提示条永久显示「自动重试已停止」。
+  it("ignores queue items left behind by an abandoned transport target", async () => {
+    const store = {
+      homepage_sync_outbox: [
+        { targetKey: "storage.sync|homepage", attempts: 12, payload: { a: 1 }, lastError: "Failed to fetch" },
+        { targetKey: "http-server|homepage", attempts: 0, payload: { a: 2 }, lastError: "" },
+      ],
+    };
+    globalThis.chrome = {
+      runtime: { lastError: null },
+      storage: {
+        local: {
+          get(keys, callback) {
+            const out = {};
+            for (const key of Array.isArray(keys) ? keys : [keys]) {
+              if (key in store) out[key] = structuredClone(store[key]);
+            }
+            callback(out);
+          },
+          set(obj, callback) {
+            for (const [k, v] of Object.entries(obj)) store[k] = structuredClone(v);
+            callback?.();
+          },
+        },
+        sync: { get: (_k, cb) => cb?.({}), set: (_o, cb) => cb?.() },
+      },
+    };
+    try {
+      const list = await getOutboxSummary();
+      assert.equal(list.length, 1);
+      assert.equal(list[0].targetKey, "http-server|homepage");
+    } finally {
+      delete globalThis.chrome;
     }
   });
 });

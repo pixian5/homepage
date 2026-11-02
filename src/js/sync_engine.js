@@ -164,12 +164,28 @@ export function getSyncStatus() {
  * 供同步异常提示条判断「自动重试是否已放弃」，不触发任何重试动作。
  * @returns {Promise<Array<{targetKey: string, attempts: number, maxAttempts: number, lastError: string, nextRetryAtMs: number}>>}
  */
+/**
+ * 只保留当前传输目标的队列项。
+ *
+ * 历史坑：早期同步走浏览器 `storage.sync`，目标键是 `storage.sync|homepage`；
+ * 改成自建 HTTP 服务后目标变成 `http-server|homepage`。
+ * 旧目标那条记录 forever 发不出去，`clearOutboxSuccess()` 按新目标清理也清不到它，
+ * 于是它的 attempts 一直停在 12，提示条就永久显示「自动重试已停止」——
+ * 明明当前同步一切正常。这里在读取与加载时直接丢弃废弃目标的记录。
+ *
+ * @param {any[]} list
+ * @returns {any[]}
+ */
+function filterCurrentOutbox(list) {
+  return (Array.isArray(list) ? list : []).filter((item) => item.targetKey === SYNC_OUTBOX_TARGET);
+}
+
 export async function getOutboxSummary() {
   const local = areaLocal();
   if (!local) return [];
   try {
     const got = await storageGetKeys(local, [SYNC_OUTBOX_KEY]);
-    const list = normalizeSyncOutbox(got.value?.[SYNC_OUTBOX_KEY]);
+    const list = filterCurrentOutbox(normalizeSyncOutbox(got.value?.[SYNC_OUTBOX_KEY]));
     return list.map((item) => ({
       targetKey: item.targetKey,
       attempts: Number(item.attempts || 0),
@@ -205,6 +221,12 @@ async function loadState() {
     if (_status.status === "need_setup") {
       _pendingConflictRemote = { docId: _status.conflictRemoteDocId || "" };
     }
+  }
+  // 顺手清掉废弃传输目标留下的僵尸队列项（否则提示条会永久误报「自动重试已停止」）
+  const rawOutbox = normalizeSyncOutbox(got.value?.[SYNC_OUTBOX_KEY]);
+  const kept = filterCurrentOutbox(rawOutbox);
+  if (kept.length !== rawOutbox.length) {
+    await storageSetObj(local, { [SYNC_OUTBOX_KEY]: kept });
   }
 }
 

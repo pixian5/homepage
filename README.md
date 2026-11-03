@@ -4,7 +4,7 @@
 
 ## 当前开发进度
 
-当前版本 **26.7.9**。项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。26.7.8 落地 P1 安全加固（设备独立凭据配对与鉴权、退役 403 阻断、管理接口 master-only、协同设备健康仪表盘）；26.7.9 落地 P2/P3 演进：Popup 一键批量保存当前窗口所有标签页（协议白名单过滤 + URL 去重 + placementClock 结构时钟），Netscape 标准 HTML 书签双向导入导出（自研容错解析器不依赖 DOMParser，导出文件 Chrome/Firefox/Safari/Edge 可直接导入，导入保留文件夹层级并按 URL 幂等去重），详见[Popup 批量保存与标准 HTML 书签](docs/20261104-0145-P2P3演进-Popup批量保存与标准HTML书签双向导入导出-Claude-Opus-5.md)。当前测试 302/302 通过，Biome 检查 0 告警，三端构建与浏览器冒烟均正常。
+当前版本 **26.8.0**。项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。26.7.8 落地 P1 安全加固（设备独立凭据配对与鉴权、退役 403 阻断、管理接口 master-only、协同设备健康仪表盘）；26.7.9~26.8.0 落地 P2/P3 演进：Popup 一键批量保存当前窗口所有标签页（协议白名单过滤 + URL 去重 + placementClock 结构时钟），Netscape 标准 HTML 书签双向导入导出（自研容错解析器不依赖 DOMParser，导出文件 Chrome/Firefox/Safari/Edge 可直接导入，导入保留文件夹层级并按 URL 幂等去重），详见[Popup 批量保存与标准 HTML 书签](docs/20261104-0145-P2P3演进-Popup批量保存与标准HTML书签双向导入导出-Claude-Opus-5.md)。当前测试 302/302 通过，Biome 检查 0 告警，三端构建与浏览器冒烟均正常。
 
 ## 下一步待实现
 

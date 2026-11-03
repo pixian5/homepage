@@ -43,6 +43,14 @@ if [[ ! -d "${APPS_DIR_APP}" ]]; then
   exit 2
 fi
 
+# 扩展注册自愈：App 包完好但系统注册表里没有扩展时（Safari 设置里看不到「我的首页」），
+# 这里自动补回注册。失败不影响后续签名体检，所以吞掉错误。
+if [[ "${DRY_RUN}" == "1" ]]; then
+  bash "${SCRIPT_DIR}/safari-repair-registration.sh" --quiet --dry-run || true
+else
+  bash "${SCRIPT_DIR}/safari-repair-registration.sh" --quiet || true
+fi
+
 STATUS_JSON="$(python3 "${SCRIPT_DIR}/safari-signing-status.py" --app-path "${APPS_DIR_APP}" --json 2>/dev/null || true)"
 if [[ -z "${STATUS_JSON}" ]]; then
   echo "[refresh] ERROR: unable to read signing status for ${APPS_DIR_APP}" >&2

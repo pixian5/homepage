@@ -328,6 +328,12 @@ export async function pullNow(reason = "manual") {
       _status.status = "off";
       return { ok: true, skipped: true };
     }
+    // docId 必须在本轮第一次 saveState 之前就绪。
+    // 旧问题（26.4.0 排查）：状态里存着 docId: null 时，loadState 会把 null 覆盖回内存，
+    // 随后的 saveState() 把 null 落盘；再进入 pushNowImpl 才会 createDocId()。
+    // 若在两者之间发生页面重载或多标签页竞争，就会把空 docId 推给服务端，
+    // 被以 invalid_doc_id 拒绝（同步直接失败）。这里提前生成即可封死该窗口。
+    if (!_status.docId) _status.docId = createDocId();
     _status.status = "syncing";
     _status.lastError = "";
     await saveState();

@@ -1,6 +1,7 @@
 {
   "app": [
     "shared-utils.js",
+    "storage-listener.js",
     "pinyin-match.js",
     "search-manager.js",
     "sync_policy.js",
@@ -8,6 +9,7 @@
     "bookmark-html.js",
     "drag-geometry.js",
     "drag-manager.js",
+    "touch-drag-manager.js",
     "safari_native_storage.js",
     "storage.js",
     "icons.js",

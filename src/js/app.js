@@ -50,6 +50,7 @@ import {
   saveData,
   saveIconCache,
 } from "./storage.js";
+import { createStorageListener } from "./storage-listener.js";
 import { exportSyncBundle, importSyncBundle } from "./sync_bundle.js";
 import {
   cancelScheduledPush,
@@ -86,6 +87,7 @@ import {
 } from "./sync_projection.js";
 import { stampChangedSyncSettings } from "./sync_settings.js";
 import { createSyncBanner } from "./sync-banner.js";
+import { createTouchDragManager } from "./touch-drag-manager.js";
 import { escapeHtml, html, rawHtml, runWithButtonState } from "./ui-utils.js";
 import { attachVisitTracking, recordVisit } from "./visit-history.js";
 
@@ -154,6 +156,10 @@ let pendingDeletion = null;
 let tooltipTimer = null;
 /** 拖拽与重排管理器（drag-manager.js），init 时创建 */
 let dragManager = null;
+/** 触摸拖拽状态机（touch-drag-manager.js），init 时创建 */
+let touchDrag = null;
+/** 存储变更热监听（storage-listener.js），init 时创建 */
+let storageListener = null;
 let lastSelectedIndex = null;
 let recentItems = [];
 /** 「最近历史」分组管理器（history-manager.js），init 时创建 */
@@ -175,8 +181,6 @@ let settingsSaveQueued = false;
 let settingsCtl = null;
 let renderSeq = 0;
 let lastMainLayout = null;
-let storageReloadTimer = null;
-let pendingStorageReload = false;
 let suppressStorageUntil = 0;
 let persistInFlight = 0;
 /** 同步异常提示条控制器（init 时创建；storage 监听里可能先于创建触发，故用可选链） */
@@ -184,32 +188,7 @@ let syncBanner = null;
 let backupFingerprint = "";
 let backupBaselineSnapshot = null;
 let skipAutoBackupOnce = false;
-let suppressTouchClickUntil = 0;
 let modalPointerDownInsideDialog = false;
-const touchDragState = {
-  mode: "",
-  timer: null,
-  active: false,
-  sourceId: "",
-  sourceTile: null,
-  targetTile: null,
-  sourceGroupId: "",
-  sourceGroupBtn: null,
-  targetGroupBtn: null,
-  startX: 0,
-  startY: 0,
-  x: 0,
-  y: 0,
-};
-const touchMenuState = {
-  timer: null,
-  active: false,
-  node: null,
-  startX: 0,
-  startY: 0,
-  x: 0,
-  y: 0,
-};
 const DEBUG_LOG_KEY = "homepage_debug_log";
 
 // ==================== 常量定义 ====================
@@ -232,11 +211,6 @@ const MIN_TILE_SIZE = 32;
 const MAX_TILE_SIZE = 220;
 const MAX_DEBUG_LOG_ENTRIES = 200;
 const BOX_SELECT_THRESHOLD = 6;
-const TOUCH_TILE_CONTEXT_MENU_MS = 1000;
-const TOUCH_TILE_LONG_PRESS_MS = 3000;
-const TOUCH_GROUP_LONG_PRESS_MS = 260;
-const TOUCH_DRAG_MOVE_THRESHOLD = 18;
-const TOUCH_CLICK_SUPPRESS_MS = 400;
 const BACKUP_IGNORED_SETTINGS_KEYS = new Set(["lastActiveGroupId", "lastSaveUrl", "lastSaveTs", "lastSaveToast"]);
 
 const densityMap = {
@@ -411,42 +385,6 @@ async function reloadFromStorage() {
   await consumeSaveToast();
   // popup 等只写了 local：reload 后把投影推到 sync
   if (data?.settings?.syncEnabled) schedulePush();
-}
-
-function scheduleStorageReload() {
-  if (settingsOpen) {
-    pendingStorageReload = true;
-    return;
-  }
-  if (storageReloadTimer) clearTimeout(storageReloadTimer);
-  storageReloadTimer = setTimeout(async () => {
-    storageReloadTimer = null;
-    await reloadFromStorage();
-  }, STORAGE_RELOAD_DELAY_MS);
-}
-
-function attachStorageListener() {
-  const api = getChromeApi();
-  if (!api?.storage?.onChanged) return;
-  const key = getStorageKey();
-  api.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "local") return;
-    // 同步状态/队列变化：其它标签页解决冲突或后台推送后，本页状态栏与提示条也要跟上。
-    // 这些键不受 persistInFlight / suppressStorageUntil 影响（它们只保护数据写入）。
-    if (changes?.[SYNC_STATE_KEY] || changes?.[SYNC_OUTBOX_KEY]) {
-      void syncBanner?.refresh?.();
-      return;
-    }
-    if (persistInFlight > 0) return;
-    if (Date.now() < suppressStorageUntil) return;
-    if (!changes?.[key]) return;
-    // 本地 homepage_data 变更（如 popup 写入）
-    const incoming = changes[key].newValue;
-    const incomingTs = Number(incoming?.lastUpdated || 0);
-    const localTs = Number(data?.lastUpdated || 0);
-    if (incomingTs > 0 && localTs > 0 && incomingTs <= localTs) return;
-    scheduleStorageReload();
-  });
 }
 
 // 调试接口仅在开发构建中暴露，避免生产环境泄露运行时信息
@@ -1102,7 +1040,7 @@ function renderGroups() {
     btn.dataset.groupId = group.id;
     btn.draggable = !fixedAllGroup;
     btn.addEventListener("click", (e) => {
-      if (Date.now() < suppressTouchClickUntil) {
+      if (touchDrag?.isClickSuppressed()) {
         e.preventDefault();
         return;
       }
@@ -1118,15 +1056,8 @@ function renderGroups() {
     });
     // 侧栏分组的卡片投放与分组拖拽排序统一由 drag-manager 处理
     dragManager.bindSidebarFolderEvents(btn, { groupId: group.id, fixedAllGroup });
-    btn.addEventListener(
-      "touchstart",
-      (e) => {
-        if (e.touches.length !== 1 || fixedAllGroup) return;
-        const touch = e.touches[0];
-        beginTouchLongPress("group", group.id, btn, touch.clientX, touch.clientY);
-      },
-      { passive: true },
-    );
+    // 分组长按拖拽排序（触摸状态机见 touch-drag-manager.js）
+    touchDrag.bindGroupTouchEvents(btn, { groupId: group.id, disabled: fixedAllGroup });
     elements.groupTabs.appendChild(btn);
   });
 }
@@ -1237,7 +1168,7 @@ async function renderGrid() {
     }
 
     tile.addEventListener("click", (e) => {
-      if (Date.now() < suppressTouchClickUntil) {
+      if (touchDrag?.isClickSuppressed()) {
         e.preventDefault();
         return;
       }
@@ -1296,16 +1227,8 @@ async function renderGrid() {
     // 拖拽三意图（排序/入文件夹/合并成组）统一由 drag-manager 处理
     dragManager.bindTileDragEvents(tile, node);
 
-    tile.addEventListener(
-      "touchstart",
-      (e) => {
-        if (e.touches.length !== 1) return;
-        if (selectionMode || activeGroupId === RECENT_GROUP_ID) return;
-        const touch = e.touches[0];
-        beginTouchTileHold(node, node.id, tile, touch.clientX, touch.clientY);
-      },
-      { passive: true },
-    );
+    // 触摸长按：1s 上下文菜单 / 3s 拖拽（状态机见 touch-drag-manager.js）
+    touchDrag.bindTileTouchEvents(tile, node);
 
     grid.appendChild(tile);
   }
@@ -1436,215 +1359,6 @@ function updateSelectionStyles() {
   qsa(".tile", grid).forEach((tile) => {
     tile.classList.toggle("selected", selectedIds.has(tile.dataset.id));
   });
-}
-
-function clearTouchDragTimer() {
-  if (!touchDragState.timer) return;
-  clearTimeout(touchDragState.timer);
-  touchDragState.timer = null;
-}
-
-function clearTouchMenuTimer() {
-  if (!touchMenuState.timer) return;
-  clearTimeout(touchMenuState.timer);
-  touchMenuState.timer = null;
-}
-
-function resetTouchMenuState() {
-  clearTouchMenuTimer();
-  touchMenuState.active = false;
-  touchMenuState.node = null;
-  touchMenuState.startX = 0;
-  touchMenuState.startY = 0;
-  touchMenuState.x = 0;
-  touchMenuState.y = 0;
-}
-
-function beginTouchTileHold(node, sourceId, sourceEl, x, y) {
-  resetTouchMenuState();
-  beginTouchLongPress("tile", sourceId, sourceEl, x, y);
-  touchMenuState.node = node;
-  touchMenuState.startX = x;
-  touchMenuState.startY = y;
-  touchMenuState.x = x;
-  touchMenuState.y = y;
-  touchMenuState.timer = setTimeout(() => {
-    if (touchDragState.active || !touchMenuState.node) return;
-    touchMenuState.active = true;
-    clearTouchMenuTimer();
-    openContextMenu(touchMenuState.x, touchMenuState.y, touchMenuState.node);
-  }, TOUCH_TILE_CONTEXT_MENU_MS);
-}
-
-function syncTouchDraggedTilePosition(x, y) {
-  const tile = touchDragState.sourceTile;
-  if (!tile) return;
-  const dx = Math.round(x - touchDragState.startX);
-  const dy = Math.round(y - touchDragState.startY);
-  tile.style.transform = `translate3d(${dx}px, ${dy}px, 0) scale(0.98)`;
-}
-
-function clearTouchDragVisual() {
-  if (touchDragState.sourceTile) {
-    touchDragState.sourceTile.classList.remove("touch-dragging");
-    touchDragState.sourceTile.style.transform = "";
-    touchDragState.sourceTile.style.pointerEvents = "";
-    touchDragState.sourceTile.style.zIndex = "";
-    touchDragState.sourceTile.style.willChange = "";
-  }
-  if (touchDragState.targetTile) {
-    touchDragState.targetTile.classList.remove("touch-drop-target");
-  }
-  if (touchDragState.sourceGroupBtn) {
-    touchDragState.sourceGroupBtn.classList.remove("dragging");
-  }
-  if (touchDragState.targetGroupBtn) {
-    touchDragState.targetGroupBtn.classList.remove("drop-target");
-  }
-  qsa(".group-tab", elements.groupTabs).forEach((el) => {
-    el.classList.remove("drop-target");
-  });
-  document.body.classList.remove("touch-dragging");
-}
-
-function beginTouchLongPress(mode, sourceId, sourceEl, x, y) {
-  resetTouchDragState();
-  touchDragState.mode = mode;
-  if (mode === "tile") {
-    touchDragState.sourceId = sourceId;
-    touchDragState.sourceTile = sourceEl;
-  } else {
-    touchDragState.sourceGroupId = sourceId;
-    touchDragState.sourceGroupBtn = sourceEl;
-  }
-  touchDragState.startX = x;
-  touchDragState.startY = y;
-  touchDragState.x = x;
-  touchDragState.y = y;
-  const pressMs = mode === "tile" ? TOUCH_TILE_LONG_PRESS_MS : TOUCH_GROUP_LONG_PRESS_MS;
-  touchDragState.timer = setTimeout(() => {
-    activateTouchDrag();
-  }, pressMs);
-}
-
-function activateTouchDrag() {
-  if (!touchDragState.mode) return;
-  touchDragState.active = true;
-  clearTouchDragTimer();
-  if (touchDragState.mode === "tile") {
-    if (touchMenuState.active) closeContextMenu();
-    resetTouchMenuState();
-    dragManager.setDragState({ id: touchDragState.sourceId, fromFolder: openFolderId });
-    if (touchDragState.sourceTile) {
-      touchDragState.sourceTile.classList.add("touch-dragging");
-      touchDragState.sourceTile.style.pointerEvents = "none";
-      touchDragState.sourceTile.style.zIndex = "80";
-      touchDragState.sourceTile.style.willChange = "transform";
-      syncTouchDraggedTilePosition(touchDragState.x, touchDragState.y);
-    }
-    touchDragState.targetTile = null;
-  } else if (touchDragState.mode === "group") {
-    dragManager.setDraggingGroupId(touchDragState.sourceGroupId);
-    touchDragState.sourceGroupBtn?.classList.add("dragging");
-    touchDragState.targetGroupBtn = null;
-  }
-  document.body.classList.add("touch-dragging");
-}
-
-function updateTouchDragTarget(x, y) {
-  if (!touchDragState.active) return;
-  touchDragState.x = x;
-  touchDragState.y = y;
-  const pointEl = document.elementFromPoint(x, y) || null;
-  if (touchDragState.mode === "tile") {
-    syncTouchDraggedTilePosition(x, y);
-    const hoverTile = pointEl?.closest?.(".tile") || null;
-    const nextTarget = hoverTile && hoverTile.dataset.id !== touchDragState.sourceId ? hoverTile : null;
-    if (touchDragState.targetTile && touchDragState.targetTile !== nextTarget) {
-      touchDragState.targetTile.classList.remove("touch-drop-target");
-    }
-    if (nextTarget && nextTarget !== touchDragState.targetTile) {
-      nextTarget.classList.add("touch-drop-target");
-    }
-    touchDragState.targetTile = nextTarget;
-    const hoverGroup = pointEl?.closest?.(".group-tab.draggable") || null;
-    if (touchDragState.targetGroupBtn && touchDragState.targetGroupBtn !== hoverGroup) {
-      touchDragState.targetGroupBtn.classList.remove("drop-target");
-    }
-    if (hoverGroup && hoverGroup !== touchDragState.targetGroupBtn) hoverGroup.classList.add("drop-target");
-    touchDragState.targetGroupBtn = hoverGroup;
-    return;
-  }
-  if (touchDragState.mode === "group") {
-    const hoverGroup = pointEl?.closest?.(".group-tab.draggable") || null;
-    const nextTarget = hoverGroup && hoverGroup.dataset.groupId !== touchDragState.sourceGroupId ? hoverGroup : null;
-    if (touchDragState.targetGroupBtn && touchDragState.targetGroupBtn !== nextTarget) {
-      touchDragState.targetGroupBtn.classList.remove("drop-target");
-    }
-    if (nextTarget && nextTarget !== touchDragState.targetGroupBtn) {
-      nextTarget.classList.add("drop-target");
-    }
-    touchDragState.targetGroupBtn = nextTarget;
-  }
-}
-
-function resetTouchDragState() {
-  clearTouchDragTimer();
-  clearTouchDragVisual();
-  resetTouchMenuState();
-  touchDragState.mode = "";
-  touchDragState.active = false;
-  touchDragState.sourceId = "";
-  touchDragState.sourceTile = null;
-  touchDragState.targetTile = null;
-  touchDragState.sourceGroupId = "";
-  touchDragState.sourceGroupBtn = null;
-  touchDragState.targetGroupBtn = null;
-  dragManager.cleanupDragState();
-}
-
-function finishTouchDrag() {
-  if (!touchDragState.active) return false;
-  if (touchDragState.mode === "tile") {
-    const sourceId = touchDragState.sourceId;
-    const targetId = touchDragState.targetTile?.dataset?.id || "";
-    const x = touchDragState.x;
-    const y = touchDragState.y;
-
-    const targetFolderId = touchDragState.targetGroupBtn?.dataset?.groupId || "";
-    if (targetFolderId) {
-      dragManager.moveDraggedNodeToSidebarFolder(sourceId, targetFolderId);
-    } else if (targetId && targetId !== sourceId) {
-      dragManager.dropOnTile(targetId, x, y);
-    } else if (activeGroupId !== RECENT_GROUP_ID) {
-      const inFolder = !!openFolderId;
-      const container = inFolder ? getFolderPlacementContainer(openFolderId) : getActiveGroup();
-      const list = getPlacementList(container);
-      const grid = inFolder ? elements.folderGrid : elements.grid;
-      const next = moveNodeInList(list, sourceId, dragManager.getDropIndex(grid, x, y));
-      if (next !== list) {
-        setPlacementList(container, next);
-        touchPlacementContainer(container);
-        queuePersist();
-        render();
-      }
-    }
-  } else if (touchDragState.mode === "group") {
-    const sourceId = touchDragState.sourceGroupId;
-    const targetId = touchDragState.targetGroupBtn?.dataset?.groupId || "";
-    if (targetId && targetId !== sourceId) {
-      dragManager.moveGroupBefore(sourceId, targetId);
-    } else {
-      const rect = elements.groupTabs.getBoundingClientRect();
-      const total = getRootFolderIds().length;
-      if (touchDragState.y < rect.top + 24) moveGroupToIndex(sourceId, 0);
-      else if (touchDragState.y > rect.bottom - 24) moveGroupToIndex(sourceId, total);
-    }
-  }
-
-  suppressTouchClickUntil = Date.now() + TOUCH_CLICK_SUPPRESS_MS;
-  resetTouchDragState();
-  return true;
 }
 
 let contextMenuManager = null;
@@ -1955,10 +1669,8 @@ function getModalManager() {
         settingsOpen = false;
         settingsSaving = false;
         settingsSaveQueued = false;
-        if (pendingStorageReload) {
-          pendingStorageReload = false;
-          scheduleStorageReload();
-        }
+        // 设置弹窗打开期间挂起的外部存储变更，关闭后补一次重载
+        storageListener?.flushPendingReload();
       },
     });
   }
@@ -2180,11 +1892,58 @@ function createDragManagerInstance() {
   });
 }
 
+/**
+ * 创建触摸拖拽状态机实例（能力与依赖见 touch-drag-manager.js），
+ * 与 dragManager 通过状态接口协同。
+ */
+function createTouchDragManagerInstance() {
+  return createTouchDragManager({
+    dragManager,
+    getState: () => ({ activeGroupId, openFolderId }),
+    getGrid: (inFolder) => (inFolder ? elements.folderGrid : elements.grid),
+    getContainer: () => (openFolderId ? getFolderPlacementContainer(openFolderId) : getActiveGroup()),
+    getPlacementList,
+    setPlacementList,
+    touchPlacementContainer,
+    moveNodeInList,
+    moveGroupToIndex,
+    getRootFolderIds,
+    getGroupTabs: () => elements.groupTabs,
+    queuePersist,
+    render,
+    openContextMenu,
+    closeContextMenu,
+    isRecentGroup: (groupId) => groupId === RECENT_GROUP_ID,
+    canStartTileTouch: () => !selectionMode,
+  });
+}
+
+/**
+ * 创建存储变更热监听实例（扩展 onChanged + Web storage 事件双通道）。
+ * 自身写入抑制窗口 / 时间戳回声判定 / 设置弹窗挂起补刷全部内聚于监听器。
+ */
+function createStorageListenerInstance() {
+  return createStorageListener({
+    dataKey: getStorageKey(),
+    syncKeys: [SYNC_STATE_KEY, SYNC_OUTBOX_KEY],
+    getData: () => data,
+    isPersistInFlight: () => persistInFlight > 0,
+    isSuppressed: () => Date.now() < suppressStorageUntil,
+    isSettingsOpen: () => settingsOpen,
+    reload: () => reloadFromStorage(),
+    onSyncKeysChanged: () => void syncBanner?.refresh?.(),
+    reloadDelayMs: STORAGE_RELOAD_DELAY_MS,
+  });
+}
+
 async function init() {
   debugLog("init_start", getRuntimeInfo());
   // 图标管线与拖拽管理器先建好（renderGrid / 弹窗 / 存储监听都会用到）
   iconManager = createIconManagerInstance();
   dragManager = createDragManagerInstance();
+  touchDrag = createTouchDragManagerInstance();
+  storageListener = createStorageListenerInstance();
+  storageListener.bind();
   // 纯 Web / PWA 模式（无扩展 API 直接打开页面）：数据走 localStorage，扩展专属能力已安全降级
   if (getStorageMode() === "web-local") {
     console.info("[homepage] Web 模式就绪：无扩展环境，数据保存在浏览器 localStorage，历史/标签页等扩展能力已降级");
@@ -2358,7 +2117,6 @@ async function init() {
     console.warn("attachVisitTracking failed", e);
   }
   listenForExternalToast();
-  attachStorageListener();
   // 历史管理器先建好，再并行 loadData 与拉取最近历史，减少首屏等待
   historyManager = createHistoryManagerInstance();
   const recentPromise = historyManager.fetchRecentHistory();
@@ -2766,74 +2524,8 @@ function bindEvents() {
     }
   });
 
-  document.addEventListener(
-    "touchmove",
-    (e) => {
-      if (e.touches.length !== 1) return;
-      const touch = e.touches[0];
-      if (!touchDragState.active && touchMenuState.timer) {
-        touchMenuState.x = touch.clientX;
-        touchMenuState.y = touch.clientY;
-        const moved = Math.hypot(touch.clientX - touchMenuState.startX, touch.clientY - touchMenuState.startY);
-        if (moved > TOUCH_DRAG_MOVE_THRESHOLD) {
-          resetTouchMenuState();
-          clearTouchDragTimer();
-        }
-      }
-      if (touchMenuState.active && !touchDragState.active) {
-        e.preventDefault();
-        return;
-      }
-      if (!touchDragState.active && touchDragState.timer) {
-        const moved = Math.hypot(touch.clientX - touchDragState.startX, touch.clientY - touchDragState.startY);
-        if (moved > TOUCH_DRAG_MOVE_THRESHOLD) {
-          clearTouchDragTimer();
-          resetTouchMenuState();
-        }
-        return;
-      }
-      if (!touchDragState.active) return;
-      e.preventDefault();
-      updateTouchDragTarget(touch.clientX, touch.clientY);
-    },
-    { passive: false },
-  );
-
-  document.addEventListener(
-    "touchend",
-    (e) => {
-      if (touchMenuState.timer && !touchMenuState.active) {
-        resetTouchMenuState();
-      }
-      if (touchMenuState.active && !touchDragState.active) {
-        e.preventDefault();
-        suppressTouchClickUntil = Date.now() + TOUCH_CLICK_SUPPRESS_MS;
-        resetTouchMenuState();
-        clearTouchDragTimer();
-        return;
-      }
-      if (touchDragState.timer && !touchDragState.active) {
-        clearTouchDragTimer();
-        return;
-      }
-      if (!touchDragState.active) return;
-      const touch = e.changedTouches?.[0];
-      if (touch) {
-        updateTouchDragTarget(touch.clientX, touch.clientY);
-      }
-      e.preventDefault();
-      finishTouchDrag();
-    },
-    { passive: false },
-  );
-
-  document.addEventListener(
-    "touchcancel",
-    () => {
-      resetTouchDragState();
-    },
-    { passive: true },
-  );
+  // 触摸拖拽全局监听（状态机见 touch-drag-manager.js）
+  touchDrag.bindDocumentTouchEvents();
 
   // 网格空白区投放（主网格 / 文件夹覆盖层）与侧栏分组容器拖拽，统一由 drag-manager 处理
   dragManager.bindGridDropEvents(elements.grid, {

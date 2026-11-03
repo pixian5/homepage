@@ -1001,3 +1001,185 @@ describe("sync_engine stale snapshot protection", () => {
     }
   });
 });
+
+describe("sync_engine multi-tab pull", () => {
+  // 回归：同浏览器多个标签共享 sync_state。A 标签拉到新版本后把 lastRemoteRevision 写成新值，
+  // B 标签读到它就以为自己也最新了，而 B 内存里的 data 还停在旧版本 —— 于是永远不合并，
+  // 界面一直显示旧设置，看起来就是「每次同步都以为对方最新」。
+  it("still merges when the shared revision looks current but local data is older", async () => {
+    const port = 30000 + (process.pid % 2000);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const token = "sync-engine-multitab-token";
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-multitab."));
+    const child = spawn(process.execPath, [path.join(root, "scripts", "sync-server.mjs")], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HOST: "127.0.0.1",
+        TOKEN: token,
+        DATA_FILE: path.join(tempDir, "state.json"),
+      },
+      stdio: "ignore",
+    });
+    const store = {};
+    globalThis.chrome = {
+      runtime: { lastError: null },
+      storage: {
+        local: {
+          get(keys, callback) {
+            const out = {};
+            for (const key of Array.isArray(keys) ? keys : [keys]) {
+              if (key in store) out[key] = structuredClone(store[key]);
+            }
+            callback(out);
+          },
+          set(obj, callback) {
+            for (const [k, v] of Object.entries(obj)) store[k] = structuredClone(v);
+            callback?.();
+          },
+        },
+        sync: { get: (_k, cb) => cb?.({}), set: (_o, cb) => cb?.() },
+      },
+    };
+
+    try {
+      await waitForHealth(baseUrl, token);
+      let data = baseData(baseUrl, token);
+      _setDeviceIdForTests("dev_tab_b");
+      initSyncEngine({
+        getData: () => data,
+        setData: (next) => {
+          data = next;
+        },
+        saveLocal: async () => null,
+      });
+
+      const first = await pushNow("initial");
+      assert.equal(first.ok, true);
+      assert.equal(Number(data._syncMeta?.revision), 1, "推送后本地应记下自己所处的版本");
+
+      // 另一台设备推送新标题
+      const remote1 = await httpPullState({ baseUrl, token });
+      const peerDoc = structuredClone(remote1.doc);
+      peerDoc.deviceId = "dev_peer";
+      peerDoc.nodes[0].title = "Written by peer";
+      peerDoc.nodes[0].titleUpdatedAt = 50;
+      peerDoc.nodes[0].updatedAt = 50;
+      peerDoc.nodes[0].updatedBy = "dev_peer";
+      peerDoc.writtenAt = 50;
+      peerDoc.contentHash = hashSyncDocument(peerDoc);
+      const peerWrite = await httpPushState({ baseUrl, token }, peerDoc, { ifMatch: remote1.etag });
+      assert.equal(peerWrite.ok, true);
+      const afterPeer = await httpPullState({ baseUrl, token });
+
+      // 模拟「另一个标签已经拉到这一版」：共享状态里的 lastRemoteRevision 被推到了新版本，
+      // 但本标签内存里的 data 仍停在 revision 1。
+      store.homepage_sync_state = {
+        ...(store.homepage_sync_state || {}),
+        lastRemoteRevision: afterPeer.revision,
+        lastRemoteEtag: afterPeer.etag,
+        status: "idle",
+      };
+      assert.equal(Number(data._syncMeta?.revision), 1);
+
+      const pulled = await pullNow("interval");
+      assert.notEqual(pulled.unchanged, true, "本地数据还是旧的，不能判定为「无变化」");
+      assert.equal(data.nodes.n1.title, "Written by peer");
+      assert.equal(Number(data._syncMeta?.revision), afterPeer.revision);
+    } finally {
+      delete globalThis.chrome;
+      _setDeviceIdForTests("");
+      await stopServer(child);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("sync_engine convergence after pull", () => {
+  // 回归：合并后本地赢了某个字段（本地时钟更新），若只拉不推，服务端永远留旧值，
+  // 两端内容长期不一致 —— 背景/设置「一会儿这样一会儿那样」就是这么卡的。
+  it("reports needPush when the merged local content still differs from remote", async () => {
+    const port = 31000 + (process.pid % 2000);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const token = "sync-engine-converge-token";
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-converge."));
+    const child = spawn(process.execPath, [path.join(root, "scripts", "sync-server.mjs")], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HOST: "127.0.0.1",
+        TOKEN: token,
+        DATA_FILE: path.join(tempDir, "state.json"),
+      },
+      stdio: "ignore",
+    });
+    const store = {};
+    globalThis.chrome = {
+      runtime: { lastError: null },
+      storage: {
+        local: {
+          get(keys, callback) {
+            const out = {};
+            for (const key of Array.isArray(keys) ? keys : [keys])
+              if (key in store) out[key] = structuredClone(store[key]);
+            callback(out);
+          },
+          set(obj, callback) {
+            for (const [k, v] of Object.entries(obj)) store[k] = structuredClone(v);
+            callback?.();
+          },
+        },
+        sync: { get: (_k, cb) => cb?.({}), set: (_o, cb) => cb?.() },
+      },
+    };
+
+    try {
+      await waitForHealth(baseUrl, token);
+      let data = baseData(baseUrl, token);
+      // 本地标题时钟更新
+      data.nodes.n1.title = "Local newer";
+      data.nodes.n1.titleUpdatedAt = 500;
+      data.nodes.n1.updatedAt = 500;
+      _setDeviceIdForTests("dev_local");
+      initSyncEngine({
+        getData: () => data,
+        setData: (next) => {
+          data = next;
+        },
+        saveLocal: async () => null,
+      });
+
+      const first = await pushNow("initial");
+      assert.equal(first.ok, true);
+
+      // 另一台设备推了一版更旧的标题（时钟更小）
+      const remote1 = await httpPullState({ baseUrl, token });
+      const peerDoc = structuredClone(remote1.doc);
+      peerDoc.deviceId = "dev_peer";
+      peerDoc.nodes[0].title = "Peer older";
+      peerDoc.nodes[0].titleUpdatedAt = 10;
+      peerDoc.nodes[0].updatedAt = 10;
+      peerDoc.nodes[0].updatedBy = "dev_peer";
+      peerDoc.writtenAt = 600;
+      peerDoc.contentHash = hashSyncDocument(peerDoc);
+      const peerWrite = await httpPushState({ baseUrl, token }, peerDoc, { ifMatch: remote1.etag });
+      assert.equal(peerWrite.ok, true);
+
+      const pulled = await pullNow("interval");
+      assert.equal(pulled.needPush, true, "本地赢了就必须提示需要推送");
+      assert.equal(data.nodes.n1.title, "Local newer");
+
+      const pushed = await pushNow("converge");
+      assert.equal(pushed.ok, true);
+      const final = await httpPullState({ baseUrl, token });
+      assert.equal(final.doc.nodes[0].title, "Local newer", "推上去之后服务端应与本地一致");
+    } finally {
+      delete globalThis.chrome;
+      _setDeviceIdForTests("");
+      await stopServer(child);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});

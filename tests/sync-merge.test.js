@@ -19,6 +19,7 @@ import {
   syncDocumentToHomepageShape,
   toSyncDocument,
 } from "../src/js/sync_projection.js";
+import { mergeSettingsByClock } from "../src/js/sync_settings.js";
 
 function baseData(overrides = {}) {
   return {
@@ -752,5 +753,30 @@ describe("sync_bundle", () => {
     assert.equal(result.ok, true);
     assert.ok(result.state.nodes.n1);
     assert.ok(result.state.nodes.n9);
+  });
+});
+
+describe("mergeSettingsByClock convergence", () => {
+  // 回归：时钟完全一致（updatedAt 与 updatedBy 都相同）但值不同时，
+  // 「远端优先」会让两端互相采纳对方的值，形成永久来回切换。
+  it("converges to the same value from both directions on an exact clock tie", () => {
+    const clock = { backgroundType: { updatedAt: 1000, updatedBy: "dev_a" } };
+    const a = { backgroundType: "color" };
+    const b = { backgroundType: "bing" };
+    const ab = mergeSettingsByClock(a, b, clock, clock).settings.backgroundType;
+    const ba = mergeSettingsByClock(b, a, clock, clock).settings.backgroundType;
+    assert.equal(ab, ba, "两个方向必须收敛到同一个值，否则会来回切换");
+  });
+
+  it("still prefers the strictly newer clock", () => {
+    const localClock = { backgroundType: { updatedAt: 2000, updatedBy: "dev_a" } };
+    const remoteClock = { backgroundType: { updatedAt: 1000, updatedBy: "dev_b" } };
+    const merged = mergeSettingsByClock(
+      { backgroundType: "color" },
+      { backgroundType: "bing" },
+      localClock,
+      remoteClock,
+    );
+    assert.equal(merged.settings.backgroundType, "color");
   });
 });

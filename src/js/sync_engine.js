@@ -150,7 +150,13 @@ function installVisibilitySync() {
     const now = Date.now();
     if (now - _lastVisibilitySyncAt < VISIBILITY_SYNC_MIN_MS) return;
     _lastVisibilitySyncAt = now;
-    void pullNow("visible").catch((e) => console.warn("visibility sync failed", e));
+    void pullNow("visible")
+      .then((res) => {
+        // 合并后本地仍与远端不同 → 推上去收敛
+        if (res?.needPush) return pushNow("visible_need_push");
+        return null;
+      })
+      .catch((e) => console.warn("visibility sync failed", e));
   });
 }
 
@@ -386,15 +392,23 @@ export async function pullNow(reason = "manual") {
       return { ok: false, reason: remote.reason };
     }
 
-    // 版本号没变 = 服务端没有任何新内容。此时完全不必 merge：
-    // 合并会重算整份数据、必要时触发 render，而 render 会重新应用「副作用型」设置，
-    // 表现出来就是「什么都没改，壁纸却被重刷了一次」。
-    const prevRevision = Number(_status.lastRemoteRevision) || 0;
-    const remoteRevision = Number(remote.doc.revision) || 0;
-    if (prevRevision > 0 && remoteRevision === prevRevision) {
+    // 版本号没变 = 服务端没有任何新内容，不必 merge：
+    // 合并会重算整份数据、必要时触发 render，而 render 会重新应用「副作用型」设置。
+    //
+    // 但**不能只看共享状态里的 lastRemoteRevision**：同一浏览器的多个标签页共享这份状态，
+    // A 标签拉到 88 之后，B 标签读到 88 就会以为自己也最新了——而 B 内存里的 data
+    // 可能还停在 84，于是它永远不合并、界面一直显示旧设置。
+    // 所以再加一条：本地数据自己的 _syncMeta.revision 也必须已经等于远端版本。
+    // 判「有没有变化」只看内容，不看版本号记账。
+    // 同机多标签共享 sync_state，版本号一致并不代表本实例的数据也是那一版；
+    // 实测还出现过「版本号相同、内容不同」的僵局（本地 color、服务端 bing），
+    // 靠版本号永远自愈不了，只会一直显示旧设置。
+    // 内容一致时直接返回：不合并、不 render，也就不会重刷壁纸。
+    if (isContentEqualToRemote(_getData(), remote.doc, _status.docId)) {
       _status.lastPullAt = Date.now();
       _status.status = "idle";
       _status.lastError = "";
+      _status.lastRemoteRevision = Number(remote.doc.revision) || _status.lastRemoteRevision || 0;
       if (remote.etag) _status.lastRemoteEtag = remote.etag;
       await saveState();
       return { ok: true, merged: false, unchanged: true, reason };
@@ -473,6 +487,9 @@ async function applyRemoteDoc(doc, deviceId, reason) {
   return {
     ok: true,
     merged: !!merged.stats?.applied,
+    // 合并后的本地内容若仍与远端不同，说明本地「赢了」某个字段——
+    // 必须把它推上去，否则服务端永远保留旧值，两端长期不一致（背景来回切换就是这么来的）。
+    needPush: !isContentEqualToRemote(_getData(), doc, _status.docId),
     stats: { ...merged.stats, remoteNewer, remoteRevision, remoteDeviceId },
     reason,
   };
@@ -621,6 +638,23 @@ async function pushNowImpl(reason = "manual") {
       _status.lastRemoteRevision = revision;
       _status.status = "idle";
       _status.lastError = "";
+      // 推送成功后，本地内容此刻就等于刚写上去的 revision，把它记进数据本身。
+      // pull 的短路判断（以及多标签场景）需要「这份 data 究竟处于哪一版」这个事实，
+      // 只靠共享状态里的 lastRemoteRevision 会被别的标签页带偏。
+      const current = _getData();
+      if (current && typeof current === "object") {
+        current._syncMeta = {
+          ...(current._syncMeta && typeof current._syncMeta === "object" ? current._syncMeta : {}),
+          docId: _status.docId,
+          revision,
+          contentHash: doc.contentHash,
+        };
+        try {
+          await _saveLocal(current);
+        } catch (e) {
+          console.warn("record local revision failed", e);
+        }
+      }
       await clearOutboxSuccess();
       await saveState();
       // 推送成功说明本机持有该版本，可以确认

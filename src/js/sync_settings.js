@@ -121,7 +121,25 @@ export function mergeSettingsByClock(localSettings = {}, remoteSettings = {}, lo
       continue;
     }
 
-    if (!localHasClock || compareClock(rClock[key], lClock[key]) >= 0) {
+    if (!localHasClock) {
+      settings[key] = remoteValue;
+      settingsClock[key] = rClock[key];
+      continue;
+    }
+
+    const cmp = compareClock(rClock[key], lClock[key]);
+    if (cmp > 0) {
+      settings[key] = remoteValue;
+      settingsClock[key] = rClock[key];
+      continue;
+    }
+    if (cmp < 0) continue;
+
+    // 时钟完全相同（updatedAt 与 updatedBy 都一致）但值不同——这在实际数据里出现过：
+    // 某次改动没有重新打戳，于是两端的「时钟 + 值」对不上。
+    // 此时若直接采纳远端，两端会互相采纳对方的值，形成永久来回切换（背景一会儿渐变一会儿 Bing）。
+    // 改成按时钟之外再加一层：取序列化后字典序较大的那个值，保证两个方向都收敛到同一结果。
+    if (!localHasValue || stableValue(remoteValue) > stableValue(local[key])) {
       settings[key] = remoteValue;
       settingsClock[key] = rClock[key];
     }

@@ -2,6 +2,8 @@
   "app": [
     "shared-utils.js",
     "storage-listener.js",
+    "theme-manager.js",
+    "selection-manager.js",
     "pinyin-match.js",
     "search-manager.js",
     "sync_policy.js",

@@ -29,6 +29,7 @@ import { createIconManager } from "./icon-manager.js";
 import { clearIconCacheForUrl, compressImageFileToDataUrl, getSiteKey, retryFailedIconsIfDue } from "./icons.js";
 import { createModalManager } from "./modal-manager.js";
 import { createSearchManager } from "./search-manager.js";
+import { createSelectionManager } from "./selection-manager.js";
 import { createSettingsController } from "./settings-controller.js";
 import { getStorageMode, normalizeUrl, RECENT_GROUP_ID, SAFE_URL_PROTOCOLS } from "./shared-utils.js";
 import {
@@ -87,6 +88,7 @@ import {
 } from "./sync_projection.js";
 import { stampChangedSyncSettings } from "./sync_settings.js";
 import { createSyncBanner } from "./sync-banner.js";
+import { createThemeManager } from "./theme-manager.js";
 import { createTouchDragManager } from "./touch-drag-manager.js";
 import { escapeHtml, html, rawHtml, runWithButtonState } from "./ui-utils.js";
 import { attachVisitTracking, recordVisit } from "./visit-history.js";
@@ -147,11 +149,8 @@ let data = null;
  * 同步合并、跨标签页重载这两条路径都会整体替换 data，但不会重跑背景初始化，
  * 导致「从服务器同步过来的背景设置要手动切一下才生效」。用它判断背景相关设置是否变了。
  */
-let appliedBackgroundSignature = "";
 let activeGroupId = null;
 let openFolderId = null;
-let selectionMode = false;
-let selectedIds = new Set();
 let pendingDeletion = null;
 let tooltipTimer = null;
 /** 拖拽与重排管理器（drag-manager.js），init 时创建 */
@@ -160,7 +159,11 @@ let dragManager = null;
 let touchDrag = null;
 /** 存储变更热监听（storage-listener.js），init 时创建 */
 let storageListener = null;
-let lastSelectedIndex = null;
+/** 批量选择管理器（selection-manager.js），init 时创建 */
+let selectionMgr = null;
+/** 主题与背景管线管理器（theme-manager.js），init 时创建 */
+let themeMgr = null;
+const lastSelectedIndex = null;
 let recentItems = [];
 /** 「最近历史」分组管理器（history-manager.js），init 时创建 */
 let historyManager = null;
@@ -168,11 +171,6 @@ let historyManager = null;
 let searchManager = null;
 /** 图标管线管理器（icon-manager.js），init 时创建 */
 let iconManager = null;
-let boxSelecting = false;
-let selectionBox = null;
-let selectionStart = null;
-let suppressBlankClick = false;
-let isDraggingBox = false;
 let settingsOpen = false;
 let settingsSaving = false;
 let settingsSaveTimer = null;
@@ -192,8 +190,6 @@ let modalPointerDownInsideDialog = false;
 const DEBUG_LOG_KEY = "homepage_debug_log";
 
 // ==================== 常量定义 ====================
-const DEFAULT_TILE_SIZE = 150;
-const DEFAULT_BASE_FONT = 13;
 const DEFAULT_TOAST_DURATION_SECONDS = 5;
 
 function getToastDurationMs() {
@@ -210,18 +206,7 @@ const TOAST_CONSUME_TIMEOUT_MS = 15000;
 const MIN_TILE_SIZE = 32;
 const MAX_TILE_SIZE = 220;
 const MAX_DEBUG_LOG_ENTRIES = 200;
-const BOX_SELECT_THRESHOLD = 6;
 const BACKUP_IGNORED_SETTINGS_KEYS = new Set(["lastActiveGroupId", "lastSaveUrl", "lastSaveTs", "lastSaveToast"]);
-
-const densityMap = {
-  compact: { gap: 10 },
-  standard: { gap: 16 },
-  spacious: { gap: 22 },
-};
-const _bgOverlayMap = {
-  light: "rgba(245, 246, 250, 0.85)",
-  dark: "rgba(12, 15, 20, 0.72)",
-};
 
 function currentLang() {
   const stored = normalizeLanguage(data?.settings?.language || "");
@@ -344,7 +329,7 @@ function shouldDebugPersist() {
 async function reloadFromStorage() {
   const prevActive = activeGroupId;
   const prevOpenFolder = openFolderId;
-  const prevSelected = new Set(selectedIds);
+  const prevSelected = new Set(selectionMgr?.getSelectedIds() || []);
   const prevLocalTs = Number(data?.lastUpdated || 0);
   const prevPending = persistInFlight > 0;
   // 先从磁盘重载 local（popup 等外部写入），再按需 pull 合并远端投影
@@ -377,7 +362,7 @@ async function reloadFromStorage() {
   } else {
     openFolderId = null;
   }
-  selectedIds = new Set([...prevSelected].filter((id) => data.nodes?.[id]));
+  selectionMgr?.retainOnly(new Set(Object.keys(data.nodes || {})));
   ensureLanguageSetting();
   syncBackupBaseline(data);
   render();
@@ -408,39 +393,6 @@ if (typeof DEBUG !== "undefined" && DEBUG) {
       });
     });
   };
-}
-
-function applyDensity() {
-  const d = densityMap[data.settings.gridDensity] || densityMap.standard;
-  document.documentElement.style.setProperty("--grid-gap", `${d.gap}px`);
-  const baseFont = Number(data.settings.fontSize) || DEFAULT_BASE_FONT;
-  document.documentElement.style.setProperty("--tile-font", `${baseFont}px`);
-  document.documentElement.style.setProperty("--base-font", `${baseFont}px`);
-  if (
-    !data.settings.lastTileSize ||
-    data.settings.lastTileSize <= 0 ||
-    data.settings.lastTileSize < DEFAULT_TILE_SIZE
-  ) {
-    data.settings.lastTileSize = DEFAULT_TILE_SIZE;
-  }
-}
-
-function applyTheme() {
-  const theme = data.settings.theme || "system";
-  if (theme === "system") {
-    const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
-    document.documentElement.setAttribute("data-theme", mq?.matches ? "dark" : "light");
-    applyBackgroundOverlay();
-    return;
-  }
-  document.documentElement.setAttribute("data-theme", theme);
-  applyBackgroundOverlay();
-}
-
-if (typeof window !== "undefined" && window.matchMedia) {
-  window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => {
-    if ((data?.settings?.theme || "system") === "system") applyTheme();
-  });
 }
 
 /**
@@ -634,127 +586,6 @@ async function openUrl(url, mode) {
   }
 }
 
-function setBackground(style) {
-  if (!style) return;
-  if (style.startsWith("data:") || style.startsWith("http")) {
-    // JSON.stringify 给 URL 加引号并转义，比 CSS.escape(标识符) 更适合 url() 值
-    elements.background.style.backgroundImage = `url(${JSON.stringify(style)})`;
-  } else if (/^[a-zA-Z-]+\([^)]*\)$/.test(style)) {
-    // 仅允许形如 linear-gradient(...) / radial-gradient(...) 的 CSS 函数
-    elements.background.style.backgroundImage = style;
-  } else if (/^[a-zA-Z-]+$/.test(style)) {
-    // 仅允许纯关键字（如 none）
-    elements.background.style.backgroundImage = style;
-  }
-  // 其它情况一律忽略，避免注入
-}
-
-function applyBackgroundOverlay() {
-  const type = data?.settings?.backgroundType || "color";
-  const isImage = type === "bing" || type === "custom";
-  const strength = Math.min(0.6, Math.max(0, Number(data?.settings?.backgroundOverlayStrength)));
-  if (isImage) {
-    document.documentElement.style.setProperty("--bg-overlay", `rgba(0, 0, 0, ${strength})`);
-    return;
-  }
-  document.documentElement.style.setProperty("--bg-overlay", "rgba(0, 0, 0, 0)");
-}
-
-function setSolidBackgroundColor(color) {
-  const safe = isSafeCssColor(color) ? String(color).trim() : "#0b0f14";
-  elements.background.style.backgroundImage = "none";
-  elements.background.style.background = safe;
-}
-
-/**
- * 背景相关设置的轻量签名：只取决定「显示什么背景」的字段。
- * 自定义背景图可能有几百 KB，不做全量比较，取长度 + 前 32 字符足够区分。
- * @param {object} settings
- * @returns {string}
- */
-function backgroundSignature(settings) {
-  const s = settings || {};
-  const custom = typeof s.backgroundCustom === "string" ? s.backgroundCustom : "";
-  return [
-    s.backgroundType || "",
-    s.backgroundColor || "",
-    s.backgroundGradient || "",
-    custom.length,
-    custom.slice(0, 32),
-    Number(s.backgroundOverlayStrength) || 0,
-    // 每日 Bing 按语言取图，语言变了也要重取
-    s.language || "",
-  ].join("|");
-}
-
-/**
- * 数据被整包替换后调用：只有背景相关设置确实变了才重跑，避免每次同步都重新请求壁纸。
- */
-async function refreshBackgroundIfChanged() {
-  if (!data?.settings) return;
-  // 首次加载背景还没跑过（签名空），交给初始化流程，避免重复请求壁纸
-  if (!appliedBackgroundSignature) return;
-  if (backgroundSignature(data.settings) === appliedBackgroundSignature) return;
-  try {
-    await loadBackground({ silent: true });
-  } catch (e) {
-    console.warn("refreshBackgroundIfChanged failed", e);
-  }
-}
-
-/** 同一页面内并发调用合并成一次，避免多标签同时打开时重复请求壁纸 */
-let backgroundLoading = null;
-
-/**
- * @param {{silent?: boolean}} [options]
- *   silent=true 时不弹提示——页面加载、同步后自动刷新都属于「用户没主动操作」，
- *   每个新标签页都弹一次「已更新今日 Bing 壁纸」会变成刷屏（实测一次开几十个标签）。
- */
-async function loadBackground(options = {}) {
-  if (backgroundLoading) return backgroundLoading;
-  backgroundLoading = doLoadBackground(options);
-  try {
-    return await backgroundLoading;
-  } finally {
-    backgroundLoading = null;
-  }
-}
-
-async function doLoadBackground({ silent = false } = {}) {
-  const settings = data.settings;
-  elements.background.classList.add("is-loading");
-
-  if (settings.backgroundType === "bing") {
-    const info = await getBingWallpaper(settings.language);
-    if (info.dataUrl) {
-      setBackground(info.dataUrl);
-      if (!silent) {
-        if (info.failed) toast(t("background.fetchFailedCache"), "warning");
-        else if (!info.fromCache) toast(t("background.updatedToday"));
-      }
-    } else {
-      setSolidBackgroundColor(settings.backgroundColor);
-      if (!silent) toast(t("background.failedDefault"), "error");
-    }
-  } else if (settings.backgroundType === "color") {
-    setSolidBackgroundColor(settings.backgroundColor);
-  } else if (settings.backgroundType === "gradient") {
-    setBackground(settings.backgroundGradient);
-  } else if (settings.backgroundType === "custom") {
-    if (settings.backgroundCustom) setBackground(settings.backgroundCustom);
-    else setSolidBackgroundColor(settings.backgroundColor);
-  }
-
-  applyBackgroundOverlay();
-  appliedBackgroundSignature = backgroundSignature(settings);
-  elements.background.classList.remove("is-loading");
-}
-
-/**
- * 缓存瘦身（静默执行，失败不影响主流程）。
- * - 图标缓存：删掉当前书签已不再引用的条目
- * - 背景缓存：背景类型不是 bing 时清掉壁纸 dataURL（单张可达数百 KB）
- */
 async function pruneCachesQuietly() {
   try {
     const bookmarkUrls = Object.values(data?.nodes || {})
@@ -1070,7 +901,9 @@ async function renderGrid() {
 
   const referenceGrid = openFolderId ? elements.grid : grid;
   const width = referenceGrid.getBoundingClientRect().width || referenceGrid.clientWidth || window.innerWidth;
-  const density = densityMap[data.settings.gridDensity] || densityMap.standard;
+  // 网格密度表与 theme-manager 共用：compact 10 / standard 16 / spacious 22
+  const DENSITY_GAPS = { compact: 10, standard: 16, spacious: 22 };
+  const density = DENSITY_GAPS[data.settings.gridDensity] || DENSITY_GAPS.standard;
   const gap = density.gap || 16;
   const style = getComputedStyle(referenceGrid);
   const paddingX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
@@ -1163,7 +996,7 @@ async function renderGrid() {
       tile.appendChild(badge);
     }
 
-    if (selectedIds.has(node.id)) {
+    if (selectionMgr?.has(node.id)) {
       tile.classList.add("selected");
     }
 
@@ -1172,8 +1005,8 @@ async function renderGrid() {
         e.preventDefault();
         return;
       }
-      if (selectionMode) {
-        toggleSelect(node.id, idx, e.shiftKey);
+      if (selectionMgr?.isBatchModeActive()) {
+        selectionMgr.toggleTileSelection(node.id, idx, e.shiftKey);
         return;
       }
       if (node.type === "folder") {
@@ -1192,8 +1025,8 @@ async function renderGrid() {
       if (!data.settings.keyboardNav) return;
       if (e.key !== "Enter" && e.key !== " ") return;
       e.preventDefault();
-      if (selectionMode) {
-        toggleSelect(node.id, idx, e.shiftKey);
+      if (selectionMgr?.isBatchModeActive()) {
+        selectionMgr.toggleTileSelection(node.id, idx, e.shiftKey);
         return;
       }
       if (node.type === "folder") {
@@ -1317,48 +1150,6 @@ function closeFolder() {
   elements.folderOverlay.classList.add("hidden");
   elements.folderOverlay.setAttribute("aria-hidden", "true");
   render();
-}
-
-function toggleSelect(id, index, range) {
-  const nodes = getCurrentNodes();
-  if (range && lastSelectedIndex !== null) {
-    const start = Math.min(lastSelectedIndex, index);
-    const end = Math.max(lastSelectedIndex, index);
-    for (let i = start; i <= end; i++) {
-      if (nodes[i]) selectedIds.add(nodes[i].id);
-    }
-  } else {
-    if (selectedIds.has(id)) selectedIds.delete(id);
-    else selectedIds.add(id);
-    lastSelectedIndex = index;
-  }
-  if (lastSelectedIndex === null && typeof index === "number") {
-    lastSelectedIndex = index;
-  }
-  updateSelectionStyles();
-}
-
-function clearSelection() {
-  selectedIds.clear();
-  selectionMode = false;
-  lastSelectedIndex = null;
-  if (selectionBox) {
-    selectionBox.remove();
-    selectionBox = null;
-  }
-}
-
-function updateSelectionControls() {
-  elements.btnSelectAll.classList.toggle("hidden", !selectionMode);
-  elements.btnBatchDelete.textContent = selectionMode ? t("context.delete") : t("toolbar.batchDelete");
-  elements.btnFolderBatchDelete.textContent = selectionMode ? t("context.delete") : t("folder.batchDelete");
-}
-
-function updateSelectionStyles() {
-  const grid = openFolderId ? elements.folderGrid : elements.grid;
-  qsa(".tile", grid).forEach((tile) => {
-    tile.classList.toggle("selected", selectedIds.has(tile.dataset.id));
-  });
 }
 
 let contextMenuManager = null;
@@ -1817,38 +1608,6 @@ function createSearchManagerInstance() {
   });
 }
 
-function ensureSelectionBox() {
-  if (!selectionBox) {
-    selectionBox = document.createElement("div");
-    selectionBox.className = "selection-box hidden";
-    document.body.appendChild(selectionBox);
-  }
-}
-
-function updateSelectionBox(x1, y1, x2, y2) {
-  const left = Math.min(x1, x2);
-  const top = Math.min(y1, y2);
-  const width = Math.abs(x1 - x2);
-  const height = Math.abs(y1 - y2);
-  selectionBox.style.left = `${left}px`;
-  selectionBox.style.top = `${top}px`;
-  selectionBox.style.width = `${width}px`;
-  selectionBox.style.height = `${height}px`;
-  selectionBox.classList.remove("hidden");
-}
-
-function selectTilesInBox(grid, x1, y1, x2, y2) {
-  const left = Math.min(x1, x2);
-  const right = Math.max(x1, x2);
-  const top = Math.min(y1, y2);
-  const bottom = Math.max(y1, y2);
-  qsa(".tile", grid).forEach((tile) => {
-    const rect = tile.getBoundingClientRect();
-    const hit = rect.left < right && rect.right > left && rect.top < bottom && rect.bottom > top;
-    if (hit) selectedIds.add(tile.dataset.id);
-  });
-}
-
 /**
  * 创建拖拽与重排管理器实例（能力与依赖见 drag-manager.js）：
  * 排序插入 / 放入文件夹 / 拖卡建夹三种意图 + 侧栏分组排序。
@@ -1914,7 +1673,7 @@ function createTouchDragManagerInstance() {
     openContextMenu,
     closeContextMenu,
     isRecentGroup: (groupId) => groupId === RECENT_GROUP_ID,
-    canStartTileTouch: () => !selectionMode,
+    canStartTileTouch: () => !selectionMgr?.isBatchModeActive(),
   });
 }
 
@@ -1936,10 +1695,44 @@ function createStorageListenerInstance() {
   });
 }
 
+/**
+ * 创建批量选择管理器实例（能力与依赖见 selection-manager.js）。
+ */
+function createSelectionManagerInstance() {
+  return createSelectionManager({
+    getState: () => ({ activeGroupId, openFolderId }),
+    getNodes: getCurrentNodes,
+    getGrid: (inFolder) => (inFolder ? elements.folderGrid : elements.grid),
+    getMain: () => elements.main,
+    deleteNodes,
+    toast,
+    t,
+    isRecentGroup: (groupId) => groupId === RECENT_GROUP_ID,
+    qsa,
+    rafThrottle,
+  });
+}
+
+/**
+ * 创建主题与背景管线实例（能力与依赖见 theme-manager.js）。
+ */
+function createThemeManagerInstance() {
+  return createThemeManager({
+    getData: () => data,
+    getBackgroundEl: () => elements.background,
+    getBingWallpaper,
+    isSafeCssColor,
+    toast,
+    t,
+  });
+}
+
 async function init() {
   debugLog("init_start", getRuntimeInfo());
   // 图标管线与拖拽管理器先建好（renderGrid / 弹窗 / 存储监听都会用到）
   iconManager = createIconManagerInstance();
+  themeMgr = createThemeManagerInstance();
+  selectionMgr = createSelectionManagerInstance();
   dragManager = createDragManagerInstance();
   touchDrag = createTouchDragManagerInstance();
   storageListener = createStorageListenerInstance();
@@ -2009,9 +1802,9 @@ async function init() {
       queuePersist,
       pushBackup,
       processPendingIconFetches: () => iconManager.processPendingIconFetches(),
-      loadBackground,
-      applyDensity,
-      applyTheme,
+      loadBackground: (opts) => themeMgr.loadBackground(opts),
+      applyDensity: () => themeMgr.applyDensity(),
+      applyTheme: () => themeMgr.applyTheme(),
       applyStaticI18n,
       applySidebarState,
       buildLanguageOptions,
@@ -2153,15 +1946,15 @@ async function init() {
     data.settings.lastActiveGroupId = activeGroupId;
   }
   recentItems = await recentPromise;
-  applyDensity();
-  applyTheme();
+  themeMgr.applyDensity();
+  themeMgr.applyTheme();
   applySidebarState();
   closeModal();
   closeFolder();
   // 先渲染 UI，图标走缓存瞬显；背景和图标重试后台异步进行，不阻塞首屏
   render();
   iconManager.processPendingIconFetches();
-  loadBackground({ silent: true });
+  themeMgr.loadBackground({ silent: true });
   retryFailedIconsIfDue(data.settings);
   void consumeSaveToast();
   // 缓存瘦身：首屏渲染后异步执行，不阻塞加载。
@@ -2217,15 +2010,14 @@ function render() {
   updateEmptyState();
   elements.topSearchWrap.classList.toggle("hidden", !data.settings.showSearch);
   elements.emptyHintToggle.checked = data.settings.emptyHintDisabled;
-  elements.btnSelectAll.classList.toggle("hidden", !selectionMode);
-  elements.btnBatchDelete.textContent = selectionMode ? t("context.delete") : t("toolbar.batchDelete");
   elements.btnFolderDissolve.classList.remove("hidden");
   updateOpenModeButton();
+  selectionMgr?.updateControls();
   // 收口在这里：主题/密度/背景都是「副作用型」设置，不经过渲染流程。
   // 导入、恢复备份、清空数据、同步合并、跨标签页重载最终都会走到 render()，
   // 统一在这里重新应用，才能避免「设置变了但页面要手动切一次才生效」这一类问题。
-  applyThemeAndDensity();
-  void refreshBackgroundIfChanged();
+  themeMgr?.applyThemeAndDensity();
+  void themeMgr?.refreshBackgroundIfChanged?.();
 }
 
 function updateOpenModeButton() {
@@ -2280,72 +2072,10 @@ function bindEvents() {
     render();
   });
 
-  elements.btnBatchDelete.addEventListener("click", () => {
-    if (activeGroupId === RECENT_GROUP_ID) {
-      toast(t("history.batchDeleteDisabled"), "warning");
-      return;
-    }
-    if (!selectionMode) {
-      selectionMode = true;
-      toast(t("selection.modeEnabled"));
-      updateSelectionControls();
-      return;
-    }
-    const ids = Array.from(selectedIds);
-    if (!ids.length) {
-      clearSelection();
-      updateSelectionControls();
-      updateSelectionStyles();
-      return;
-    }
-    clearSelection();
-    deleteNodes(ids);
-    updateSelectionControls();
-  });
-
-  elements.btnFolderBatchDelete.addEventListener("click", () => {
-    if (activeGroupId === RECENT_GROUP_ID) {
-      toast(t("history.batchDeleteDisabled"), "warning");
-      return;
-    }
-    if (!selectionMode) {
-      selectionMode = true;
-      toast(t("selection.modeEnabled"));
-      updateSelectionControls();
-      return;
-    }
-    const ids = Array.from(selectedIds);
-    if (!ids.length) {
-      clearSelection();
-      updateSelectionControls();
-      updateSelectionStyles();
-      return;
-    }
-    clearSelection();
-    deleteNodes(ids);
-    updateSelectionControls();
-  });
-
-  elements.btnSelectAll.addEventListener("click", () => {
-    if (!selectionMode) return;
-    const grid = openFolderId ? elements.folderGrid : elements.grid;
-    qsa(".tile", grid).forEach((tile) => {
-      selectedIds.add(tile.dataset.id);
-    });
-    updateSelectionStyles();
-  });
-
-  elements.main?.addEventListener?.("click", (e) => {
-    if (suppressBlankClick) {
-      suppressBlankClick = false;
-      return;
-    }
-    if (!selectionMode || boxSelecting) return;
-    if (e.target.closest(".tile")) return;
-    clearSelection();
-    updateSelectionControls();
-    updateSelectionStyles();
-  });
+  // 批量选择交互（按钮/框选/空白清除）统一由 selection-manager 处理
+  selectionMgr.bindBatchButtons();
+  selectionMgr.bindBoxSelectEvents();
+  selectionMgr.bindBlankClickClear();
 
   elements.btnOpenMode.addEventListener("click", openOpenModeMenu);
   elements.btnSettings.addEventListener("click", async () => {
@@ -2395,47 +2125,6 @@ function bindEvents() {
   };
   elements.modalOverlay.addEventListener("mousedown", markModalPointerOrigin);
   elements.modalOverlay.addEventListener("pointerdown", markModalPointerOrigin);
-
-  const handleBoxSelectStart = (e, grid) => {
-    if (e.button !== 0) return;
-    if (e.target.closest(".tile")) return;
-    if (!selectionMode) return;
-    boxSelecting = true;
-    isDraggingBox = false;
-    ensureSelectionBox();
-    selectionStart = { x: e.clientX, y: e.clientY, grid };
-    updateSelectionBox(e.clientX, e.clientY, e.clientX, e.clientY);
-  };
-
-  const handleBoxSelectMove = (e) => {
-    if (!boxSelecting || !selectionStart) return;
-    const dx = Math.abs(e.clientX - selectionStart.x);
-    const dy = Math.abs(e.clientY - selectionStart.y);
-    if (dx + dy > BOX_SELECT_THRESHOLD) isDraggingBox = true;
-    updateSelectionBox(selectionStart.x, selectionStart.y, e.clientX, e.clientY);
-  };
-
-  const handleBoxSelectEnd = (e) => {
-    if (!boxSelecting || !selectionStart) return;
-    if (isDraggingBox) {
-      selectTilesInBox(selectionStart.grid, selectionStart.x, selectionStart.y, e.clientX, e.clientY);
-      suppressBlankClick = true;
-    }
-    boxSelecting = false;
-    selectionStart = null;
-    isDraggingBox = false;
-    if (selectionBox) selectionBox.classList.add("hidden");
-    updateSelectionStyles();
-  };
-
-  elements.grid.addEventListener("mousedown", (e) => handleBoxSelectStart(e, elements.grid));
-  elements.folderGrid.addEventListener("mousedown", (e) => handleBoxSelectStart(e, elements.folderGrid));
-  elements.main?.addEventListener?.("mousedown", (e) => {
-    if (openFolderId) return;
-    handleBoxSelectStart(e, elements.grid);
-  });
-  document.addEventListener("mousemove", rafThrottle(handleBoxSelectMove));
-  document.addEventListener("mouseup", handleBoxSelectEnd);
 
   document.addEventListener("click", (e) => {
     if (!elements.contextMenu.contains(e.target)) closeContextMenu();

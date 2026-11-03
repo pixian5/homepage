@@ -764,3 +764,79 @@ export async function clearIconCacheForUrl(oldUrl, newUrl) {
 
   if (changed) await saveIconCache(cache);
 }
+
+/**
+ * 将用户上传的图片文件通过 Canvas 压缩为指定最大尺寸的 WebP/PNG DataURL
+ * @param {File|Blob} file
+ * @param {number} maxDimension
+ * @param {number} quality
+ * @returns {Promise<string>}
+ */
+export async function compressImageFileToDataUrl(file, maxDimension = 128, quality = 0.85) {
+  if (!file) return "";
+  // 非标准图片类型或无 DOM 环境（测试态），走原生 FileReader 兜底
+  if (typeof Image === "undefined" || typeof document === "undefined") {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      if (typeof dataUrl !== "string") {
+        resolve("");
+        return;
+      }
+      // svg 矢量图直接保留原样，无需 rasterize 压缩
+      if (file.type === "image/svg+xml" || dataUrl.startsWith("data:image/svg+xml")) {
+        resolve(dataUrl);
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        try {
+          let { width, height } = img;
+          if (!width || !height) {
+            resolve(dataUrl);
+            return;
+          }
+          if (width > maxDimension || height > maxDimension) {
+            if (width > height) {
+              height = Math.round((height * maxDimension) / width);
+              width = maxDimension;
+            } else {
+              width = Math.round((width * maxDimension) / height);
+              height = maxDimension;
+            }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            resolve(dataUrl);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          let compressed = canvas.toDataURL("image/webp", quality);
+          // 若浏览器不支持 webp 导出，降级回 png
+          if (!compressed?.startsWith("data:image/webp")) {
+            compressed = canvas.toDataURL("image/png");
+          }
+          resolve(compressed);
+        } catch {
+          resolve(dataUrl);
+        }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  });
+}

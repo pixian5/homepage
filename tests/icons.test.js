@@ -57,7 +57,8 @@ beforeEach(() => {
 });
 
 describe("icons", async () => {
-  const { getSiteKey, getFaviconCandidates, resolveIcon, clearIconCacheForUrl } = await import("../src/js/icons.js");
+  const { getSiteKey, getFaviconCandidates, resolveIcon, clearIconCacheForUrl, compressImageFileToDataUrl } =
+    await import("../src/js/icons.js");
 
   it("getSiteKey returns empty for non-http urls", () => {
     assert.equal(getSiteKey("file:///tmp"), "");
@@ -134,5 +135,10 @@ describe("icons", async () => {
     const list = getFaviconCandidates("https://new.sharedchat.cc/list/#/vibe-code/dashboard");
     assert.ok(list.some((u) => u.includes("/list/logo.svg")));
     assert.ok(list.some((u) => u.includes("/list/favicon.ico")));
+  });
+
+  it("compressImageFileToDataUrl returns empty string for null input", async () => {
+    const res = await compressImageFileToDataUrl(null);
+    assert.equal(res, "");
   });
 });

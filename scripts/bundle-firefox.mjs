@@ -59,8 +59,48 @@ export function assertClassicScript(code, vmApi) {
   }
 }
 
+/**
+ * 校验模块列表拓扑顺序与完整性
+ * 检查当前模块的本地相对导入项是否均在 list 中且排在当前模块之前
+ * @param {string[]} list
+ * @param {string} src
+ */
+export async function validateModuleTopology(list = files, src = srcDir) {
+  const seen = new Set();
+  for (const file of list) {
+    const fullPath = path.join(src, file);
+    const code = await fs.readFile(fullPath, "utf8");
+    const importRegex = /import\s+[^'"]*?from\s+['"]\.\/([^'"]+)['"]/g;
+    let match;
+    while ((match = importRegex.exec(code)) !== null) {
+      let importedFile = match[1];
+      if (!importedFile.endsWith(".js")) importedFile += ".js";
+      // 仅检查 srcDir 下存在的同级文件
+      try {
+        await fs.access(path.join(src, importedFile));
+      } catch {
+        continue;
+      }
+      if (!list.includes(importedFile)) {
+        throw new Error(
+          `Firefox 打包拓扑错误: [${file}] 导入了 [${importedFile}]，但后者未在 firefox-modules.json 中注册！`,
+        );
+      }
+      if (!seen.has(importedFile)) {
+        throw new Error(
+          `Firefox 打包拓扑错误: [${file}] 导入了 [${importedFile}]，但后者在其后定义，破坏了经典脚本依赖拓扑！`,
+        );
+      }
+    }
+    seen.add(file);
+  }
+}
+
 export async function bundle({ src = srcDir, out = outDir, target = outFile, list = files, validate = false } = {}) {
   await fs.mkdir(out, { recursive: true });
+  if (validate) {
+    await validateModuleTopology(list, src);
+  }
   const chunks = [];
   for (const file of list) {
     const fullPath = path.join(src, file);

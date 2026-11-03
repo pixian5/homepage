@@ -6,6 +6,8 @@
 /** @type {Set<string>} */
 export const SAFE_URL_PROTOCOLS = new Set(["http:", "https:", "ftp:"]);
 
+export const RECENT_GROUP_ID = "__recent__";
+
 /**
  * 语言标签归一化
  * @param {string} input

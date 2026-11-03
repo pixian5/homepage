@@ -1,5 +1,6 @@
 import { APP_SUPPORTED_LANGUAGES, translateAppText } from "./app-i18n.js";
 import { getBingWallpaper } from "./bing-wallpaper.js";
+import { createContextMenuManager } from "./context-menu.js";
 import {
   ALL_BOOKMARKS_GROUP_ID,
   buildBackupFingerprint,
@@ -25,6 +26,7 @@ import {
   applyFailureToCache,
   avatarDataUrl,
   clearIconCacheForUrl,
+  compressImageFileToDataUrl,
   fetchAsDataUrl,
   getFaviconCandidates,
   getSiteKey,
@@ -35,8 +37,10 @@ import {
   retryFailedIconsIfDue,
   withIconFetchConcurrency,
 } from "./icons.js";
+import { createModalManager } from "./modal-manager.js";
+import { matchesSearchQuery } from "./pinyin-match.js";
 import { createSettingsController } from "./settings-controller.js";
-import { normalizeUrl, SAFE_URL_PROTOCOLS } from "./shared-utils.js";
+import { normalizeUrl, RECENT_GROUP_ID, SAFE_URL_PROTOCOLS } from "./shared-utils.js";
 import {
   clearData,
   createBackupSnapshot,
@@ -214,7 +218,6 @@ const touchMenuState = {
 const DEBUG_LOG_KEY = "homepage_debug_log";
 
 // ==================== 常量定义 ====================
-const RECENT_GROUP_ID = "__recent__";
 const RECENT_LIMIT = 24;
 
 const DEFAULT_TILE_SIZE = 150;
@@ -1717,80 +1720,38 @@ function finishTouchDrag() {
   return true;
 }
 
-function showContextMenuAt(x, y) {
-  const menu = elements.contextMenu;
-  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
-  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-  const edgeGap = 8;
-
-  menu.classList.remove("hidden");
-  menu.style.visibility = "hidden";
-  menu.style.left = "0px";
-  menu.style.top = "0px";
-
-  const rect = menu.getBoundingClientRect();
-  const maxLeft = Math.max(edgeGap, viewportWidth - rect.width - edgeGap);
-  const maxTop = Math.max(edgeGap, viewportHeight - rect.height - edgeGap);
-  const nextLeft = Math.min(Math.max(Number(x) || 0, edgeGap), maxLeft);
-  const nextTop = Math.min(Math.max(Number(y) || 0, edgeGap), maxTop);
-
-  menu.style.left = `${nextLeft}px`;
-  menu.style.top = `${nextTop}px`;
-  menu.style.visibility = "";
+let contextMenuManager = null;
+function getContextMenuManager() {
+  if (!contextMenuManager) {
+    contextMenuManager = createContextMenuManager({
+      menuElement: elements.contextMenu,
+      t,
+      normalizeUrl,
+      callbacks: {
+        openUrl,
+        openFolder,
+        dissolveFolder,
+        openEditModal,
+        deleteNodes,
+        openAddHistoryToGroup,
+        renameGroup,
+        deleteGroup,
+      },
+    });
+  }
+  return contextMenuManager;
 }
 
 function openContextMenu(x, y, node) {
-  elements.contextMenu.replaceChildren();
-  const actions = [];
-  if (activeGroupId === RECENT_GROUP_ID && node.type === "history") {
-    actions.push({ label: t("context.openCurrent"), fn: () => openUrl(normalizeUrl(node.url)) });
-    actions.push({ label: t("context.openNew"), fn: () => openUrl(normalizeUrl(node.url), "new") });
-    actions.push({ label: t("context.addToShortcuts"), fn: () => openAddHistoryToGroup(node) });
-  } else if (node.type !== "folder") {
-    actions.push({ label: t("context.openCurrent"), fn: () => openUrl(normalizeUrl(node.url)) });
-    actions.push({ label: t("context.openNew"), fn: () => openUrl(normalizeUrl(node.url), "new") });
-    actions.push({ label: t("context.openBackground"), fn: () => openUrl(normalizeUrl(node.url), "background") });
-  } else {
-    actions.push({ label: t("context.openFolder"), fn: () => openFolder(node.id) });
-    actions.push({ label: t("context.dissolveFolder"), fn: () => dissolveFolder(node.id) });
-  }
-  if (node.type !== "history") {
-    actions.push({ label: t("context.edit"), fn: () => openEditModal(node) });
-    actions.push({ label: t("context.delete"), fn: () => deleteNodes([node.id]) });
-  }
-
-  for (const action of actions) {
-    const btn = document.createElement("button");
-    btn.textContent = action.label;
-    btn.addEventListener("click", () => {
-      action.fn();
-      elements.contextMenu.classList.add("hidden");
-    });
-    elements.contextMenu.appendChild(btn);
-  }
-  showContextMenuAt(x, y);
+  getContextMenuManager().showTileMenu(x, y, node, { activeGroupId });
 }
 
 function closeContextMenu() {
-  elements.contextMenu.classList.add("hidden");
+  getContextMenuManager().closeMenu();
 }
 
 function openGroupContextMenu(x, y, group) {
-  elements.contextMenu.replaceChildren();
-  const actions = [
-    { label: t("context.renameGroup"), fn: () => renameGroup(group) },
-    { label: t("context.deleteGroup"), fn: () => deleteGroup(group) },
-  ];
-  for (const action of actions) {
-    const btn = document.createElement("button");
-    btn.textContent = action.label;
-    btn.addEventListener("click", () => {
-      action.fn();
-      elements.contextMenu.classList.add("hidden");
-    });
-    elements.contextMenu.appendChild(btn);
-  }
-  showContextMenuAt(x, y);
+  getContextMenuManager().showGroupMenu(x, y, group);
 }
 
 function getCurrentGridElement() {
@@ -2129,519 +2090,78 @@ function _createFormSection(labelText, inputEl) {
   return section;
 }
 
-function parseModalHtml(html) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(`<div id="modal-root">${html}</div>`, "text/html");
-  const root = doc.getElementById("modal-root");
-  const fragment = document.createDocumentFragment();
-  if (!root) return fragment;
-  fragment.append(...Array.from(root.childNodes).map((node) => document.importNode(node, true)));
-  return fragment;
+let modalManager = null;
+function getModalManager() {
+  if (!modalManager) {
+    modalManager = createModalManager({
+      modalEl: elements.modal,
+      modalOverlayEl: elements.modalOverlay,
+      btnSettingsEl: elements.btnSettings,
+      t,
+      toast,
+      getState: () => ({ data, openFolderId, activeGroupId }),
+      setState: (patch) => {
+        if (patch.data) data = patch.data;
+        if (patch.activeGroupId) activeGroupId = patch.activeGroupId;
+        if (patch.openFolderId !== undefined) openFolderId = patch.openFolderId;
+      },
+      readFileAsDataUrl,
+      fetchTitleInBackground,
+      fetchFaviconInBackground,
+      fetchFaviconNow,
+      clearIconCacheForUrl,
+      pushBackup,
+      persistData,
+      render,
+      debugLog,
+      getContainerHelpers: () => ({
+        getFolderPlacementContainer,
+        getPlacementList,
+        setPlacementList,
+        touchPlacementContainer,
+        getActiveGroup,
+      }),
+      onModalClose: async () => {
+        if (settingsSaveTimer) {
+          clearTimeout(settingsSaveTimer);
+          settingsSaveTimer = null;
+        }
+        const pendingSave = settingsCtl?.saveNow;
+        if (settingsOpen && typeof pendingSave === "function" && !settingsSaving) {
+          try {
+            await pendingSave();
+          } catch (e) {
+            console.warn("flush settings on closeModal failed", e);
+          }
+        }
+        modalPointerDownInsideDialog = false;
+        settingsOpen = false;
+        settingsSaving = false;
+        settingsSaveQueued = false;
+        if (pendingStorageReload) {
+          pendingStorageReload = false;
+          scheduleStorageReload();
+        }
+      },
+    });
+  }
+  return modalManager;
 }
 
 function openModal(html) {
-  elements.modal.replaceChildren(parseModalHtml(html));
-  elements.modalOverlay.removeAttribute("inert");
-  elements.modalOverlay.classList.remove("hidden");
-  elements.modalOverlay.setAttribute("aria-hidden", "false");
-  // 所有面板：回车默认触发主操作（保存/导入等）；搜索框除外（由搜索自己处理）
-  bindModalEnterToDefaultAction();
-}
-
-/**
- * 弹窗内 Enter → 点击默认主按钮。
- * 优先级：btnSave > btnImportNow > btnAddHistorySave > btnImportUrlHttps > btnCopy > btnClose
- * 排除：顶部搜索、textarea（多行编辑用 Enter 换行）、已禁用的按钮。
- */
-function bindModalEnterToDefaultAction() {
-  const modal = elements.modal;
-  if (!modal) return;
-  // 去掉旧监听（每次 openModal 重绑）
-  if (modal._enterHandler) {
-    modal.removeEventListener("keydown", modal._enterHandler);
-  }
-  const handler = (e) => {
-    if (e.key !== "Enter") return;
-    if (e.isComposing || e.keyCode === 229) return; // IME 组字中不触发
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
-
-    const target = e.target;
-    if (!(target instanceof Element)) return;
-
-    // 搜索框：保持原搜索行为，不在这里处理
-    if (target.id === "topSearch" || target.closest?.("#topSearchWrap")) return;
-
-    // 多行文本：Enter 换行
-    const tag = (target.tagName || "").toLowerCase();
-    if (tag === "textarea") return;
-
-    // contenteditable
-    if (target.isContentEditable) return;
-
-    // 已在可点击主按钮上：让浏览器默认/既有 click 走
-    // 对 button 也统一走「找主按钮 click」，避免 type=button 时 Enter 无效果
-    const defaultBtn = findModalDefaultActionButton(modal);
-    if (!defaultBtn || defaultBtn.disabled) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-    defaultBtn.click();
-  };
-  modal._enterHandler = handler;
-  modal.addEventListener("keydown", handler);
-}
-
-/**
- * @param {HTMLElement} modal
- * @returns {HTMLButtonElement | null}
- */
-function findModalDefaultActionButton(modal) {
-  const preferredIds = ["btnSave", "btnImportNow", "btnAddHistorySave", "btnImportUrlHttps", "btnCopy", "btnClose"];
-  for (const id of preferredIds) {
-    const btn = modal.querySelector?.(`#${id}`);
-    if (btn && !btn.disabled && btn.offsetParent !== null) return btn;
-  }
-  // 设置面板改完即存，且 actions 末钮是「刷新图标」——禁止 Enter 误触
-  if (modal.querySelector?.(".settings-actions") && !modal.querySelector?.("#btnSave")) {
-    return null;
-  }
-  // 其它有 .actions 的面板：取最后一个非 danger 按钮
-  const actions = modal.querySelector?.(".actions");
-  if (actions) {
-    const buttons = [...actions.querySelectorAll("button.icon-btn, button")].filter(
-      (b) => !b.disabled && !b.classList.contains("danger"),
-    );
-    if (buttons.length) return buttons[buttons.length - 1];
-  }
-  return null;
+  getModalManager().openModal(html);
 }
 
 async function closeModal() {
-  // 关闭前尽量刷掉 debounce 中的设置保存，避免点遮罩丢最后一次改动
-  if (settingsSaveTimer) {
-    clearTimeout(settingsSaveTimer);
-    settingsSaveTimer = null;
-  }
-  const pendingSave = settingsCtl?.saveNow;
-  if (settingsOpen && typeof pendingSave === "function" && !settingsSaving) {
-    try {
-      await pendingSave();
-    } catch (e) {
-      console.warn("flush settings on closeModal failed", e);
-    }
-  }
-  const activeEl = document.activeElement;
-  if (activeEl && elements.modalOverlay.contains(activeEl)) {
-    elements.btnSettings?.focus?.({ preventScroll: true });
-  }
-  elements.modalOverlay.setAttribute("inert", "");
-  elements.modalOverlay.classList.add("hidden");
-  elements.modalOverlay.setAttribute("aria-hidden", "true");
-  modalPointerDownInsideDialog = false;
-  elements.modal.replaceChildren();
-  settingsOpen = false;
-  settingsSaving = false;
-  settingsSaveQueued = false;
-  if (pendingStorageReload) {
-    pendingStorageReload = false;
-    scheduleStorageReload();
-  }
+  await getModalManager().closeModal();
 }
 
 function openAddModal() {
-  const modalHtml = html`
-    <h2>${t("modal.add.title")}</h2>
-    <div class="section">
-      <label>${t("field.url")}</label>
-      <input id="fieldUrl" type="url" placeholder="https://" />
-    </div>
-    <div class="section">
-      <label>${t("field.title")}</label>
-      <input id="fieldTitle" type="text" placeholder="${t("field.titleOptional")}" />
-    </div>
-    <div class="section">
-      <label>${t("field.iconSource")}</label>
-      <select id="fieldIconType">
-        <option value="auto">${t("field.icon.auto")}</option>
-        <option value="upload">${t("field.icon.upload")}</option>
-        <option value="color">${t("field.icon.color")}</option>
-        <option value="remote">${t("field.icon.remote")}</option>
-      </select>
-    </div>
-    <div id="iconExtra" class="section"></div>
-    <div class="section">
-      <button id="btnFromTab" class="icon-btn">${t("field.fromTab")}</button>
-    </div>
-    <div class="actions">
-      <button id="btnCancel" class="icon-btn">${t("common.cancel")}</button>
-      <button id="btnSave" class="icon-btn">${t("common.save")}</button>
-    </div>
-  `;
-  openModal(modalHtml);
-
-  const iconTypeEl = $("fieldIconType");
-  const iconExtra = $("iconExtra");
-  if (!iconTypeEl || !iconExtra) {
-    console.warn("openAddModal: required fields missing after render");
-    return;
-  }
-
-  function renderIconExtra(type) {
-    iconExtra.replaceChildren();
-    if (type === "upload") {
-      const label = document.createElement("label");
-      label.textContent = t("field.uploadIcon");
-      const input = document.createElement("input");
-      input.id = "fieldUpload";
-      input.type = "file";
-      input.accept = "image/*";
-      iconExtra.appendChild(label);
-      iconExtra.appendChild(input);
-    } else if (type === "color") {
-      const label = document.createElement("label");
-      label.textContent = t("field.colorAvatar");
-      const input = document.createElement("input");
-      input.id = "fieldColor";
-      input.type = "color";
-      input.value = "#4dd6a8";
-      iconExtra.appendChild(label);
-      iconExtra.appendChild(input);
-    } else if (type === "remote") {
-      const label = document.createElement("label");
-      label.textContent = t("field.remoteIconUrl");
-      const input = document.createElement("input");
-      input.id = "fieldRemote";
-      input.type = "url";
-      input.placeholder = "https://";
-      iconExtra.appendChild(label);
-      iconExtra.appendChild(input);
-    }
-  }
-
-  renderIconExtra(iconTypeEl.value);
-  iconTypeEl.addEventListener("change", () => renderIconExtra(iconTypeEl.value));
-  const urlInput = $("fieldUrl");
-  if (urlInput) {
-    urlInput.focus();
-    if (urlInput.select) urlInput.select();
-  }
-
-  $("btnFromTab")?.addEventListener("click", async () => {
-    const api = getChromeApi();
-    if (!api?.tabs) return;
-    api.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (api.runtime?.lastError) {
-        toast(t("error.invalidUrl"), "error");
-        return;
-      }
-      const tab = tabs?.[0];
-      if (!tab) return;
-      const fieldUrl = $("fieldUrl");
-      const fieldTitle = $("fieldTitle");
-      if (fieldUrl) fieldUrl.value = tab.url || "";
-      if (fieldTitle) fieldTitle.value = tab.title || "";
-    });
-  });
-
-  $("btnCancel")?.addEventListener("click", closeModal);
-  $("btnSave")?.addEventListener("click", async () => {
-    const snapshot = deepClone(data);
-    const url = normalizeUrl(($("fieldUrl")?.value || "").trim());
-    if (!url) {
-      toast(t("error.invalidUrl"), "error");
-      return;
-    }
-    let title = ($("fieldTitle")?.value || "").trim();
-    const titlePending = !title;
-    if (!title) title = new URL(url).hostname;
-    let iconType = iconTypeEl.value;
-    let iconData = "";
-    let color = "";
-
-    if (iconType === "upload") {
-      const file = $("fieldUpload")?.files?.[0];
-      if (file) {
-        iconData = await readFileAsDataUrl(file);
-      }
-    } else if (iconType === "color") {
-      color = $("fieldColor")?.value || "#4dd6a8";
-    } else if (iconType === "remote") {
-      iconData = ($("fieldRemote")?.value || "").trim();
-    }
-
-    const iconPending = iconType === "auto";
-    if (iconType === "auto") {
-      iconType = "letter";
-    }
-
-    pushBackup();
-    const node = createItemNode({
-      url,
-      title,
-      iconType,
-      iconData,
-      color,
-      titlePending,
-      iconPending,
-    });
-    data.nodes[node.id] = node;
-
-    if (openFolderId) {
-      const targetContainer = getFolderPlacementContainer(openFolderId);
-      const targetList = getPlacementList(targetContainer);
-      targetList.push(node.id);
-      setPlacementList(targetContainer, targetList);
-      touchPlacementContainer(targetContainer);
-    } else {
-      const targetGroup = getActiveGroup();
-      const targetList = getPlacementList(targetGroup);
-      targetList.push(node.id);
-      setPlacementList(targetGroup, targetList);
-      touchPlacementContainer(targetGroup);
-      if (activeGroupId === RECENT_GROUP_ID) {
-        activeGroupId = targetGroup.id;
-      }
-    }
-    data.settings.lastActiveGroupId = getActiveGroup().id;
-    debugLog("add_item", {
-      id: node.id,
-      url,
-      groupId: openFolderId ? openFolderId : getActiveGroup().id,
-      openFolderId: openFolderId || "",
-    });
-    const result = await persistData();
-    if (!result.ok) {
-      data = snapshot;
-      render();
-      toast(t("error.saveQuota"), "error");
-      return;
-    }
-    render();
-    closeModal();
-    if (titlePending) fetchTitleInBackground(node.id, url);
-    if (iconPending) fetchFaviconInBackground(node.id, url);
-    if (result.warning === "local_trimmed_backups") {
-      toast(t("toast.add.trimBackup"), "warning");
-    } else if (result.warning === "local_trimmed_icons") {
-      toast(t("toast.add.trimIcons"), "warning");
-    } else if (result.warning === "local_trimmed_background") {
-      toast(t("toast.add.trimBackground"), "warning");
-    } else if (result.warning === "sync_quota_exceeded") {
-      toast(t("toast.add.syncFallback"), "warning");
-    } else if (result.warning === "sync_write_failed") {
-      toast(t("toast.add.syncWriteFailed"), "warning");
-    } else {
-      toast(t("toast.add.success"));
-    }
-  });
+  getModalManager().openAddModal();
 }
 
 function openEditModal(node) {
-  // 嵌套 html 片段必须 rawHtml，否则会被外层 html 转义成纯文本（编辑弹窗炸裂）
-  const itemFields =
-    node.type === "item"
-      ? rawHtml(html`
-          <div class="section">
-            <label>${t("field.url")}</label>
-            <input id="fieldUrl" type="url" value="${node.url || ""}" />
-          </div>
-          <div class="section">
-            <label>${t("field.iconSource")}</label>
-            <select id="fieldIconType">
-              <option value="auto">${t("field.icon.auto")}</option>
-              <option value="upload">${t("field.icon.upload")}</option>
-              <option value="color">${t("field.icon.color")}</option>
-              <option value="remote">${t("field.icon.remote")}</option>
-            </select>
-          </div>
-          <div id="iconExtra" class="section"></div>
-        `)
-      : "";
-  const fetchIconBtn =
-    node.type === "item"
-      ? rawHtml(html`
-          <div class="actions-start">
-            <button id="btnFetchIcon" type="button" class="icon-btn">${t("field.icon.fetchNow")}</button>
-          </div>
-        `)
-      : "";
-  const modalHtml = html`
-    <h2>${t("modal.edit.title")}</h2>
-    <div class="section">
-      <label>${t("field.title")}</label>
-      <input id="fieldTitle" type="text" value="${node.title || ""}" />
-    </div>
-    ${itemFields}
-    <div class="actions">
-      ${fetchIconBtn}
-      <button id="btnCancel" class="icon-btn">${t("common.cancel")}</button>
-      <button id="btnSave" class="icon-btn">${t("common.save")}</button>
-    </div>
-  `;
-  openModal(modalHtml);
-
-  if (node.type === "item") {
-    const iconTypeEl = $("fieldIconType");
-    if (!iconTypeEl) {
-      console.warn("openEditModal: fieldIconType missing after render");
-      return;
-    }
-    iconTypeEl.value = node.iconType === "letter" ? "auto" : node.iconType || "auto";
-    const iconExtra = $("iconExtra");
-    function renderIconExtra(type) {
-      if (!iconExtra) return;
-      iconExtra.replaceChildren();
-      if (type === "upload") {
-        const label = document.createElement("label");
-        label.textContent = t("field.uploadIcon");
-        const input = document.createElement("input");
-        input.id = "fieldUpload";
-        input.type = "file";
-        input.accept = "image/*";
-        iconExtra.appendChild(label);
-        iconExtra.appendChild(input);
-      } else if (type === "color") {
-        const label = document.createElement("label");
-        label.textContent = t("field.colorAvatar");
-        const input = document.createElement("input");
-        input.id = "fieldColor";
-        input.type = "color";
-        input.value = node.color || "#4dd6a8";
-        iconExtra.appendChild(label);
-        iconExtra.appendChild(input);
-      } else if (type === "remote") {
-        const label = document.createElement("label");
-        label.textContent = t("field.remoteIconUrl");
-        const input = document.createElement("input");
-        input.id = "fieldRemote";
-        input.type = "url";
-        input.value = node.iconData || "";
-        iconExtra.appendChild(label);
-        iconExtra.appendChild(input);
-      }
-    }
-    renderIconExtra(iconTypeEl.value);
-    iconTypeEl.addEventListener("change", () => renderIconExtra(iconTypeEl.value));
-
-    const btnFetchIcon = $("btnFetchIcon");
-    btnFetchIcon?.addEventListener("click", async () => {
-      if (!btnFetchIcon || btnFetchIcon.disabled) return;
-      const url = normalizeUrl(($("fieldUrl")?.value || "").trim() || node.url || "");
-      if (!url) {
-        toast(t("error.invalidUrl"), "error");
-        return;
-      }
-      const original = t("field.icon.fetchNow");
-      btnFetchIcon.disabled = true;
-      btnFetchIcon.textContent = t("field.icon.fetching");
-      try {
-        // 只刷新图标缓存；节点字段等用户点「保存」再提交
-        await clearIconCacheForUrl(url === node.url ? node.url : "", url);
-        const ok = await fetchFaviconNow(node.id, url);
-        if (ok) {
-          if (iconTypeEl) iconTypeEl.value = "auto";
-          renderIconExtra("auto");
-          // 表单层面切到 auto，不改 node、不 persist
-          toast(t("field.icon.fetchOk"));
-          // 若抓取的是当前已保存 URL，刷新网格以显示新图标；URL 有改动时等保存后再显示
-          if (url === node.url) {
-            node.iconType = "auto";
-            node.iconData = "";
-            node.iconPending = false;
-            render();
-          }
-        } else {
-          toast(t("field.icon.fetchFail"), "warning");
-        }
-      } catch (e) {
-        console.warn("btnFetchIcon failed", e);
-        toast(t("field.icon.fetchFail"), "error");
-      } finally {
-        const live = $("btnFetchIcon");
-        if (live) {
-          live.disabled = false;
-          live.textContent = original;
-        }
-      }
-    });
-  }
-
-  $("btnCancel")?.addEventListener("click", closeModal);
-  $("btnSave")?.addEventListener("click", async () => {
-    // 先校验再改内存/备份，避免无效 URL 留下半截修改
-    const nextTitle = ($("fieldTitle")?.value || "").trim() || node.title;
-    let nextUrl = node.url;
-    if (node.type === "item") {
-      nextUrl = normalizeUrl(($("fieldUrl")?.value || "").trim());
-      if (!nextUrl) {
-        toast(t("error.invalidUrl"), "error");
-        return;
-      }
-    }
-
-    const snapshot = deepClone(data);
-    pushBackup();
-
-    const oldUrl = node.url;
-    const oldIconType = node.iconType;
-    const titleChanged = node.title !== nextTitle;
-    const urlChanged = node.type === "item" && oldUrl !== nextUrl;
-    stampNodeFieldChanges(node, { titleChanged, urlChanged });
-
-    node.title = nextTitle;
-    if (node.type === "item") {
-      const url = nextUrl;
-      node.url = url;
-      const iconType = $("fieldIconType")?.value || "auto";
-      node.iconType = iconType;
-      if (iconType === "upload") {
-        const file = $("fieldUpload")?.files?.[0];
-        if (file) node.iconData = await readFileAsDataUrl(file);
-      } else if (iconType === "color") {
-        node.color = $("fieldColor")?.value || node.color;
-        node.iconData = "";
-      } else if (iconType === "remote") {
-        node.iconData = ($("fieldRemote")?.value || "").trim();
-      } else {
-        node.iconData = "";
-      }
-
-      const iconTypeChanged = oldIconType !== iconType;
-      const shouldRefetchIcon = urlChanged || (iconTypeChanged && iconType === "auto");
-
-      if (shouldRefetchIcon) {
-        await clearIconCacheForUrl(oldUrl, url);
-        if (iconType === "auto") {
-          node.iconPending = true;
-        }
-      }
-    }
-    const result = await persistData();
-    if (!result.ok) {
-      data = snapshot;
-      render();
-      toast(t("error.saveQuota"), "error");
-      return;
-    }
-    render();
-    closeModal();
-    if (node.type === "item" && node.iconPending) {
-      fetchFaviconInBackground(node.id, node.url);
-    }
-    if (result.warning === "local_trimmed_backups") {
-      toast(t("toast.save.trimBackup"), "warning");
-    } else if (result.warning === "local_trimmed_icons") {
-      toast(t("toast.save.trimIcons"), "warning");
-    } else if (result.warning === "local_trimmed_background") {
-      toast(t("toast.save.trimBackground"), "warning");
-    } else if (result.warning === "sync_quota_exceeded") {
-      toast(t("toast.save.syncFallback"), "warning");
-    } else if (result.warning === "sync_write_failed") {
-      toast(t("toast.save.syncWriteFailed"), "warning");
-    } else {
-      toast(t("toast.save.success"));
-    }
-  });
+  getModalManager().openEditModal(node);
 }
 
 async function openOpenModeMenu() {
@@ -2692,13 +2212,8 @@ function detectExtensionPlatform() {
   return "chrome";
 }
 
-function readFileAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
+async function readFileAsDataUrl(file) {
+  return compressImageFileToDataUrl(file);
 }
 
 function letterIconDataUrl(text, color) {
@@ -3116,8 +2631,8 @@ function handleSearchInput() {
   const grid = openFolderId ? elements.folderGrid : elements.grid;
   qsa(".tile", grid).forEach((tile) => {
     const node = data.nodes[tile.dataset.id];
-    const text = `${node.title || ""} ${node.url || ""}`.toLowerCase();
-    tile.style.display = text.includes(query) ? "" : "none";
+    if (!node) return;
+    tile.style.display = matchesSearchQuery(node.title, node.url, query) ? "" : "none";
   });
 }
 

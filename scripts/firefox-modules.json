@@ -1,6 +1,8 @@
 {
   "app": [
     "shared-utils.js",
+    "pinyin-match.js",
+    "sync_policy.js",
     "data-utils.js",
     "drag-geometry.js",
     "safari_native_storage.js",
@@ -8,7 +10,6 @@
     "icons.js",
     "bing-wallpaper.js",
     "visit-history.js",
-    "sync_policy.js",
     "sync_settings.js",
     "sync_ids.js",
     "sync_projection.js",
@@ -21,11 +22,15 @@
     "sync-banner.js",
     "app-i18n.js",
     "ui-utils.js",
+    "context-menu.js",
+    "modal-manager.js",
     "settings-controller.js",
     "app.js"
   ],
   "background": [
     "shared-utils.js",
+    "sync_policy.js",
+    "sync_ids.js",
     "data-utils.js",
     "safari_native_storage.js",
     "visit-history.js",

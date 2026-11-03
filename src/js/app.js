@@ -22,13 +22,8 @@ import {
   repairHomepageData,
   stampNodeFieldChanges,
 } from "./data-utils.js";
-import {
-  findNearestRect,
-  isPointInsideRect,
-  nextGridFocusIndex,
-  shouldInsertAfter,
-  toPlainRect,
-} from "./drag-geometry.js";
+import { nextGridFocusIndex } from "./drag-geometry.js";
+import { createDragManager } from "./drag-manager.js";
 import { createHistoryManager } from "./history-manager.js";
 import { createIconManager } from "./icon-manager.js";
 import { clearIconCacheForUrl, compressImageFileToDataUrl, getSiteKey, retryFailedIconsIfDue } from "./icons.js";
@@ -157,7 +152,8 @@ let selectionMode = false;
 let selectedIds = new Set();
 let pendingDeletion = null;
 let tooltipTimer = null;
-let dragState = null;
+/** 拖拽与重排管理器（drag-manager.js），init 时创建 */
+let dragManager = null;
 let lastSelectedIndex = null;
 let recentItems = [];
 /** 「最近历史」分组管理器（history-manager.js），init 时创建 */
@@ -166,7 +162,6 @@ let historyManager = null;
 let searchManager = null;
 /** 图标管线管理器（icon-manager.js），init 时创建 */
 let iconManager = null;
-let draggingGroupId = null;
 let boxSelecting = false;
 let selectionBox = null;
 let selectionStart = null;
@@ -1121,39 +1116,8 @@ function renderGroups() {
       e.preventDefault();
       if (!fixedAllGroup) openGroupContextMenu(e.clientX, e.clientY, group);
     });
-    btn.addEventListener("dragstart", () => {
-      if (fixedAllGroup) return;
-      draggingGroupId = group.id;
-      btn.classList.add("dragging");
-    });
-    btn.addEventListener("dragend", () => {
-      draggingGroupId = null;
-      btn.classList.remove("dragging");
-      qsa(".group-tab", elements.groupTabs).forEach((el) => {
-        el.classList.remove("drop-target");
-      });
-    });
-    btn.addEventListener("dragover", (e) => {
-      if (dragState && fixedAllGroup) return;
-      e.preventDefault();
-      if (dragState) e.dataTransfer.dropEffect = "move";
-      btn.classList.add("drop-target");
-    });
-    btn.addEventListener("dragleave", () => {
-      btn.classList.remove("drop-target");
-    });
-    btn.addEventListener("drop", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      btn.classList.remove("drop-target");
-      if (dragState && !fixedAllGroup) {
-        moveDraggedNodeToSidebarFolder(dragState.id, group.id);
-        dragState = null;
-        return;
-      }
-      if (!draggingGroupId || draggingGroupId === group.id) return;
-      moveGroupBefore(draggingGroupId, group.id);
-    });
+    // 侧栏分组的卡片投放与分组拖拽排序统一由 drag-manager 处理
+    dragManager.bindSidebarFolderEvents(btn, { groupId: group.id, fixedAllGroup });
     btn.addEventListener(
       "touchstart",
       (e) => {
@@ -1329,23 +1293,8 @@ async function renderGrid() {
       hideTooltip();
     });
 
-    tile.addEventListener("dragstart", (e) => {
-      dragState = { id: node.id, fromFolder: openFolderId };
-      e.dataTransfer.effectAllowed = "move";
-    });
-    tile.addEventListener("dragend", () => {
-      dragState = null;
-    });
-    tile.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-    });
-    tile.addEventListener("drop", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      handleDropOnTile(node.id, e.clientX, e.clientY);
-      dragState = null;
-    });
+    // 拖拽三意图（排序/入文件夹/合并成组）统一由 drag-manager 处理
+    dragManager.bindTileDragEvents(tile, node);
 
     tile.addEventListener(
       "touchstart",
@@ -1585,7 +1534,7 @@ function activateTouchDrag() {
   if (touchDragState.mode === "tile") {
     if (touchMenuState.active) closeContextMenu();
     resetTouchMenuState();
-    dragState = { id: touchDragState.sourceId, fromFolder: openFolderId };
+    dragManager.setDragState({ id: touchDragState.sourceId, fromFolder: openFolderId });
     if (touchDragState.sourceTile) {
       touchDragState.sourceTile.classList.add("touch-dragging");
       touchDragState.sourceTile.style.pointerEvents = "none";
@@ -1595,7 +1544,7 @@ function activateTouchDrag() {
     }
     touchDragState.targetTile = null;
   } else if (touchDragState.mode === "group") {
-    draggingGroupId = touchDragState.sourceGroupId;
+    dragManager.setDraggingGroupId(touchDragState.sourceGroupId);
     touchDragState.sourceGroupBtn?.classList.add("dragging");
     touchDragState.targetGroupBtn = null;
   }
@@ -1651,8 +1600,7 @@ function resetTouchDragState() {
   touchDragState.sourceGroupId = "";
   touchDragState.sourceGroupBtn = null;
   touchDragState.targetGroupBtn = null;
-  dragState = null;
-  draggingGroupId = null;
+  dragManager.cleanupDragState();
 }
 
 function finishTouchDrag() {
@@ -1665,15 +1613,15 @@ function finishTouchDrag() {
 
     const targetFolderId = touchDragState.targetGroupBtn?.dataset?.groupId || "";
     if (targetFolderId) {
-      moveDraggedNodeToSidebarFolder(sourceId, targetFolderId);
+      dragManager.moveDraggedNodeToSidebarFolder(sourceId, targetFolderId);
     } else if (targetId && targetId !== sourceId) {
-      handleDropOnTile(targetId, x, y);
+      dragManager.dropOnTile(targetId, x, y);
     } else if (activeGroupId !== RECENT_GROUP_ID) {
       const inFolder = !!openFolderId;
       const container = inFolder ? getFolderPlacementContainer(openFolderId) : getActiveGroup();
       const list = getPlacementList(container);
       const grid = inFolder ? elements.folderGrid : elements.grid;
-      const next = moveNodeInList(list, sourceId, getDropIndex(grid, x, y));
+      const next = moveNodeInList(list, sourceId, dragManager.getDropIndex(grid, x, y));
       if (next !== list) {
         setPlacementList(container, next);
         touchPlacementContainer(container);
@@ -1685,7 +1633,7 @@ function finishTouchDrag() {
     const sourceId = touchDragState.sourceGroupId;
     const targetId = touchDragState.targetGroupBtn?.dataset?.groupId || "";
     if (targetId && targetId !== sourceId) {
-      moveGroupBefore(sourceId, targetId);
+      dragManager.moveGroupBefore(sourceId, targetId);
     } else {
       const rect = elements.groupTabs.getBoundingClientRect();
       const total = getRootFolderIds().length;
@@ -1735,100 +1683,6 @@ function openGroupContextMenu(x, y, group) {
 
 function getCurrentGridElement() {
   return openFolderId ? elements.folderGrid : elements.grid;
-}
-
-function getTileElementById(targetId) {
-  const grid = getCurrentGridElement();
-  return qsa(".tile", grid).find((tile) => tile.dataset.id === targetId) || null;
-}
-
-function isDropOnIcon(targetId, x, y) {
-  const tile = getTileElementById(targetId);
-  if (!tile) return false;
-  const icon = qs(".tile-icon", tile);
-  if (!icon) return false;
-  return isPointInsideRect(toPlainRect(icon.getBoundingClientRect()), x, y);
-}
-
-function getInsertIndexFromTarget(list, _sourceId, targetId, x, _y) {
-  const targetIndex = list.indexOf(targetId);
-  if (targetIndex < 0) return list.length;
-  const tile = getTileElementById(targetId);
-  if (!tile) return targetIndex;
-  const rect = tile.getBoundingClientRect();
-  // 非图标区域拖放仅按左右半区判断前后，避免误判到行首/左侧。
-  const insertAfter = x >= rect.left + rect.width / 2;
-  return Math.max(0, Math.min(targetIndex + (insertAfter ? 1 : 0), list.length));
-}
-
-function handleDropOnTile(targetId, x, y) {
-  if (!dragState || dragState.id === targetId) return;
-  if (activeGroupId === RECENT_GROUP_ID) return;
-  const sourceId = dragState.id;
-  const targetNode = data.nodes[targetId];
-  const sourceNode = data.nodes[sourceId];
-  if (!targetNode || !sourceNode) return;
-
-  const inFolder = !!openFolderId;
-  const container = inFolder ? getFolderPlacementContainer(openFolderId) : getActiveGroup();
-  const list = getPlacementList(container);
-  const droppedOnIcon = isDropOnIcon(targetId, x, y);
-
-  if (!droppedOnIcon) {
-    const insertIndex = getInsertIndexFromTarget(list, sourceId, targetId, x, y);
-    const next = moveNodeInList(list, sourceId, insertIndex);
-    if (next === list) return;
-    pushBackup();
-    setPlacementList(container, next);
-    touchPlacementContainer(container);
-    queuePersist();
-    render();
-    return;
-  }
-
-  if (targetNode.type !== "folder") {
-    pushBackup();
-    const targetIndex = list.indexOf(targetId);
-    const sourceIndex = list.indexOf(sourceId);
-    let insertIndex = targetIndex >= 0 ? targetIndex : list.length;
-    if (sourceIndex >= 0 && sourceIndex < insertIndex) insertIndex -= 1;
-
-    removeNodeFromLocation(sourceId);
-    removeNodeFromLocation(targetId);
-
-    const folderId = `fld_${Date.now()}`;
-    const createdAt = Date.now();
-    const folder = {
-      id: folderId,
-      type: "folder",
-      title: t("folder.newTitle"),
-      children: [targetId, sourceId],
-      createdAt,
-      updatedAt: createdAt,
-      titleUpdatedAt: createdAt,
-    };
-    data.nodes[folderId] = folder;
-
-    const next = getPlacementList(container).filter((nid) => nid !== sourceId && nid !== targetId);
-    next.splice(Math.max(0, Math.min(insertIndex, next.length)), 0, folderId);
-    setPlacementList(container, next);
-    touchPlacementContainer(container);
-    queuePersist();
-    render();
-    toast(t("folder.created"));
-    return;
-  }
-
-  pushBackup();
-  removeNodeFromLocation(sourceId);
-  const targetContainer = getFolderPlacementContainer(targetId);
-  const targetList = getPlacementList(targetContainer);
-  targetList.push(sourceId);
-  setPlacementList(targetContainer, targetList);
-  touchPlacementContainer(targetContainer);
-  queuePersist();
-  render();
-  toast(t("folder.added"));
 }
 
 function dissolveFolder(folderId) {
@@ -1888,17 +1742,6 @@ function removeNodeFromLocation(id) {
   }
 }
 
-function moveDraggedNodeToSidebarFolder(nodeId, folderId) {
-  if (!canMoveNodeToFolder(data, nodeId, folderId)) return false;
-  pushBackup();
-  if (!moveNodeToFolder(data, nodeId, folderId)) return false;
-  touchPlacementContainer(data.nodes[folderId]);
-  queuePersist();
-  render();
-  toast(t("folder.added"));
-  return true;
-}
-
 function touchPlacementContainer(container) {
   if (!container || typeof container !== "object") return;
   container.updatedAt = nextSyncTimestamp(
@@ -1910,12 +1753,6 @@ function touchPlacementContainer(container) {
   );
   // 投影时为空会自动写入当前设备 ID，保证同一时间的并发变更可确定裁决。
   container.updatedBy = "";
-}
-
-function moveGroupBefore(sourceId, targetId) {
-  if (isAllBookmarksGroup(sourceId) || isAllBookmarksGroup(targetId)) return;
-  const targetIndex = getRootFolderIds().indexOf(targetId);
-  moveGroupToIndex(sourceId, targetIndex);
 }
 
 function moveGroupToIndex(sourceId, index) {
@@ -2300,19 +2137,54 @@ function selectTilesInBox(grid, x1, y1, x2, y2) {
   });
 }
 
-function getDropIndex(grid, x, y) {
-  const tiles = qsa(".tile", grid).filter((tile) => tile.getClientRects().length > 0);
-  if (!tiles.length) return 0;
-  // 几何判定抽到 drag-geometry.js：纯函数、有单元测试覆盖
-  const rects = tiles.map((tile) => toPlainRect(tile.getBoundingClientRect()));
-  const { index } = findNearestRect(rects, x, y);
-  return index + (shouldInsertAfter(rects[index], x, y) ? 1 : 0);
+/**
+ * 创建拖拽与重排管理器实例（能力与依赖见 drag-manager.js）：
+ * 排序插入 / 放入文件夹 / 拖卡建夹三种意图 + 侧栏分组排序。
+ */
+function createDragManagerInstance() {
+  return createDragManager({
+    getData: () => data,
+    getState: () => ({ activeGroupId, openFolderId }),
+    getActiveGroup,
+    getFolderPlacementContainer,
+    getPlacementList,
+    setPlacementList,
+    touchPlacementContainer,
+    removeNodeFromLocation,
+    moveNodeInList,
+    moveNodeToFolder,
+    canMoveNodeToFolder,
+    createFolderNode: (childIds) => {
+      const createdAt = Date.now();
+      return {
+        id: `fld_${createdAt}`,
+        type: "folder",
+        title: t("folder.newTitle"),
+        children: childIds,
+        createdAt,
+        updatedAt: createdAt,
+        titleUpdatedAt: createdAt,
+      };
+    },
+    moveGroupToIndex,
+    pushBackup,
+    queuePersist,
+    render,
+    toast,
+    t,
+    isRecentGroup: (groupId) => groupId === RECENT_GROUP_ID,
+    isAllBookmarksGroup,
+    getRootFolderIds,
+    qsa,
+    qs,
+  });
 }
 
 async function init() {
   debugLog("init_start", getRuntimeInfo());
-  // 图标管线管理器先建好（renderGrid / 弹窗 / 存储监听都会用到）
+  // 图标管线与拖拽管理器先建好（renderGrid / 弹窗 / 存储监听都会用到）
   iconManager = createIconManagerInstance();
+  dragManager = createDragManagerInstance();
   // 纯 Web / PWA 模式（无扩展 API 直接打开页面）：数据走 localStorage，扩展专属能力已安全降级
   if (getStorageMode() === "web-local") {
     console.info("[homepage] Web 模式就绪：无扩展环境，数据保存在浏览器 localStorage，历史/标签页等扩展能力已降级");
@@ -2963,75 +2835,17 @@ function bindEvents() {
     { passive: true },
   );
 
-  elements.grid.addEventListener("dragover", (e) => e.preventDefault());
-  elements.grid.addEventListener("drop", (e) => {
-    e.preventDefault();
-    if (!dragState) return;
-    if (activeGroupId === RECENT_GROUP_ID) return;
-    const sourceId = dragState.id;
-    if (openFolderId) return;
-    const group = getActiveGroup();
-    const index = getDropIndex(elements.grid, e.clientX, e.clientY);
-    const list = getPlacementList(group);
-    const next = moveNodeInList(list, sourceId, index);
-    if (next === list) {
-      dragState = null;
-      return;
-    }
-    setPlacementList(group, next);
-    touchPlacementContainer(group);
-    queuePersist();
-    render();
-    dragState = null;
+  // 网格空白区投放（主网格 / 文件夹覆盖层）与侧栏分组容器拖拽，统一由 drag-manager 处理
+  dragManager.bindGridDropEvents(elements.grid, {
+    getContainer: () => getActiveGroup(),
+    enabled: () => !openFolderId && activeGroupId !== RECENT_GROUP_ID,
+  });
+  dragManager.bindGridDropEvents(elements.folderGrid, {
+    getContainer: () => getFolderPlacementContainer(openFolderId),
+    enabled: () => !!openFolderId,
   });
 
-  elements.folderGrid.addEventListener("dragover", (e) => e.preventDefault());
-  elements.folderGrid.addEventListener("drop", (e) => {
-    e.preventDefault();
-    if (!dragState || !openFolderId) return;
-    const sourceId = dragState.id;
-    const folder = getFolderPlacementContainer(openFolderId);
-    const index = getDropIndex(elements.folderGrid, e.clientX, e.clientY);
-    const list = getPlacementList(folder);
-    const next = moveNodeInList(list, sourceId, index);
-    if (next === list) {
-      dragState = null;
-      return;
-    }
-    setPlacementList(folder, next);
-    touchPlacementContainer(folder);
-    queuePersist();
-    render();
-    dragState = null;
-  });
-
-  elements.groupTabs.addEventListener("dragover", (e) => {
-    if (!draggingGroupId) return;
-    e.preventDefault();
-    const rect = elements.groupTabs.getBoundingClientRect();
-    const edge = 24;
-    if (e.clientY < rect.top + edge) {
-      elements.groupTabs.scrollTop -= 16;
-    } else if (e.clientY > rect.bottom - edge) {
-      elements.groupTabs.scrollTop += 16;
-    }
-  });
-
-  elements.groupTabs.addEventListener("drop", (e) => {
-    if (!draggingGroupId) return;
-    e.preventDefault();
-    const rect = elements.groupTabs.getBoundingClientRect();
-    const edge = 24;
-    const total = getRootFolderIds().length;
-    if (e.clientY < rect.top + edge) {
-      moveGroupToIndex(draggingGroupId, 0);
-    } else if (e.clientY > rect.bottom - edge) {
-      moveGroupToIndex(draggingGroupId, total);
-    }
-    qsa(".group-tab", elements.groupTabs).forEach((el) => {
-      el.classList.remove("drop-target");
-    });
-  });
+  dragManager.bindGroupTabsEvents(elements.groupTabs);
 }
 
 (async () => {

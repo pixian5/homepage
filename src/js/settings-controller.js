@@ -61,6 +61,7 @@ var HomepageSettingsController = (() => {
     httpPullState,
     httpGetDevices,
     httpRetireDevice,
+    ensureDevicePairing,
     exportNetscapeBookmarksHtml,
     parseNetscapeBookmarksHtml,
     bookmarksToHomepageData,
@@ -230,13 +231,15 @@ var HomepageSettingsController = (() => {
           ? "settings.sync.state.syncing"
           : st.status === "quota"
             ? "settings.sync.state.quota"
-            : st.status === "error"
-              ? "settings.sync.state.error"
-              : st.status === "need_setup"
-                ? "settings.sync.state.conflict"
-                : getData().settings.syncEnabled
-                  ? "settings.sync.state.idle"
-                  : "settings.sync.state.off";
+            : st.status === "device_retired"
+              ? "settings.sync.state.deviceRetired"
+              : st.status === "error"
+                ? "settings.sync.state.error"
+                : st.status === "need_setup"
+                  ? "settings.sync.state.conflict"
+                  : getData().settings.syncEnabled
+                    ? "settings.sync.state.idle"
+                    : "settings.sync.state.off";
       const err = st.lastError ? ` · ${st.lastError}` : "";
       const via = t("settings.sync.transport.http");
       const intervalKey = normalizeSyncInterval(getData().settings?.syncInterval);
@@ -249,7 +252,10 @@ var HomepageSettingsController = (() => {
         lastAt > 0 ? t("settings.sync.lastSync", { time: formatSyncTime(lastAt) }) : t("settings.sync.lastSync.none")
       }`;
       el.textContent = `${t(statusKey)} · ${via}${intervalLabel}${lastLabel} · ${t("settings.sync.size", { size: kb })} · ${t(budgetKey)}${err}`;
-      el.dataset.level = st.status === "error" || st.status === "quota" || st.status === "need_setup" ? "red" : level;
+      el.dataset.level =
+        st.status === "error" || st.status === "quota" || st.status === "need_setup" || st.status === "device_retired"
+          ? "red"
+          : level;
       const resolveBtn = $("btnSyncResolveConflict");
       if (resolveBtn) {
         resolveBtn.classList.toggle("hidden", !(st.hasConflict || st.status === "need_setup"));
@@ -307,32 +313,36 @@ var HomepageSettingsController = (() => {
         mine.className = "settings-sync-device-mine";
         mine.textContent = t("settings.sync.devices.thisDevice");
         row.appendChild(mine);
-      } else if (retired) {
+      }
+      if (retired) {
         const tag = document.createElement("span");
         tag.className = "settings-sync-device-retired";
         tag.textContent = t("settings.sync.devices.retired");
         row.appendChild(tag);
-      } else {
-        // 非本机且未退役：提供一键注销（退役后该设备的独立凭据立即失效）
+      }
+      if (device.deviceId !== localDeviceId) {
+        // 退役设备提供「恢复激活」，正常设备提供「注销」；本机自身不提供这两个入口
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "icon-btn settings-sync-device-retire-btn";
-        btn.textContent = t("settings.sync.devices.retire");
-        btn.addEventListener("click", () => void retireSyncDevice(device, btn));
+        btn.textContent = retired ? t("settings.sync.devices.reactivate") : t("settings.sync.devices.retire");
+        btn.addEventListener("click", () => void setSyncDeviceRetired(device, btn, !retired));
         row.appendChild(btn);
       }
       listEl.appendChild(row);
     }
   }
 
-  /** 注销（退役）一台协同设备：确认后调用管理接口，成功后刷新清单 */
-  async function retireSyncDevice(device, btn) {
+  /** 注销 / 恢复一台协同设备：确认后调用管理接口，成功后刷新清单 */
+  async function setSyncDeviceRetired(device, btn, retired) {
     const name = device.deviceName || t("settings.sync.devices.unknownName");
-    if (!confirm(t("settings.sync.devices.retireConfirm", { name }))) return;
-    await runWithButtonState(btn, t("settings.sync.devices.retiring"), async () => {
+    const confirmKey = retired ? "settings.sync.devices.retireConfirm" : "settings.sync.devices.reactivateConfirm";
+    if (!confirm(t(confirmKey, { name }))) return;
+    const busyKey = retired ? "settings.sync.devices.retiring" : "settings.sync.devices.reactivating";
+    await runWithButtonState(btn, t(busyKey), async () => {
       try {
         const cfg = applySyncSettingsFromForm();
-        const res = await httpRetireDevice(cfg, { deviceId: device.deviceId, retired: true });
+        const res = await httpRetireDevice(cfg, { deviceId: device.deviceId, retired });
         if (!res.ok) {
           toast(
             t("settings.sync.devices.retireFail", {
@@ -343,13 +353,13 @@ var HomepageSettingsController = (() => {
           );
           return;
         }
-        toast(t("settings.sync.devices.retireOk"));
+        toast(t(retired ? "settings.sync.devices.retireOk" : "settings.sync.devices.reactivateOk"));
         await refreshSyncDevices();
       } catch (e) {
         toast(t("settings.sync.devices.retireFail", { reason: e?.message || "error" }), "error");
       }
     }).catch((e) => {
-      console.warn("retireSyncDevice failed", e);
+      console.warn("setSyncDeviceRetired failed", e);
       toast(t("settings.sync.devices.retireFail", { reason: e?.message || "error" }), "error");
     });
   }
@@ -700,7 +710,9 @@ var HomepageSettingsController = (() => {
         }
         if (pull.ok || pull.reason === "no_remote") {
           toast(t("settings.sync.testOk"));
-          // 测试通过说明服务器可达且鉴权成功：顺手刷新协同设备仪表盘
+          // 鉴权通过即尝试自动配对设备独立凭据（已配对/开放模式为空操作），
+          // 随后刷新协同设备仪表盘——新配对的设备会立刻出现在列表里
+          if (ensureDevicePairing) await ensureDevicePairing();
           void refreshSyncDevices();
           return;
         }
@@ -986,6 +998,16 @@ var HomepageSettingsController = (() => {
             toast(t("settings.bookmarks.importEmpty"), "warning");
             return;
           }
+          // 含根文件夹结构的标准书签（如 Chrome 的「书签栏」）：让用户选择导入形态——
+          // 确认 = 作为新的顶层分组（以文件名命名）；取消 = 并入现有全部书签
+          const hasStructure = parsed.groups.some((group) => group.name);
+          const asNewGroup = hasStructure && confirm(t("settings.bookmarks.askNewGroup"));
+          const groupName = asNewGroup
+            ? file.name
+                .replace(/\.[^.]+$/, "")
+                .trim()
+                .slice(0, 40) || ""
+            : "";
           const deviceId = await getOrCreateDeviceId();
           // 按现有数据的全部书签 URL 去重：同一文件重复导入不会翻倍
           const knownUrls = new Set(
@@ -993,7 +1015,13 @@ var HomepageSettingsController = (() => {
               .filter((node) => node?.type === "item" && !node.deletedAt && node.url)
               .map((node) => node.url),
           );
-          const incoming = bookmarksToHomepageData(parsed, { now: Date.now(), updatedBy: deviceId, knownUrls });
+          const incoming = bookmarksToHomepageData(parsed, {
+            now: Date.now(),
+            updatedBy: deviceId,
+            knownUrls,
+            mode: asNewGroup ? "new_group" : "merge_root",
+            groupName,
+          });
           if (!Object.keys(incoming.nodes).length) {
             toast(t("settings.bookmarks.importEmpty"), "warning");
             return;
@@ -1580,6 +1608,7 @@ var HomepageSettingsController = (() => {
     httpPullState = all.httpPullState;
     httpGetDevices = all.httpGetDevices;
     httpRetireDevice = all.httpRetireDevice;
+    ensureDevicePairing = all.ensureDevicePairing;
     exportNetscapeBookmarksHtml = all.exportNetscapeBookmarksHtml;
     parseNetscapeBookmarksHtml = all.parseNetscapeBookmarksHtml;
     bookmarksToHomepageData = all.bookmarksToHomepageData;

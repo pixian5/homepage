@@ -958,7 +958,9 @@ const server = createServer(async (req, res) => {
       }
 
       const ifMatch = String(req.headers["if-match"] || "").trim();
-      if (state && ifMatch && ifMatch !== state.etag && ifMatch !== "*") {
+      // If-Match 只与「真实文档」比较：只配对过的占位状态（doc 为 null）等价于云端无数据，
+      // 此时旧客户端带着别的服务器的 etag 前来首写不应被 412 拦截（否则它永远写不进来）
+      if (state?.doc && ifMatch && ifMatch !== state.etag && ifMatch !== "*") {
         return {
           status: 412,
           body: {

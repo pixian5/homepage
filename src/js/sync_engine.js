@@ -3,7 +3,7 @@
  */
 
 import { getLastError, storageArea } from "./shared-utils.js";
-import { httpConfirmSyncState, httpPullState, httpPushState } from "./sync_http_transport.js";
+import { httpConfirmSyncState, httpPairDevice, httpPullState, httpPushState } from "./sync_http_transport.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
 import { mergeHomepage } from "./sync_merge.js";
 import {
@@ -41,7 +41,119 @@ function getTransportConfig() {
     mode: "http",
     baseUrl: String(settings.syncServerUrl || "").trim(),
     token: String(settings.syncServerToken || "").trim(),
+    // 设备独立凭据（P1 配对签发）：存在时 pull/push/confirm 优先使用 Device 头
+    deviceSecret: String(settings.syncDeviceSecret || "").trim(),
+    // 凭据签发时的服务器地址：换了服务器后旧凭据立即失效，需要重新配对
+    deviceSecretUrl: String(settings.syncDeviceSecretUrl || "").trim(),
   };
+}
+
+/**
+ * 组装本次请求的传输凭据：
+ * - 配对过且服务器地址未变 → Device <deviceId>:<deviceSecret>（独立凭据，可被单独注销）；
+ * - 否则 → 回退全局 Bearer Token（未配对客户端的兼容行为）。
+ */
+async function getTransportAuth() {
+  const transport = getTransportConfig();
+  if (transport.deviceSecret && transport.baseUrl && transport.deviceSecretUrl === transport.baseUrl) {
+    const deviceId = await getOrCreateDeviceId();
+    if (deviceId) {
+      return { ...transport, deviceId, deviceSecret: transport.deviceSecret };
+    }
+  }
+  return { baseUrl: transport.baseUrl, token: transport.token };
+}
+
+/** 根据 UserAgent 生成友好设备名（配对时登记到服务端设备表，仪表盘可见） */
+function friendlyDeviceName() {
+  const ua = String(typeof navigator !== "undefined" ? navigator.userAgent || "" : "");
+  if (!ua) return "未命名设备";
+  if (/firefox\//i.test(ua)) return "Firefox 浏览器";
+  if (/edg\//i.test(ua)) return "Edge 浏览器";
+  if (/chrome|crios/i.test(ua)) return "Chrome 浏览器";
+  if (/safari/i.test(ua)) return "Safari 扩展";
+  return "浏览器设备";
+}
+
+/** 防止并发同步同时发起多次配对 */
+let _pairInFlight = null;
+
+/**
+ * 自动配对设备独立凭据（P1 收尾）：
+ * 同步开启 + 配置了服务器与 Master Token + 本地尚无凭据时，
+ * 用 Master Token 为本机签发 Device 凭据并写入 settings 持久化；
+ * 之后所有 pull / push / confirm 自动改用该凭据。
+ * 配对失败静默降级（继续用 Bearer），不阻断同步本身。
+ * @returns {Promise<boolean>} 是否完成配对（含已在飞行中）
+ */
+export async function ensureDevicePairing() {
+  const data = _getData();
+  const settings = data?.settings || {};
+  if (!settings.syncEnabled) return false;
+  const baseUrl = String(settings.syncServerUrl || "").trim();
+  const token = String(settings.syncServerToken || "").trim();
+  // 开放模式（无 Master Token）没有配对意义：服务端不校验任何凭据
+  if (!baseUrl || !token) return false;
+  const existing = String(settings.syncDeviceSecret || "").trim();
+  if (existing && String(settings.syncDeviceSecretUrl || "").trim() === baseUrl) return false;
+  if (_pairInFlight) return _pairInFlight;
+  _pairInFlight = (async () => {
+    try {
+      const deviceId = await getOrCreateDeviceId();
+      if (!deviceId) return false;
+      const res = await httpPairDevice({ baseUrl, token }, { deviceId, deviceName: friendlyDeviceName() });
+      if (!res?.ok || !res.deviceSecret) return false;
+      const current = _getData();
+      if (!current?.settings) return false;
+      // 等待期间别的实例可能已配对成功
+      const raced = String(current.settings.syncDeviceSecret || "").trim();
+      if (raced && String(current.settings.syncDeviceSecretUrl || "").trim() === baseUrl) return true;
+      current.settings.syncDeviceSecret = res.deviceSecret;
+      current.settings.syncDeviceSecretUrl = baseUrl;
+      const err = await _saveLocal(current);
+      if (err) {
+        // 落盘失败必须回滚内存：否则本页一直用未持久化的凭据，重启后凭据丢失
+        delete current.settings.syncDeviceSecret;
+        delete current.settings.syncDeviceSecretUrl;
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.warn("pair device failed", e);
+      return false;
+    } finally {
+      _pairInFlight = null;
+    }
+  })();
+  return _pairInFlight;
+}
+
+/**
+ * 设备凭据被服务端判定未授权（401）：通常是服务器数据重建或换库后旧凭据失配。
+ * 清掉本地凭据，下一轮同步会自动用 Master Token 重新配对自愈。
+ */
+async function dropStaleDeviceCredentials() {
+  const current = _getData();
+  if (!current?.settings?.syncDeviceSecret) return;
+  delete current.settings.syncDeviceSecret;
+  delete current.settings.syncDeviceSecretUrl;
+  try {
+    await _saveLocal(current);
+  } catch (e) {
+    console.warn("drop stale device credentials failed", e);
+  }
+}
+
+/**
+ * 退役熔断：本设备已被管理员注销，服务端对一切读写返回 403 device_retired。
+ * 立即停止周期轮询与防抖推送（防止无意义的高频空转），状态置为 device_retired。
+ */
+async function markDeviceRetired() {
+  _status.status = "device_retired";
+  _status.lastError = "设备已被管理员注销 (403)";
+  stopSyncInterval();
+  cancelScheduledPush();
+  await saveState();
 }
 
 function storageGetKeys(area, keys) {
@@ -299,11 +411,25 @@ function enqueue(task) {
  * 读取远端 SyncDocument
  */
 export async function readRemoteSyncDocument() {
-  const transport = getTransportConfig();
+  const transport = await getTransportAuth();
   if (!transport.baseUrl) return { ok: false, reason: "no_url" };
-  const res = await httpPullState({ baseUrl: transport.baseUrl, token: transport.token });
+  const res = await httpPullState(transport);
   if (!res.ok) {
-    if (res.reason === "no_remote") return { ok: false, reason: "no_remote" };
+    if (res.reason === "no_remote") {
+      // 云端无数据：旧 etag（可能来自其它服务器或重置前的库）已无意义，
+      // 必须清掉——否则首写带着旧 If-Match，与占位状态 etag 不匹配会 412 且无法自愈
+      _status.lastRemoteEtag = "";
+      return { ok: false, reason: "no_remote" };
+    }
+    if (res.reason === "device_retired") {
+      // 退役熔断：停掉周期与防抖，状态直接暴露给设置面板
+      await markDeviceRetired();
+      return { ok: false, reason: "device_retired" };
+    }
+    if (res.reason === "unauthorized" && transport.deviceSecret) {
+      // 设备凭据失配（服务器重建/换库）：清凭据，下一轮自动重新配对
+      await dropStaleDeviceCredentials();
+    }
     return { ok: false, reason: res.reason || "http_error", error: res.error, status: res.status };
   }
   _status.lastRemoteEtag = res.etag || "";
@@ -316,9 +442,9 @@ export async function readRemoteSyncDocument() {
  * 写入远端投影
  */
 async function writeRemoteSyncDocument(doc) {
-  const transport = getTransportConfig();
+  const transport = await getTransportAuth();
   if (!transport.baseUrl) return "no_url";
-  const res = await httpPushState({ baseUrl: transport.baseUrl, token: transport.token }, doc, {
+  const res = await httpPushState(transport, doc, {
     ifMatch: _status.lastRemoteEtag || undefined,
     // 告诉服务端本机所处的压缩代际；落后时服务端会以 409 stale_epoch 拒绝
     epoch: _status.lastRemoteEpoch || 0,
@@ -337,7 +463,14 @@ async function writeRemoteSyncDocument(doc) {
     }
     return "precondition_failed";
   }
-  if (res.reason === "unauthorized") return "unauthorized";
+  if (res.reason === "unauthorized") {
+    if (transport.deviceSecret) await dropStaleDeviceCredentials();
+    return "unauthorized";
+  }
+  if (res.reason === "device_retired") {
+    await markDeviceRetired();
+    return "device_retired";
+  }
   if (res.reason === "network_error") return res.error || "network_error";
   if (res.reason === "stale_epoch" || res.status === 409) {
     // 服务端已压缩墓碑并进入新一代：本机必须重新取基线，不能继续推送旧整包
@@ -370,6 +503,8 @@ export async function pullNow(reason = "manual") {
     _status.lastError = "";
     await saveState();
 
+    // 初次同步前自动配对设备独立凭据（无 Master Token 或已配对时为空操作）
+    await ensureDevicePairing();
     const deviceId = await getOrCreateDeviceId();
     const remote = await readRemoteSyncDocument();
 
@@ -385,6 +520,10 @@ export async function pullNow(reason = "manual") {
           return { ok: true, empty: true, pushed };
         }
         return { ok: true, empty: true };
+      }
+      if (remote.reason === "device_retired") {
+        // 状态与定时器已在 readRemoteSyncDocument 内熔断处理
+        return { ok: false, reason: "device_retired" };
       }
       _status.status = "error";
       _status.lastError = remote.reason || "pull_failed";
@@ -500,14 +639,11 @@ async function applyRemoteDoc(doc, deviceId, reason) {
  * 第一阶段服务端只记录、不回收；确认失败也不影响同步结果，因此吞掉错误。
  */
 async function confirmRemoteRevision(revision, deviceId) {
-  const transport = getTransportConfig();
+  const transport = await getTransportAuth();
   if (!transport.baseUrl || !deviceId) return;
   if (!Number.isSafeInteger(revision) || revision <= 0) return;
   try {
-    await httpConfirmSyncState(
-      { baseUrl: transport.baseUrl, token: transport.token },
-      { deviceId, revision, protocol: 2 },
-    );
+    await httpConfirmSyncState(transport, { deviceId, revision, protocol: 2 });
   } catch (e) {
     console.warn("confirm sync revision failed", e);
   }
@@ -562,6 +698,8 @@ async function pushNowImpl(reason = "manual") {
   _status.status = "syncing";
   await saveState();
 
+  // 推送前同样先补配对：设置刚保存完（未发生过 pull）时首次动作可能就是 push
+  await ensureDevicePairing();
   const deviceId = await getOrCreateDeviceId();
   if (!_status.docId) _status.docId = createDocId();
 
@@ -569,6 +707,10 @@ async function pushNowImpl(reason = "manual") {
   /** 本轮实际对照的远端文档（预拉取后会重取一次，可能更新） */
   let latestRemote = null;
   const remote = await readRemoteSyncDocument();
+  // 退役设备：预拉取阶段即被 403 拒绝，状态已熔断，不再进入推送与 outbox 重试
+  if (remote.reason === "device_retired") {
+    return { ok: false, reason: "device_retired" };
+  }
   if (remote.ok && remote.doc) {
     if (remote.doc.docId && _status.docId && remote.doc.docId !== _status.docId) {
       _status.status = "need_setup";
@@ -686,6 +828,11 @@ async function pushNowImpl(reason = "manual") {
       await saveState();
       return { ok: false, reason: "unauthorized" };
     }
+    if (lastErr === "device_retired") {
+      // 已熔断（writeRemoteSyncDocument 内处理状态与定时器）；
+      // 关键：不进 outbox 重试——退役设备重试永远 403，只会空转
+      return { ok: false, reason: "device_retired" };
+    }
     if (lastErr === "stale_epoch") {
       // 服务端已完成墓碑回收并进入新一代：本机先拉取新基线，本轮推送作废。
       // 不进入 outbox 重试，避免把旧整包反复推给新代际。
@@ -775,6 +922,8 @@ export function cancelScheduledPush() {
 export async function flushOutbox() {
   const data = _getData();
   if (!data?.settings?.syncEnabled) return { ok: true, skipped: true };
+  // 退役熔断未解除前不消费 outbox：重试永远 403，只会徒增请求
+  if (_status.status === "device_retired") return { ok: false, reason: "device_retired" };
   const local = areaLocal();
   if (!local) return { ok: false, reason: "no_local" };
   const got = await storageGetKeys(local, [SYNC_OUTBOX_KEY]);

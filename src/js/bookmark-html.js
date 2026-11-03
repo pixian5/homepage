@@ -254,18 +254,30 @@ function normalizeImportIcon(icon) {
   return uri.length <= IMPORT_ICON_MAX_LENGTH ? uri : "";
 }
 
+/** 默认导入分组名：导入书签 (YYYY-MM-DD)，按本地时区取日期 */
+function defaultImportGroupName(now) {
+  const d = new Date(now);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `导入书签 (${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())})`;
+}
+
 /**
- * 把 parseNetscapeBookmarksHtml 的结果转换为本程序数据形状：
- * 顶层分组 → 「全部」根下的顶层 folder；书签 → item 节点（icon 转内嵌数据）。
+ * 把 parseNetscapeBookmarksHtml 的结果转换为本程序数据形状。
+ * - mode "merge_root"（默认）：顶层分组 → 「全部」根下的顶层 folder，与现有数据并列；
+ * - mode "new_group"：整个导入树包进一个新的顶层 folder（单根模型下即“顶层分组”），
+ *   分组名取 groupName（默认「导入书签 (YYYY-MM-DD)」），内部层级完整保留。
  * 传入 knownUrls（现有数据的全部书签 URL 集合）可按 URL 去重——重复导入同一文件不会翻倍；
  * 因去重而变空的文件夹会被一并丢弃。
  * 产物交给 mergeRootBookmarkData(target, incoming) 即可并入现有数据。
  *
  * @param {{groups: Array<object>}} parsed 解析结果
- * @param {{now?: number, updatedBy?: string, knownUrls?: Set<string> | Array<string>}} [options]
+ * @param {{now?: number, updatedBy?: string, knownUrls?: Set<string> | Array<string>, mode?: "merge_root"|"new_group", groupName?: string}} [options]
  * @returns {{groups: Array<object>, nodes: Record<string, object>, lastUpdated: number}}
  */
-export function bookmarksToHomepageData(parsed, { now = Date.now(), updatedBy = "", knownUrls } = {}) {
+export function bookmarksToHomepageData(
+  parsed,
+  { now = Date.now(), updatedBy = "", knownUrls, mode = "merge_root", groupName = "" } = {},
+) {
   const nodes = {};
   const rootChildIds = [];
   let folderSeq = 0;
@@ -348,6 +360,38 @@ export function bookmarksToHomepageData(parsed, { now = Date.now(), updatedBy = 
     }
     const folder = buildFolder(group.name, children, "");
     if (folder) rootChildIds.push(folder.id);
+  }
+
+  // new_group 模式：整个导入树作为一个新的顶层分组（单根模型下的顶层 folder）
+  if (mode === "new_group") {
+    if (!rootChildIds.length) {
+      return { groups: [], nodes: {}, lastUpdated: now };
+    }
+    const wrapId = makeFolderId();
+    nodes[wrapId] = {
+      id: wrapId,
+      type: "folder",
+      title: String(groupName || "").trim() || defaultImportGroupName(now),
+      children: rootChildIds,
+      createdAt: now,
+      updatedAt: now,
+      titleUpdatedAt: now,
+      updatedBy,
+    };
+    return {
+      groups: [
+        {
+          id: ALL_BOOKMARKS_GROUP_ID,
+          name: "全部",
+          order: -1,
+          nodes: [wrapId],
+          systemAllGroup: true,
+          updatedAt: now,
+        },
+      ],
+      nodes,
+      lastUpdated: now,
+    };
   }
 
   return {

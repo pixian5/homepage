@@ -313,6 +313,50 @@ describe("bookmarksToHomepageData + mergeRootBookmarkData", () => {
   });
 });
 
+describe("bookmarksToHomepageData import modes", () => {
+  it("new_group wraps the whole tree in one named top-level folder", () => {
+    const parsed = parseNetscapeBookmarksHtml(CHROME_SAMPLE);
+    const incoming = bookmarksToHomepageData(parsed, {
+      now: TS,
+      updatedBy: "dev_test",
+      mode: "new_group",
+      groupName: "从 Chrome 迁移",
+    });
+    const root = incoming.groups[0];
+    assert.equal(root.id, ALL_BOOKMARKS_GROUP_ID);
+    // 整棵导入树被包进唯一的顶层 folder（单根模型下的“顶层分组”）
+    assert.equal(root.nodes.length, 1);
+    const wrap = incoming.nodes[root.nodes[0]];
+    assert.equal(wrap.type, "folder");
+    assert.equal(wrap.title, "从 Chrome 迁移");
+    // 内部层级完整保留：书签栏 → 工作 & 学习 → 链接
+    const bar = incoming.nodes[wrap.children[0]];
+    assert.equal(bar.title, "书签栏");
+    const work = incoming.nodes[bar.children[0]];
+    assert.equal(work.title, "工作 & 学习");
+    assert.equal(incoming.nodes[work.children[0]].url, "https://example.com/?q=1&lang=zh");
+  });
+
+  it("new_group falls back to a dated default name and returns empty on fully deduped input", () => {
+    const parsed = parseNetscapeBookmarksHtml(CHROME_SAMPLE);
+    const incoming = bookmarksToHomepageData(parsed, { now: TS, mode: "new_group" });
+    assert.equal(incoming.nodes[incoming.groups[0].nodes[0]].title, "导入书签 (2021-01-01)");
+
+    // 全部 URL 已知 → 无可导入内容：不产生分组（空分组没有意义）
+    const knownUrls = new Set(["https://example.com/?q=1&lang=zh", "https://github.com/"]);
+    const empty = bookmarksToHomepageData(parsed, { now: TS, knownUrls, mode: "new_group" });
+    assert.deepEqual(empty, { groups: [], nodes: {}, lastUpdated: TS });
+  });
+
+  it("merge_root (default) keeps previous behavior: top-level folders side by side", () => {
+    const parsed = parseNetscapeBookmarksHtml(CHROME_SAMPLE);
+    const incoming = bookmarksToHomepageData(parsed, { now: TS, mode: "merge_root" });
+    const root = incoming.groups[0];
+    assert.equal(root.nodes.length, 1, "顶层分组并列（空分组跳过）");
+    assert.equal(incoming.nodes[root.nodes[0]].title, "书签栏");
+  });
+});
+
 describe("round-trip export → parse", () => {
   it("preserves folder hierarchy, titles and urls across a round trip", () => {
     const html = exportNetscapeBookmarksHtml(makeData());

@@ -64,6 +64,7 @@ import {
 import { exportSyncBundle, importSyncBundle } from "./sync_bundle.js";
 import {
   cancelScheduledPush,
+  ensureDevicePairing,
   flushOutbox,
   getOutboxSummary,
   getPendingConflict,
@@ -2809,6 +2810,7 @@ async function init() {
       httpPullState,
       httpGetDevices,
       httpRetireDevice,
+      ensureDevicePairing,
       exportNetscapeBookmarksHtml,
       parseNetscapeBookmarksHtml,
       bookmarksToHomepageData,

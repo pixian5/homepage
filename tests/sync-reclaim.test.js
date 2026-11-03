@@ -331,3 +331,88 @@ describe("client epoch handling", () => {
     }
   });
 });
+
+describe("墓碑回涌防御（reclaimedIds）", () => {
+  it("回收后旧客户端重推含墓碑整包，不再被记为新删除、不再产生候选", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "homepage-resurrect."));
+    const dataFile = path.join(tempDir, "state.json");
+    const server = await startServer(dataFile, TOKEN);
+    const cfg = { baseUrl: server.baseUrl, token: TOKEN };
+    try {
+      // 建基线：1 个活节点
+      const live = baseDoc("dev_a", "doc_resurrect", 1, {
+        nodes: [
+          { id: "n1", type: "item", title: "书签", url: "https://example.test/", updatedAt: 1, updatedBy: "dev_a" },
+        ],
+      });
+      assert.equal((await httpPushState(cfg, live, { idempotencyKey: "r1" })).ok, true);
+
+      // dev_a 删除 → 墓碑入文档，deletions 记录
+      const pulled = await httpPullState(cfg);
+      const tombstoned = baseDoc("dev_a", "doc_resurrect", pulled.revision + 1, {
+        nodes: [
+          {
+            id: "n1",
+            type: "item",
+            title: "书签",
+            url: "https://example.test/",
+            updatedAt: 2,
+            updatedBy: "dev_a",
+            deletedAt: 2,
+          },
+        ],
+      });
+      assert.equal((await httpPushState(cfg, tombstoned, { idempotencyKey: "r2" })).ok, true);
+
+      // 确认到删除版本 → 出现候选 → 真回收
+      await httpConfirmSyncState(cfg, { deviceId: "dev_a", revision: 2 });
+      const reclaim = await api(server.baseUrl, TOKEN, "/v1/sync/reclaim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: false, confirm: "RECLAIM" }),
+      });
+      assert.equal(reclaim.body.ok, true);
+      assert.deepEqual(reclaim.body.reclaimed, ["n1"]);
+
+      // 模拟旧客户端回涌：本地仍持有墓碑整包，基于新基线重推（revision 取回收后最新）
+      const afterReclaim = await httpPullState(cfg);
+      const resurrected = baseDoc("dev_a", "doc_resurrect", afterReclaim.revision + 1, {
+        nodes: [
+          {
+            id: "n1",
+            type: "item",
+            title: "书签",
+            url: "https://example.test/",
+            updatedAt: 2,
+            updatedBy: "dev_a",
+            deletedAt: 2, // 旧客户端没丢弃已回收墓碑
+          },
+        ],
+      });
+      const pushBack = await httpPushState(cfg, resurrected, { idempotencyKey: "r3" });
+      assert.equal(pushBack.ok, true, "回推应被接受（兼容旧客户端），但不得再记删除");
+
+      // 关键断言：deletions 不回涌、不再出现回收候选
+      const devices = await api(server.baseUrl, TOKEN, "/v1/sync/devices");
+      assert.equal(devices.body.deletions["n1"], undefined, "已回收墓碑重推不得再次进入 deletions");
+      assert.deepEqual(devices.body.reclaimCandidates, [], "已回收墓碑不得再次成为候选（否则回收无限循环）");
+
+      // 回推之后再做一次正常活节点推送：reclaimedIds 必须仍在（PUT 落盘不得抹掉防御集合）
+      const pulled2 = await httpPullState(cfg);
+      const live2 = baseDoc("dev_a", "doc_resurrect", pulled2.revision + 1, {
+        nodes: [
+          { id: "n2", type: "item", title: "活着", url: "https://alive.test/", updatedAt: 3, updatedBy: "dev_a" },
+        ],
+      });
+      assert.equal((await httpPushState(cfg, live2, { idempotencyKey: "r4" })).ok, true);
+      const stateOnDisk = JSON.parse(await readFile(dataFile, "utf8"));
+      assert.ok(
+        (stateOnDisk.reclaimedIds || []).includes("n1"),
+        "PUT 落盘必须保留 reclaimedIds，否则下次推送后防御集合被抹空、回涌复现",
+      );
+    } finally {
+      await stopServer(server.child);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});

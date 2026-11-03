@@ -1,23 +1,21 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# 备份 Homepage 同步服务状态（服务端）。
+# 备份 Homepage 同步服务状态（服务端 / 本地均可运行）。
 # 设计原则：只读状态目录、不中断服务；tar 前先校验 JSON 可解析，避免备份到半损坏文件。
 #
 # 用法：
-#   sudo scripts/backup-sync-state.sh                    # 备份到默认目录，保留 14 份
-#   sudo scripts/backup-sync-state.sh --keep 30          # 保留 30 份
-#   sudo scripts/backup-sync-state.sh --out /root/bk     # 自定义备份目录
-#   sudo scripts/backup-sync-state.sh --pull  ~/Desktop  # 备份后拉回本机（需在本机执行）
+#   bash scripts/backup-sync-state.sh                                   # 默认目录 /var/lib/homepage-sync
+#   bash scripts/backup-sync-state.sh --data-dir ./data --out ./backup  # 本地/自定义路径
+#   bash scripts/backup-sync-state.sh --keep 30                         # 保留 30 份
 
 DATA_DIR="/var/lib/homepage-sync"
 BACKUP_DIR="/var/backups/homepage-sync"
 KEEP=14
-PULL_TO=""
 
 usage() {
   cat <<'EOF'
-用法：sudo scripts/backup-sync-state.sh [选项]
+用法：bash scripts/backup-sync-state.sh [选项]
 
 选项：
   --data-dir DIR    同步状态目录，默认 /var/lib/homepage-sync
@@ -67,17 +65,23 @@ ARCHIVE="$BACKUP_DIR/homepage-sync-$STAMP.tar.gz"
 tar -czf "$ARCHIVE" -C "$DATA_DIR" . || die "打包失败"
 
 SIZE="$(du -h "$ARCHIVE" | cut -f1)"
-log "已备份：$ARCHIVE（$SIZE）"
+# 注意：macOS bash 3.2 的 $VAR 后紧跟多字节字符（如全角括号）会把高位字节并入变量名，
+# 触发 unbound variable。凡变量后接非 ASCII 字符必须用 ${} 包裹。
+log "已备份：${ARCHIVE}（${SIZE}）"
 
 # 校验归档可读、内含状态文件条目
-tar -tzf "$ARCHIVE" >/dev/null || die "归档校验失败：$ARCHIVE"
+tar -tzf "$ARCHIVE" >/dev/null || die "归档校验失败：${ARCHIVE}"
 
 # 清理旧备份，只保留最近 KEEP 份
+# 注意：mapfile 是 bash 4+ 内建，macOS 自带 bash 3.2 没有，必须用 while read（POSIX 兼容）
 if [[ "$KEEP" =~ ^[0-9]+$ ]] && (( KEEP > 0 )); then
-  mapfile -t OLD < <(ls -1t "$BACKUP_DIR"/homepage-sync-*.tar.gz 2>/dev/null | tail -n +$((KEEP + 1)))
-  if ((${#OLD[@]})); then
-    printf '%s\n' "${OLD[@]}" | xargs -r rm -f
-    log "已清理 ${#OLD[@]} 份旧备份，保留最近 $KEEP 份"
+  local_old=()
+  while IFS= read -r f; do
+    [[ -n "$f" ]] && local_old+=("$f")
+  done < <(ls -1t "$BACKUP_DIR"/homepage-sync-*.tar.gz 2>/dev/null | tail -n +$((KEEP + 1)))
+  if ((${#local_old[@]})); then
+    printf '%s\n' "${local_old[@]}" | xargs -r rm -f
+    log "已清理 ${#local_old[@]} 份旧备份，保留最近 ${KEEP} 份"
   fi
 fi
 
@@ -89,10 +93,7 @@ done
 # 把恢复命令打印出来，避免紧急时找不到
 cat <<EOF
 
-恢复到这台机器：
-  sudo scripts/restore-sync-state.sh --archive $ARCHIVE
-
-拉回本机保存：
-  scp root@<host>:$ARCHIVE ./
+恢复到本机：
+  bash scripts/restore-sync-state.sh --archive $ARCHIVE --data-dir $DATA_DIR
 
 EOF

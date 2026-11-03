@@ -124,6 +124,7 @@ async function loadFromDisk() {
         epoch: Number.isSafeInteger(parsed.epoch) ? Math.max(0, parsed.epoch) : 0,
         devices: normalizeDevices(parsed.devices),
         deletions: normalizeDeletions(parsed.deletions),
+        reclaimedIds: normalizeReclaimedIds(parsed.reclaimedIds),
       };
       console.log(`[sync-server] loaded ${DATA_FILE} revision=${state.revision}`);
       return;
@@ -148,6 +149,7 @@ async function saveToDisk(snapshot = state) {
       epoch: snapshot.epoch || 0,
       devices: snapshot.devices || {},
       deletions: snapshot.deletions || {},
+      reclaimedIds: snapshot.reclaimedIds || [],
       doc: snapshot.doc,
     },
     null,
@@ -291,6 +293,17 @@ function normalizeDevices(input) {
  * 规范化删除版本索引：只保留「ID -> 正整数 revision」。
  * 客户端传来的删除时间戳不可信，删除版本一律由服务端在提交时写入。
  */
+/**
+ * 已回收 ID 集合：防止墓碑回涌。
+ * 回收后旧客户端可能仍持带 deletedAt 的整包并重推；collectNewDeletions 若不区分，
+ * 会把已回收墓碑再次记为新删除，回收被完全抵消并无限循环（本地演练实测发生过）。
+ * 记录最近回收过的 ID，PUT 时跳过它们；只作防御，不参与候选判定。
+ */
+function normalizeReclaimedIds(input, max = 1000) {
+  if (!Array.isArray(input)) return [];
+  return [...new Set(input.filter((id) => typeof id === "string" && id))].slice(-max);
+}
+
 function normalizeDeletions(input) {
   const out = {};
   if (!isRecord(input)) return out;
@@ -307,12 +320,15 @@ function normalizeDeletions(input) {
  * 节点/分组在本次文档里带 deletedAt/purgedAt，且 revisions 里还没有记录时，
  * 记为当前提交的 revision。
  */
-function collectNewDeletions(doc, revision, previous = {}) {
+function collectNewDeletions(doc, revision, previous = {}, reclaimedIds = []) {
   const next = { ...normalizeDeletions(previous) };
+  const reclaimed = new Set(normalizeReclaimedIds(reclaimedIds));
   const mark = (id, entity) => {
     if (!entity || typeof id !== "string" || !id) return;
     const deleted = Number(entity.deletedAt || entity.purgedAt || 0) > 0;
     if (!deleted) return;
+    // 已回收的墓碑再次出现视为旧客户端回推，跳过——否则回收会被抵消并无限循环
+    if (reclaimed.has(id)) return;
     if (!next[id]) next[id] = revision;
   };
   for (const node of doc.nodes || []) mark(node.id, node);
@@ -664,6 +680,8 @@ const server = createServer(async (req, res) => {
         epoch: nextEpoch,
         devices: nextDevices,
         deletions: nextDeletions,
+        // 记录本次回收的 ID：旧客户端若重推这些墓碑，PUT 不再把它们记为新删除（防回涌）
+        reclaimedIds: normalizeReclaimedIds([...(state.reclaimedIds || []), ...candidates]),
       };
       try {
         await saveToDisk(nextState);
@@ -805,7 +823,9 @@ const server = createServer(async (req, res) => {
           confirmedRevision: nextRevision,
         }),
         // 删除版本由服务端写入，客户端不可伪造
-        deletions: collectNewDeletions(nextDoc, nextRevision, state?.deletions),
+        deletions: collectNewDeletions(nextDoc, nextRevision, state?.deletions, state?.reclaimedIds),
+        // PUT 也要原样保留 reclaimedIds：否则任何一次推送落盘都会把防御集合抹空
+        reclaimedIds: normalizeReclaimedIds(state?.reclaimedIds),
       };
       try {
         await saveToDisk(nextState);

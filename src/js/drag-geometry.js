@@ -104,3 +104,37 @@ export function toPlainRect(rect) {
     height: rect.height,
   };
 }
+
+/**
+ * 键盘网格漫游：给定当前位置与列数，计算方向键 / Home / End 的目标索引。
+ * 不循环：越界方向返回 -1（保持原焦点不动）。
+ * @param {{index: number, columns: number, count: number, key: string}} input
+ *   index 当前聚焦项索引（无焦点时传 -1，方向键/Home 将落到 0，End 落到末尾）
+ * @returns {number} 目标索引；无法移动或未知按键返回 -1
+ */
+export function nextGridFocusIndex({ index, columns, count, key }) {
+  const total = Math.max(0, Number(count) || 0);
+  const cols = Math.max(1, Number(columns) || 1);
+  const current = Number(index);
+  const at = Number.isInteger(current) && current >= 0 && current < total ? current : -1;
+  switch (key) {
+    case "Home":
+      return total > 0 ? 0 : -1;
+    case "End":
+      return total > 0 ? total - 1 : -1;
+    case "ArrowRight":
+      if (at < 0) return total > 0 ? 0 : -1;
+      return at + 1 < total ? at + 1 : -1;
+    case "ArrowLeft":
+      if (at < 0) return total > 0 ? 0 : -1;
+      return at - 1 >= 0 ? at - 1 : -1;
+    case "ArrowDown":
+      if (at < 0) return total > 0 ? 0 : -1;
+      return at + cols < total ? at + cols : -1;
+    case "ArrowUp":
+      if (at < 0) return total > 0 ? 0 : -1;
+      return at - cols >= 0 ? at - cols : -1;
+    default:
+      return -1;
+  }
+}

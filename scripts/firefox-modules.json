@@ -2,6 +2,7 @@
   "app": [
     "shared-utils.js",
     "pinyin-match.js",
+    "search-manager.js",
     "sync_policy.js",
     "data-utils.js",
     "bookmark-html.js",
@@ -11,6 +12,7 @@
     "icons.js",
     "bing-wallpaper.js",
     "visit-history.js",
+    "history-manager.js",
     "sync_settings.js",
     "sync_ids.js",
     "sync_projection.js",

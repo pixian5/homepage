@@ -5,6 +5,7 @@ import {
   computeInsertIndex,
   findNearestRect,
   isPointInsideRect,
+  nextGridFocusIndex,
   shouldInsertAfter,
   toPlainRect,
 } from "../src/js/drag-geometry.js";
@@ -130,5 +131,42 @@ describe("drag-geometry toPlainRect", () => {
   it("copies all geometry fields", () => {
     const domRect = { left: 1, top: 2, right: 11, bottom: 12, width: 10, height: 10 };
     assert.deepEqual(toPlainRect(domRect), domRect);
+  });
+});
+
+describe("drag-geometry nextGridFocusIndex", () => {
+  const input = (index, columns, count, key) => nextGridFocusIndex({ index, columns, count, key });
+
+  it("moves in all four directions with column awareness", () => {
+    // 8 项、4 列：
+    // 0 1 2 3
+    // 4 5 6 7
+    assert.equal(input(0, 4, 8, "ArrowRight"), 1);
+    assert.equal(input(5, 4, 8, "ArrowLeft"), 4);
+    assert.equal(input(1, 4, 8, "ArrowDown"), 5);
+    assert.equal(input(5, 4, 8, "ArrowUp"), 1);
+  });
+
+  it("never wraps around at edges", () => {
+    assert.equal(input(7, 4, 8, "ArrowRight"), -1, "末尾向右不循环");
+    assert.equal(input(0, 4, 8, "ArrowLeft"), -1, "开头向左不循环");
+    assert.equal(input(6, 4, 8, "ArrowDown"), -1, "最后一行向下不循环");
+    assert.equal(input(1, 4, 8, "ArrowUp"), -1, "第一行向上不循环");
+  });
+
+  it("supports Home / End and no-focus start", () => {
+    assert.equal(input(5, 4, 8, "Home"), 0);
+    assert.equal(input(0, 4, 8, "End"), 7);
+    // 无焦点（-1）：任意方向/Home 落到第一项，End 落到末项
+    assert.equal(input(-1, 4, 8, "ArrowDown"), 0);
+    assert.equal(input(-1, 4, 8, "Home"), 0);
+    assert.equal(input(-1, 4, 8, "End"), 7);
+    assert.equal(input(-1, 4, 0, "Home"), -1, "空网格无目标");
+  });
+
+  it("returns -1 for unknown keys and bad input", () => {
+    assert.equal(input(0, 4, 8, "PageDown"), -1);
+    assert.equal(input(0, 0, 8, "ArrowRight"), 1, "columns<=0 按 1 列处理");
+    assert.equal(input(NaN, 4, 8, "ArrowRight"), 0, "非法 index 视为无焦点");
   });
 });

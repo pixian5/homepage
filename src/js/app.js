@@ -22,7 +22,14 @@ import {
   repairHomepageData,
   stampNodeFieldChanges,
 } from "./data-utils.js";
-import { findNearestRect, isPointInsideRect, shouldInsertAfter, toPlainRect } from "./drag-geometry.js";
+import {
+  findNearestRect,
+  isPointInsideRect,
+  nextGridFocusIndex,
+  shouldInsertAfter,
+  toPlainRect,
+} from "./drag-geometry.js";
+import { createHistoryManager } from "./history-manager.js";
 import {
   applyFailureToCache,
   avatarDataUrl,
@@ -39,7 +46,7 @@ import {
   withIconFetchConcurrency,
 } from "./icons.js";
 import { createModalManager } from "./modal-manager.js";
-import { matchesSearchQuery } from "./pinyin-match.js";
+import { createSearchManager } from "./search-manager.js";
 import { createSettingsController } from "./settings-controller.js";
 import { normalizeUrl, RECENT_GROUP_ID, SAFE_URL_PROTOCOLS } from "./shared-utils.js";
 import {
@@ -98,7 +105,7 @@ import {
 import { stampChangedSyncSettings } from "./sync_settings.js";
 import { createSyncBanner } from "./sync-banner.js";
 import { escapeHtml, html, rawHtml, runWithButtonState } from "./ui-utils.js";
-import { attachVisitTracking, getVisitHistoryItems, recordVisit } from "./visit-history.js";
+import { attachVisitTracking, recordVisit } from "./visit-history.js";
 
 const $ = (id) => document.getElementById(id);
 const qs = (sel, root = document) => root.querySelector(sel);
@@ -166,8 +173,10 @@ let tooltipTimer = null;
 let dragState = null;
 let lastSelectedIndex = null;
 let recentItems = [];
-/** @type {"unknown"|"ok"|"missing"|"error"} */
-let historyApiStatus = "unknown";
+/** 「最近历史」分组管理器（history-manager.js），init 时创建 */
+let historyManager = null;
+/** 顶部搜索管理器（search-manager.js），init 时创建 */
+let searchManager = null;
 let draggingGroupId = null;
 let boxSelecting = false;
 let selectionBox = null;
@@ -220,8 +229,6 @@ const touchMenuState = {
 const DEBUG_LOG_KEY = "homepage_debug_log";
 
 // ==================== 常量定义 ====================
-const RECENT_LIMIT = 24;
-
 const DEFAULT_TILE_SIZE = 150;
 const DEFAULT_BASE_FONT = 13;
 const DEFAULT_TOAST_DURATION_SECONDS = 5;
@@ -239,7 +246,6 @@ const SETTINGS_SAVE_DELAY_MS = 120;
 const TOAST_CONSUME_TIMEOUT_MS = 15000;
 const TITLE_FETCH_TIMEOUT_MS = 6000;
 const ICON_PROBE_TIMEOUT_MS = 6000;
-const HISTORY_DAYS = 7;
 const MIN_TILE_SIZE = 32;
 const MAX_TILE_SIZE = 220;
 const MAX_DEBUG_LOG_ENTRIES = 200;
@@ -1242,6 +1248,12 @@ async function renderGrid() {
     tile.dataset.index = idx;
     tile.draggable = true;
     tile.tabIndex = 0;
+    // 无障碍：网格语义 + 卡片可读名称（键盘漫游 / 读屏依赖）
+    tile.setAttribute("role", "gridcell");
+    tile.setAttribute(
+      "aria-label",
+      node.type === "folder" ? `${node.title}${t("tile.folderSuffix")}` : `${node.title} ${node.url || ""}`.trim(),
+    );
 
     const icon = document.createElement("div");
     icon.className = "tile-icon";
@@ -1399,18 +1411,19 @@ function updateEmptyState() {
       elements.emptyState.classList.add("hidden");
       return;
     }
+    const historyStatus = historyManager?.status || "unknown";
     if (emptyCheck) emptyCheck.classList.add("hidden");
-    if (historyApiStatus === "error") {
+    if (historyStatus === "error") {
       if (emptyTitle) emptyTitle.textContent = t("history.unavailable.title");
       if (emptyDesc) emptyDesc.textContent = t("history.unavailable.desc");
-    } else if (historyApiStatus === "missing") {
+    } else if (historyStatus === "missing") {
       // 理论上会被 fallback 覆盖；仍给出明确说明
       if (emptyTitle) emptyTitle.textContent = t("history.unavailable.title");
       if (emptyDesc) emptyDesc.textContent = t("history.fallback.desc");
     } else {
       if (emptyTitle) emptyTitle.textContent = t("history.empty.title");
       if (emptyDesc)
-        emptyDesc.textContent = historyApiStatus === "fallback" ? t("history.fallback.desc") : t("history.empty.desc");
+        emptyDesc.textContent = historyStatus === "fallback" ? t("history.fallback.desc") : t("history.empty.desc");
     }
     elements.emptyState.classList.remove("hidden");
     return;
@@ -1735,7 +1748,7 @@ function getContextMenuManager() {
         dissolveFolder,
         openEditModal,
         deleteNodes,
-        openAddHistoryToGroup,
+        openAddHistoryToGroup: (node) => historyManager?.openAddToGroupModal(node),
         renameGroup,
         deleteGroup,
       },
@@ -2423,228 +2436,53 @@ async function fetchTitleViaTab(url) {
   });
 }
 
-async function loadRecentHistory() {
-  const api = getChromeApi();
-  const browserItems = [];
-  let browserOk = false;
-
-  if (!api?.history?.search) {
-    historyApiStatus = "missing";
-    debugLog("history_api_missing", {
-      hasChrome: typeof chrome !== "undefined",
-      hasBrowser: typeof browser !== "undefined",
-      keys: api ? Object.keys(api).slice(0, 30) : [],
-    });
-  } else {
-    const startTime = Date.now() - HISTORY_DAYS * 24 * 60 * 60 * 1000;
-    try {
-      const items = await new Promise((resolve) => {
-        let done = false;
-        const settle = (res) => {
-          if (!done) {
-            done = true;
-            resolve(res || []);
-          }
-        };
-        try {
-          const result = api.history.search({ text: "", startTime, maxResults: RECENT_LIMIT }, (res) => {
-            const err = api.runtime?.lastError;
-            if (err) {
-              historyApiStatus = "error";
-              console.warn("loadRecentHistory lastError:", err.message || err);
-              return settle([]);
-            }
-            settle(res || []);
-          });
-          if (result && typeof result.then === "function") {
-            result.then(settle).catch((e) => {
-              historyApiStatus = "error";
-              console.warn("loadRecentHistory rejected", e);
-              settle([]);
-            });
-          }
-        } catch (e) {
-          historyApiStatus = "error";
-          console.warn("loadRecentHistory threw", e);
-          settle([]);
-        }
-      });
-      const seen = new Set();
-      for (const item of items || []) {
-        if (!item?.url) continue;
-        let norm = item.url;
-        try {
-          norm = new URL(item.url).href;
-        } catch (e) {
-          console.warn("loadRecentHistory: invalid URL", item.url, e);
-        }
-        if (seen.has(norm)) continue;
-        seen.add(norm);
-        browserItems.push({
-          id: `recent_${browserItems.length}`,
-          type: "history",
-          title: item.title || item.url,
-          url: item.url,
-          ts: Number(item.lastVisitTime) || 0,
-        });
-      }
-      if (historyApiStatus !== "error") {
-        historyApiStatus = "ok";
-        browserOk = true;
-      }
-    } catch (_err) {
-      historyApiStatus = "error";
-    }
-  }
-
-  // Safari 等无 history API：用扩展自建的最近访问回退
-  let visitItems = [];
-  try {
-    visitItems = await getVisitHistoryItems(RECENT_LIMIT);
-  } catch (e) {
-    console.warn("getVisitHistoryItems failed", e);
-  }
-
-  const merged = [];
-  const seenUrl = new Set();
-  const pushUnique = (entry) => {
-    if (!entry?.url) return;
-    let key = entry.url;
-    try {
-      key = new URL(entry.url).href;
-    } catch (_e) {
-      // keep raw
-    }
-    if (seenUrl.has(key)) return;
-    seenUrl.add(key);
-    merged.push(entry);
-  };
-
-  for (const e of browserItems) pushUnique(e);
-  for (const e of visitItems) pushUnique(e);
-
-  merged.sort((a, b) => (Number(b.ts) || 0) - (Number(a.ts) || 0));
-  const finalItems = merged.slice(0, RECENT_LIMIT).map((e, idx) => ({
-    id: `recent_${idx}`,
-    type: "history",
-    title: e.title || e.url,
-    url: e.url,
-  }));
-
-  if (finalItems.length > 0) {
-    historyApiStatus = browserOk ? "ok" : "fallback";
-  } else if (historyApiStatus === "missing") {
-    // 自建回退管道可用，空列表用 empty 文案而非 unavailable
-    historyApiStatus = "fallback";
-  }
-
-  debugLog("history_loaded", {
-    browser: browserItems.length,
-    visits: visitItems.length,
-    final: finalItems.length,
-    status: historyApiStatus,
-  });
-  return finalItems;
-}
-
-async function _addHistoryToShortcuts(node) {
-  if (!node?.url) return;
-  const targetGroupId = getPreferredGroupIdForNewItem();
-  if (!targetGroupId) {
-    toast(t("group.noneAvailable"), "warning");
-    return;
-  }
-  return addHistoryToShortcutsInGroup(node, targetGroupId);
-}
-
-function getPreferredGroupIdForNewItem() {
-  if (data.settings.defaultGroupMode === "fixed" && data.settings.defaultGroupId) {
-    const fixed = getRootContainerById(data.settings.defaultGroupId);
-    if (fixed) return fixed.id;
-  }
-  if (data.settings.lastActiveGroupId && data.settings.lastActiveGroupId !== RECENT_GROUP_ID) {
-    const last = getRootContainerById(data.settings.lastActiveGroupId);
-    if (last) return last.id;
-  }
-  return getRootGroup()?.id || "";
-}
-
-function openAddHistoryToGroup(node) {
-  if (!node?.url) return;
-  if (!getRootGroup()) {
-    toast(t("group.noneAvailable"), "warning");
-    return;
-  }
-  const options = rawHtml(
-    getRootContainers()
-      .map((g) => html`<option value="${g.id}">${isAllBookmarksGroup(g) ? g.name : g.title}</option>`)
-      .join(""),
-  );
-  const modalHtml = html`
-    <h2>${t("context.addToShortcuts")}</h2>
-    <div class="section">
-      <label>${t("common.selectGroup")}</label>
-      <select id="addHistoryGroup">${options}</select>
-    </div>
-    <div class="actions">
-      <button id="btnAddHistoryCancel" class="icon-btn">${t("common.cancel")}</button>
-      <button id="btnAddHistorySave" class="icon-btn">${t("common.save")}</button>
-    </div>
-  `;
-  openModal(modalHtml);
-  const preferred = getPreferredGroupIdForNewItem();
-  if (preferred) $("addHistoryGroup").value = preferred;
-  $("btnAddHistoryCancel").addEventListener("click", closeModal);
-  $("btnAddHistorySave").addEventListener("click", async () => {
-    const groupId = $("addHistoryGroup").value;
-    await addHistoryToShortcutsInGroup(node, groupId);
-    closeModal();
+/**
+ * 创建「最近历史」管理器实例（能力与依赖见 history-manager.js）。
+ * fetchRecentHistory / addHistoryToShortcuts / openAddToGroupModal 等均由其提供。
+ */
+function createHistoryManagerInstance() {
+  return createHistoryManager({
+    debugLog,
+    t,
+    toast,
+    getData: () => data,
+    getRootGroup,
+    getRootContainers,
+    getRootContainerById,
+    isAllBookmarksGroup,
+    getPlacementList,
+    setPlacementList,
+    pushBackup,
+    persistData,
+    render,
+    processPendingIconFetches,
+    openModal,
+    closeModal,
+    html,
+    rawHtml,
   });
 }
 
-async function addHistoryToShortcutsInGroup(node, groupId) {
-  if (!node?.url) return;
-  const safeUrl = normalizeUrl(node.url);
-  if (!safeUrl) {
-    toast(t("error.invalidUrlSimple"), "error");
-    return;
-  }
-  const targetGroup = getRootContainerById(groupId);
-  if (!targetGroup) {
-    toast(t("group.notFound"), "error");
-    return;
-  }
-  pushBackup();
-  let title = node.title || "";
-  if (!title) {
-    try {
-      title = new URL(safeUrl).hostname;
-    } catch (_e) {
-      title = "";
-    }
-  }
-  const item = createItemNode({ url: safeUrl, title, iconType: "auto", iconPending: true });
-  data.nodes[item.id] = item;
-  const targetList = getPlacementList(targetGroup);
-  targetList.push(item.id);
-  setPlacementList(targetGroup, targetList);
-  await persistData();
-  render();
-  processPendingIconFetches();
-  toast(t("toast.addedToShortcuts"));
-}
-
-function handleSearchInput() {
-  const query = elements.topSearch.value.trim().toLowerCase();
-  if (!query) {
-    render();
-    return;
-  }
-  const grid = openFolderId ? elements.folderGrid : elements.grid;
-  qsa(".tile", grid).forEach((tile) => {
-    const node = data.nodes[tile.dataset.id];
-    if (!node) return;
-    tile.style.display = matchesSearchQuery(node.title, node.url, query) ? "" : "none";
+/**
+ * 创建顶部搜索管理器实例（实时过滤 / 搜索引擎跳转 / Escape 恢复）。
+ */
+function createSearchManagerInstance() {
+  return createSearchManager({
+    searchInput: elements.topSearch,
+    searchBtn: elements.btnSearch,
+    getData: () => data,
+    getActiveGrid: getCurrentGridElement,
+    getNodes: () => data.nodes,
+    openUrl,
+    render,
+    onFocus: async () => {
+      // 历史分组下聚焦搜索框：顺手刷新一次最近访问
+      if (activeGroupId === RECENT_GROUP_ID && historyManager) {
+        recentItems = await historyManager.fetchRecentHistory();
+        render();
+      }
+    },
+    qsa,
   });
 }
 
@@ -2861,8 +2699,9 @@ async function init() {
   }
   listenForExternalToast();
   attachStorageListener();
-  // loadData 和 loadRecentHistory 并行，减少首屏等待
-  const recentPromise = loadRecentHistory();
+  // 历史管理器先建好，再并行 loadData 与拉取最近历史，减少首屏等待
+  historyManager = createHistoryManagerInstance();
+  const recentPromise = historyManager.fetchRecentHistory();
   const localData = await loadData();
   debugLog("init_local", {
     groups: localData.groups?.length || 0,
@@ -2999,7 +2838,7 @@ function bindEvents() {
     openFolderId = null;
     data.settings.lastActiveGroupId = activeGroupId;
     queuePersist();
-    recentItems = await loadRecentHistory();
+    recentItems = await historyManager.fetchRecentHistory();
     render();
   });
   elements.btnAddGroup.addEventListener("click", () => {
@@ -3098,30 +2937,9 @@ function bindEvents() {
     }
     settingsCtl.openSettingsModal();
   });
-  elements.btnSearch.addEventListener("click", () => {
-    const query = elements.topSearch.value.trim();
-    if (!query) {
-      elements.topSearch.focus();
-      return;
-    }
-    openUrl(`${data.settings.searchEngineUrl}${encodeURIComponent(query)}`, "new");
-  });
-
-  elements.topSearch.addEventListener("input", handleSearchInput);
-  elements.topSearch.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      const query = elements.topSearch.value.trim();
-      if (!query) return;
-      openUrl(`${data.settings.searchEngineUrl}${encodeURIComponent(query)}`, "new");
-    }
-  });
-
-  elements.topSearch.addEventListener("focus", async () => {
-    if (activeGroupId === RECENT_GROUP_ID) {
-      recentItems = await loadRecentHistory();
-      render();
-    }
-  });
+  // 顶部搜索：实时过滤（拼音）、Enter/按钮跳搜索引擎、Escape 恢复全量
+  searchManager = createSearchManagerInstance();
+  searchManager.bind();
 
   elements.emptyHintToggle.addEventListener("change", async (e) => {
     data.settings.emptyHintDisabled = e.target.checked;
@@ -3253,27 +3071,38 @@ function bindEvents() {
       e.preventDefault();
       return;
     }
-    // 方向键在网格卡片间移动焦点
-    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+    // 方向键 / Home / End 在可见卡片间漫游焦点；Delete 删除聚焦卡片
+    if (
+      ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key) ||
+      e.key === "Delete" ||
+      e.key === "Backspace"
+    ) {
       if (modalOpen) return;
       const grid = openFolderId ? elements.folderGrid : elements.grid;
-      const tiles = qsa(".tile", grid);
-      if (!tiles.length) return;
-      const active = document.activeElement;
-      let idx = tiles.indexOf(active);
-      if (idx < 0) idx = 0;
-      else {
-        const cols = Math.max(
-          1,
-          Number.parseInt(getComputedStyle(grid).gridTemplateColumns.split(" ").length, 10) || 1,
-        );
-        if (e.key === "ArrowLeft") idx = Math.max(0, idx - 1);
-        else if (e.key === "ArrowRight") idx = Math.min(tiles.length - 1, idx + 1);
-        else if (e.key === "ArrowUp") idx = Math.max(0, idx - cols);
-        else if (e.key === "ArrowDown") idx = Math.min(tiles.length - 1, idx + cols);
+      // 只在可见卡片间漫游：被搜索过滤隐藏的卡片不参与
+      const tiles = qsa(".tile", grid).filter(
+        (tile) => tile.style.display !== "none" && tile.getClientRects().length > 0,
+      );
+      if (e.key === "Delete" || e.key === "Backspace") {
+        const active = document.activeElement;
+        const idx = tiles.indexOf(active);
+        if (idx < 0) return;
+        const nodeId = active.dataset?.id;
+        if (!nodeId || activeGroupId === RECENT_GROUP_ID) return;
+        e.preventDefault();
+        deleteNodes([nodeId]);
+        // 删除后把焦点移到同位置的下一个卡片，漫游不中断
+        tiles[Math.min(idx, tiles.length - 1)]?.focus?.();
+        return;
       }
-      tiles[idx]?.focus?.();
-      e.preventDefault();
+      if (!tiles.length) return;
+      const cols = Math.max(1, Number.parseInt(getComputedStyle(grid).gridTemplateColumns.split(" ").length, 10) || 1);
+      const idx = tiles.indexOf(document.activeElement);
+      const next = nextGridFocusIndex({ index: idx, columns: cols, count: tiles.length, key: e.key });
+      if (next >= 0) {
+        tiles[next]?.focus?.();
+        e.preventDefault();
+      }
     }
   });
 

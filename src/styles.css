@@ -362,6 +362,18 @@ body {
   background: rgba(255, 120, 120, 0.18);
   border-color: rgba(255, 140, 140, 0.45);
 }
+/* 键盘漫游焦点：方向键/Tab 聚焦的卡片高亮轮廓（A11y） */
+.tile:focus,
+.tile:focus-visible {
+  outline: 2px solid rgba(94, 158, 255, 0.85);
+  outline-offset: 2px;
+  border-color: rgba(94, 158, 255, 0.6);
+}
+.tile.is-focused {
+  outline: 2px solid rgba(94, 158, 255, 0.85);
+  outline-offset: 2px;
+  border-color: rgba(94, 158, 255, 0.6);
+}
 .touch-dragging .tile {
   user-select: none;
 }

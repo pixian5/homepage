@@ -28,6 +28,7 @@
     "sync_settings.js",
     "sync_ids.js",
     "sync_projection.js",
+    "persistence-coordinator.js",
     "sync_merge.js",
     "sync_bundle.js",
     "sync_pack.js",

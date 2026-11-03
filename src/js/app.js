@@ -31,6 +31,7 @@ import { createIconManager } from "./icon-manager.js";
 import { clearIconCacheForUrl, compressImageFileToDataUrl, getSiteKey, retryFailedIconsIfDue } from "./icons.js";
 import { createModalManager } from "./modal-manager.js";
 import { createOpenModeManager } from "./open-mode-manager.js";
+import { createPersistenceCoordinator } from "./persistence-coordinator.js";
 import { createSearchManager } from "./search-manager.js";
 import { createSelectionManager } from "./selection-manager.js";
 import { createSettingsController } from "./settings-controller.js";
@@ -186,6 +187,8 @@ let folderMgr = null;
 let tooltipMgr = null;
 /** 核心网格渲染器（grid-renderer.js），init 时创建 */
 let gridRenderer = null;
+/** 数据持久化与时钟协调器（persistence-coordinator.js），init 时创建 */
+let persistenceCoordinator = null;
 
 // Toast 管理器立即创建：模块内任何时点的 toast() 调用都必须可用
 toastMgr = createToastManager({
@@ -211,13 +214,8 @@ let settingsSaveTimer = null;
 let settingsSaveQueued = false;
 /** 设置面板控制器（settings-controller.js），init 时注入依赖。 */
 let settingsCtl = null;
-let suppressStorageUntil = 0;
-let persistInFlight = 0;
 /** 同步异常提示条控制器（init 时创建；storage 监听里可能先于创建触发，故用可选链） */
 let syncBanner = null;
-let backupFingerprint = "";
-let backupBaselineSnapshot = null;
-let skipAutoBackupOnce = false;
 let modalPointerDownInsideDialog = false;
 const DEBUG_LOG_KEY = "homepage_debug_log";
 
@@ -232,10 +230,11 @@ function getToastDurationMs() {
 const UNDO_TIMEOUT_MS = 10000;
 const STORAGE_RELOAD_DELAY_MS = 120;
 const STORAGE_SUPPRESS_MS = 350;
+/** 备份指纹忽略的设置键：这些字段变化不构成“值得备份的变更” */
+const BACKUP_IGNORED_SETTINGS_KEYS = new Set(["lastActiveGroupId", "lastSaveUrl", "lastSaveTs", "lastSaveToast"]);
 const SETTINGS_SAVE_DELAY_MS = 120;
 const TOAST_CONSUME_TIMEOUT_MS = 15000;
 const MAX_DEBUG_LOG_ENTRIES = 200;
-const BACKUP_IGNORED_SETTINGS_KEYS = new Set(["lastActiveGroupId", "lastSaveUrl", "lastSaveTs", "lastSaveToast"]);
 
 function currentLang() {
   const stored = normalizeLanguage(data?.settings?.language || "");
@@ -359,7 +358,7 @@ async function reloadFromStorage() {
   const prevActive = activeGroupId;
   const prevOpenFolder = openFolderId;
   const prevLocalTs = Number(data?.lastUpdated || 0);
-  const prevPending = persistInFlight > 0;
+  const prevPending = persistenceCoordinator?.isPersistInFlight() || false;
   // 先从磁盘重载 local（popup 等外部写入），再按需 pull 合并远端投影
   const diskLocal = await loadData();
   const wasSync = !!diskLocal?.settings?.syncEnabled;
@@ -525,184 +524,29 @@ async function pruneCachesQuietly() {
   }
 }
 
+// ---- 持久化协调器透传：上百处调用点沿用这些旧函数名 ----
 function pushBackup() {
-  if (!data?.settings?.maxBackups) return false;
-  const snapshot = createBackupSnapshot(data);
-  data.backups.unshift(snapshot);
-  if (data.settings.maxBackups > 0 && data.backups.length > data.settings.maxBackups) {
-    data.backups = data.backups.slice(0, data.settings.maxBackups);
-  }
-  skipAutoBackupOnce = true;
-  return true;
+  return persistenceCoordinator.pushBackup();
 }
 
 function syncBackupBaseline(source = data) {
-  backupFingerprint = buildBackupFingerprint(source, BACKUP_IGNORED_SETTINGS_KEYS);
-  backupBaselineSnapshot = cloneDataSnapshot(source);
+  return persistenceCoordinator.syncBackupBaseline(source);
 }
-
-function ensureAutoBackupBeforePersist() {
-  const currentFingerprint = buildBackupFingerprint(data, BACKUP_IGNORED_SETTINGS_KEYS);
-  if (!backupFingerprint) {
-    backupFingerprint = currentFingerprint;
-    backupBaselineSnapshot = cloneDataSnapshot(data);
-    skipAutoBackupOnce = false;
-    return false;
-  }
-  if (!data?.settings?.maxBackups) {
-    backupFingerprint = currentFingerprint;
-    skipAutoBackupOnce = false;
-    return false;
-  }
-  if (skipAutoBackupOnce) {
-    skipAutoBackupOnce = false;
-    backupFingerprint = currentFingerprint;
-    return false;
-  }
-  if (currentFingerprint === backupFingerprint) return false;
-  if (backupBaselineSnapshot) {
-    const snapshot = createBackupSnapshot(backupBaselineSnapshot);
-    data.backups.unshift(snapshot);
-    if (data.settings.maxBackups > 0 && data.backups.length > data.settings.maxBackups) {
-      data.backups = data.backups.slice(0, data.settings.maxBackups);
-    }
-  } else {
-    pushBackup();
-    skipAutoBackupOnce = false;
-  }
-  backupFingerprint = currentFingerprint;
-  return true;
-}
-
-/** 串行化 persist，避免多路 fire-and-forget 互相覆盖 */
-let _persistChain = Promise.resolve();
-let _settingsClockBaseline = null;
-let _placementClockBaseline = null;
 
 function resetSettingsClockBaseline(source = data) {
-  _settingsClockBaseline = deepClone(source?.settings || {});
+  return persistenceCoordinator.resetSettingsClockBaseline(source);
 }
 
 function resetPlacementClockBaseline(source = data) {
-  _placementClockBaseline = collectPlacementSnapshot(source);
+  return persistenceCoordinator.resetPlacementClockBaseline(source);
 }
 
-async function stampSettingsClockBeforePersist() {
-  try {
-    if (!data?.settings) return [];
-    if (!_settingsClockBaseline) {
-      resetSettingsClockBaseline(data);
-      return [];
-    }
-    const deviceId = await getOrCreateDeviceId();
-    const changed = stampChangedSyncSettings(data, _settingsClockBaseline, { deviceId });
-    if (changed.length) {
-      debugLog("settings_clock", { changed });
-      resetSettingsClockBaseline(data);
-    }
-    return changed;
-  } catch (e) {
-    // 设置时钟只服务于跨设备合并，不能阻塞本地保存或新标签页启动。
-    console.warn("settings clock skipped", e);
-    return [];
-  }
-}
-
-async function stampPlacementClockBeforePersist() {
-  try {
-    if (!_placementClockBaseline) {
-      resetPlacementClockBaseline(data);
-      return [];
-    }
-    const deviceId = await getOrCreateDeviceId();
-    const changed = stampChangedPlacementClock(data, _placementClockBaseline, { deviceId });
-    resetPlacementClockBaseline(data);
-    return changed;
-  } catch (e) {
-    console.warn("placement clock skipped", e);
-    return [];
-  }
-}
-
-/**
- * 不需要等待结果的保存入口：吞掉异常，避免 unhandledrejection 触发全页红条。
- * 需要根据 ok/warning 提示用户时仍应 await persistData()。
- */
 function queuePersist() {
-  return persistData().catch((e) => {
-    console.warn("queuePersist failed", e);
-    return { ok: false, warning: null, err: e?.message || String(e) };
-  });
+  return persistenceCoordinator.queuePersist();
 }
 
-async function persistData() {
-  const run = async () => {
-    persistInFlight += 1;
-    const autoBackedUp = ensureAutoBackupBeforePersist();
-    suppressStorageUntil = Math.max(suppressStorageUntil, Date.now() + STORAGE_SUPPRESS_MS * 4);
-    try {
-      debugLog("persist_start", {
-        useSync: data.settings.syncEnabled,
-        groups: data.groups?.length || 0,
-        nodes: Object.keys(data.nodes || {}).length,
-        lastUpdated: data.lastUpdated || 0,
-        autoBackedUp,
-      });
-      // 本地权威：始终先写 local；同步改走投影分片 engine
-      const allGroupRepaired = ensureAllBookmarksGroup(data);
-      const changed = dedupeData(data) || allGroupRepaired;
-      const tombstonesPruned = pruneSyncTombstones(data);
-      const settingsClockChanged = await stampSettingsClockBeforePersist();
-      const placementClockChanged = await stampPlacementClockBeforePersist();
-      let warning = null;
-      let err = null;
-      const err1 = await saveData(data, false);
-      if (err1) {
-        if (typeof err1 === "string" && err1.startsWith("local_trimmed_")) {
-          warning = err1;
-        } else {
-          err = err1;
-        }
-      }
-      if (!err && data.settings.syncEnabled) {
-        schedulePush();
-      }
-      if (changed) {
-        debugLog("persist_dedupe", { changed });
-      }
-      if (tombstonesPruned) {
-        debugLog("persist_tombstones_pruned", { tombstonesPruned });
-      }
-      if (settingsClockChanged.length) {
-        debugLog("persist_settings_clock", { settingsClockChanged });
-      }
-      if (placementClockChanged.length) {
-        debugLog("persist_placement_clock", { placementClockChanged });
-      }
-      if (shouldDebugPersist()) {
-        const verify = await loadDataFromArea(false);
-        debugLog("persist_verify", {
-          groups: verify?.groups?.length || 0,
-          nodes: Object.keys(verify?.nodes || {}).length,
-          lastUpdated: verify?.lastUpdated || 0,
-        });
-      }
-      if (!err) {
-        syncBackupBaseline(data);
-      }
-      debugLog("persist_done", { err1, changed, warning, err, autoBackedUp });
-      return { ok: !err, warning, err };
-    } finally {
-      persistInFlight = Math.max(0, persistInFlight - 1);
-    }
-  };
-  const next = _persistChain.then(run, run);
-  // 不让单次失败打断队列
-  _persistChain = next.then(
-    () => undefined,
-    () => undefined,
-  );
-  return next;
+function persistData() {
+  return persistenceCoordinator.persistData();
 }
 
 function getActiveGroup() {
@@ -1222,8 +1066,8 @@ function createStorageListenerInstance() {
     dataKey: getStorageKey(),
     syncKeys: [SYNC_STATE_KEY, SYNC_OUTBOX_KEY],
     getData: () => data,
-    isPersistInFlight: () => persistInFlight > 0,
-    isSuppressed: () => Date.now() < suppressStorageUntil,
+    isPersistInFlight: () => persistenceCoordinator?.isPersistInFlight() || false,
+    isSuppressed: () => persistenceCoordinator?.isStorageSuppressed() || false,
     isSettingsOpen: () => settingsOpen,
     reload: () => reloadFromStorage(),
     onSyncKeysChanged: () => void syncBanner?.refresh?.(),
@@ -1256,6 +1100,23 @@ function createGridRendererInstance() {
     t,
     isRecentGroup: (groupId) => groupId === RECENT_GROUP_ID,
     qs,
+  });
+}
+
+/**
+ * 创建持久化与时钟协调器实例（串行保存链 / 自动备份 / 时钟基线 / 抑制窗）。
+ */
+function createPersistenceCoordinatorInstance() {
+  return createPersistenceCoordinator({
+    getData: () => data,
+    getDeviceId: () => getOrCreateDeviceId(),
+    saveData,
+    loadDataFromArea,
+    schedulePush,
+    debugLog,
+    shouldDebugPersist,
+    storageSuppressMs: STORAGE_SUPPRESS_MS,
+    backupIgnoredSettingsKeys: BACKUP_IGNORED_SETTINGS_KEYS,
   });
 }
 
@@ -1369,6 +1230,8 @@ function createThemeManagerInstance() {
 
 async function init() {
   debugLog("init_start", getRuntimeInfo());
+  // 持久化协调器最先创建：后续任何 persist / 重载 / 监听都会用到它的状态
+  persistenceCoordinator = createPersistenceCoordinatorInstance();
   // 图标管线与拖拽管理器先建好（renderGrid / 弹窗 / 存储监听都会用到）
   iconManager = createIconManagerInstance();
   themeMgr = createThemeManagerInstance();

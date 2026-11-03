@@ -57,6 +57,7 @@ const PRECACHE_URLS = [
   "js/folder-manager.js",
   "js/tooltip-manager.js",
   "js/grid-renderer.js",
+  "js/persistence-coordinator.js",
   "js/sidebar-manager.js",
   "js/theme-manager.js",
   "js/open-mode-manager.js",

@@ -7,9 +7,12 @@
  *   GET  /v1/sync/state          → 200 { revision, etag, doc } | 404 无数据
  *   PUT  /v1/sync/state          → body: SyncDocument JSON
  *                                  Header: Authorization: Bearer <token>（若设置了 TOKEN）
+ *                                          或 Authorization: Device <deviceId>:<deviceSecret>（设备独立凭据）
  *                                  Header: If-Match: <etag>（可选，冲突返回 412）
  *                                  Header: Idempotency-Key: <string>（可选）
- *   GET  /health                 → 200 ok
+ *   POST /v1/sync/pair           → body: { deviceId, deviceName? }，仅主管理 Token 可调用，
+ *                                  返回 { ok, deviceId, deviceSecret }（secret 只在下发时可见一次）
+ *   GET  /health                 → 200 ok（含 tombstoneCount / reclaimCandidatesCount）
  *
  * 环境变量：
  *   PORT=8787
@@ -22,7 +25,7 @@
  *   TOKEN=secret PORT=8787 node scripts/sync-server.mjs
  */
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
@@ -42,15 +45,16 @@ const MAX_DEVICES = 200;
 
 /**
  * 服务端状态。
- * devices 只在第一阶段用于收集设备与确认信息，暂不触发回收。
+ * devices 收集设备与确认信息，同时登记设备独立凭据哈希（secretHash 永不下发）。
  * @type {{
  *   revision: number,
  *   etag: string,
- *   doc: object,
+ *   doc: object | null,
  *   updatedAt: number,
  *   epoch: number,
- *   devices: Record<string, {deviceId: string, firstSeenAt: number, lastSeenAt: number,
- *     lastConfirmedRevision: number, lastConfirmedEpoch: number, protocol: number}>,
+ *   devices: Record<string, {deviceId: string, deviceName: string, secretHash: string,
+ *     firstSeenAt: number, lastSeenAt: number, lastConfirmedRevision: number,
+ *     lastConfirmedEpoch: number, protocol: number, retiredAt: number}>,
  *   deletions: Record<string, number>,
  * } | null}
  */
@@ -84,12 +88,63 @@ function unauthorized(res) {
   json(res, 401, { error: "unauthorized" });
 }
 
+function sha256Hex(input) {
+  return createHash("sha256").update(input).digest("hex");
+}
+
+/**
+ * 鉴权（三级）：
+ * 1) 未配置全局 TOKEN：直接放行（无密单机开发模式）；
+ * 2) Authorization: Bearer <TOKEN>：主管理凭据（可配对设备、退役设备、执行回收）；
+ * 3) Authorization: Device <deviceId>:<deviceSecret>：设备独立凭据。
+ *    - 已退役设备：挂载 req.authError = "device_retired" 并拒绝（路由层回 403）；
+ *    - SHA-256(secret) 与登记的 secretHash 用 timingSafeEqual 常量时间比对；
+ *    - 其余情况一律按未授权处理（401）。
+ * 挂载：req.authKind = "open" | "master" | "device"；req.authDevice = 设备凭据的 deviceId。
+ */
 function checkAuth(req) {
-  if (!TOKEN) return true;
   const h = String(req.headers.authorization || "").trim();
+  if (!TOKEN) {
+    req.authKind = "open";
+    return true;
+  }
   // 允许大小写 Bearer，以及多余空白
   const m = /^Bearer\s+(.+)$/i.exec(h);
-  if (m && m[1].trim() === TOKEN) return true;
+  if (m && m[1].trim() === TOKEN) {
+    req.authKind = "master";
+    return true;
+  }
+  // Device 凭据：deviceId 与 secret 都不允许包含空白与冒号
+  const d = /^Device\s+([^:\s]+):(\S+)$/i.exec(h);
+  if (d) {
+    const deviceId = d[1];
+    const record = state?.devices?.[deviceId];
+    req.authKind = "device";
+    req.authDevice = deviceId;
+    if (record?.retiredAt > 0) {
+      req.authError = "device_retired";
+      return false;
+    }
+    const secretHash = typeof record?.secretHash === "string" ? record.secretHash : "";
+    if (secretHash) {
+      const given = Buffer.from(sha256Hex(d[2]), "utf8");
+      const expected = Buffer.from(secretHash, "utf8");
+      if (given.length === expected.length && timingSafeEqual(given, expected)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return false;
+}
+
+/**
+ * 管理类接口（配对/退役/回收）只允许主管理凭据：
+ * 设备凭据不能签发新凭据或退役其它设备，避免横向提权；open 模式放行。
+ */
+function requireMaster(req, res) {
+  if (!TOKEN || req.authKind === "master") return true;
+  unauthorized(res);
   return false;
 }
 
@@ -105,6 +160,21 @@ async function loadFromDisk() {
   try {
     const raw = await readFile(DATA_FILE, "utf8");
     const parsed = JSON.parse(raw);
+    // 配对先于首次写入时会产生「只有设备表、doc 为 null」的占位状态：加载时按同样形态恢复
+    if (parsed?.doc == null && parsed?.revision === 0) {
+      state = {
+        revision: 0,
+        etag: "",
+        doc: null,
+        updatedAt: Number.isFinite(parsed.updatedAt) ? parsed.updatedAt : 0,
+        epoch: Number.isSafeInteger(parsed.epoch) ? Math.max(0, parsed.epoch) : 0,
+        devices: normalizeDevices(parsed.devices),
+        deletions: normalizeDeletions(parsed.deletions),
+        reclaimedIds: normalizeReclaimedIds(parsed.reclaimedIds),
+      };
+      console.log(`[sync-server] loaded ${DATA_FILE} devices-only state (${Object.keys(state.devices).length})`);
+      return;
+    }
     const validationError = validateSyncDocument(parsed?.doc);
     const revision = parsed?.revision;
     if (
@@ -270,6 +340,11 @@ function normalizeDevices(input) {
       id,
       {
         deviceId: id,
+        // 设备显示名：仅用于前端仪表盘展示，不参与任何协议判定
+        deviceName: typeof value.deviceName === "string" ? value.deviceName.trim().slice(0, 64) : "",
+        // 设备凭据哈希：sha256(deviceSecret) 的 hex；非法形态一律清空（等于吊销该设备凭据）
+        secretHash:
+          typeof value.secretHash === "string" && /^[0-9a-f]{64}$/.test(value.secretHash) ? value.secretHash : "",
         firstSeenAt: isTimestamp(value.firstSeenAt) ? value.firstSeenAt : 0,
         lastSeenAt: isTimestamp(value.lastSeenAt) ? value.lastSeenAt : 0,
         lastConfirmedRevision: Number.isSafeInteger(value.lastConfirmedRevision)
@@ -368,11 +443,15 @@ function withDeviceTouched(devices, deviceId, { now = Date.now(), confirmedRevis
   const previous = devices?.[id];
   const next = {
     deviceId: id,
+    // 常规写入不得抹掉配对时登记的设备名与凭据哈希，也不得意外复活已退役设备
+    deviceName: typeof previous?.deviceName === "string" ? previous.deviceName : "",
+    secretHash: typeof previous?.secretHash === "string" ? previous.secretHash : "",
     firstSeenAt: previous?.firstSeenAt || now,
     lastSeenAt: now,
     lastConfirmedRevision: previous?.lastConfirmedRevision || 0,
     lastConfirmedEpoch: previous?.lastConfirmedEpoch || 0,
     protocol: Number.isSafeInteger(protocol) ? protocol : previous?.protocol || SERVER_PROTOCOL,
+    retiredAt: isTimestamp(previous?.retiredAt) ? previous.retiredAt : 0,
   };
   if (Number.isSafeInteger(confirmedRevision)) {
     next.lastConfirmedRevision = Math.max(next.lastConfirmedRevision, confirmedRevision);
@@ -436,6 +515,9 @@ const server = createServer(async (req, res) => {
       updatedAt: state?.updatedAt ?? null,
       epoch: state?.epoch ?? 0,
       deviceCount: state ? Object.keys(state.devices || {}).length : 0,
+      // 墓碑与可回收计数：前端健康度仪表盘直接展示，无需另拉设备表
+      tombstoneCount: state ? Object.keys(state.deletions || {}).length : 0,
+      reclaimCandidatesCount: state ? computeReclaimCandidates(state).length : 0,
       protocol: SERVER_PROTOCOL,
     });
     return;
@@ -444,7 +526,82 @@ const server = createServer(async (req, res) => {
   // Token 只允许通过 Authorization 请求头传输，避免出现在 URL、日志和代理记录中。
   const authOk = checkAuth(req);
   if (url.pathname.startsWith("/v1/") && !authOk) {
-    unauthorized(res);
+    // 退役设备与「未授权」必须区分：前者 403 + device_retired，客户端据此提示设备已被注销
+    if (req.authError === "device_retired") {
+      json(res, 403, { error: "device_retired", deviceId: req.authDevice || "unknown" });
+    } else {
+      unauthorized(res);
+    }
+    return;
+  }
+
+  // 设备配对：为主管理 Token 持有者签发设备独立凭据。
+  // secret 明文只在响应里出现一次；服务端只保存 SHA-256 哈希。
+  // body: { deviceId: string, deviceName?: string }
+  if (url.pathname === "/v1/sync/pair" && method === "POST") {
+    if (!requireMaster(req, res)) return;
+    let raw;
+    try {
+      raw = await readBody(req, 16 * 1024);
+    } catch (e) {
+      json(res, e.message === "body_too_large" ? 413 : 400, { error: e.message || "bad_body" });
+      return;
+    }
+    let body;
+    try {
+      body = JSON.parse(raw || "{}");
+    } catch {
+      json(res, 400, { error: "invalid_json" });
+      return;
+    }
+    const deviceId = typeof body?.deviceId === "string" ? body.deviceId.trim() : "";
+    if (!deviceId || deviceId.length > 128) {
+      json(res, 400, { error: "invalid_device_id" });
+      return;
+    }
+    const deviceName =
+      typeof body?.deviceName === "string" && body.deviceName.trim()
+        ? body.deviceName.trim().slice(0, 64)
+        : "未命名设备";
+    const deviceSecret = randomBytes(32).toString("hex");
+    const secretHash = sha256Hex(deviceSecret);
+    const result = await enqueueWrite(async () => {
+      // 尚无任何文档时也允许先配对：建立只含设备表的占位状态（doc 为 null）
+      const base = state || {
+        revision: 0,
+        etag: "",
+        doc: null,
+        updatedAt: 0,
+        epoch: 0,
+        devices: {},
+        deletions: {},
+        reclaimedIds: [],
+      };
+      const previous = base.devices?.[deviceId] || {};
+      const devices = normalizeDevices({
+        ...base.devices,
+        [deviceId]: {
+          ...previous,
+          deviceId,
+          deviceName,
+          secretHash,
+          firstSeenAt: previous.firstSeenAt || Date.now(),
+          lastSeenAt: Date.now(),
+          // 重新配对即视为复活：旧退役标记随新凭据一并清除
+          retiredAt: 0,
+        },
+      });
+      const next = { ...base, devices };
+      try {
+        await saveToDisk(next);
+      } catch (e) {
+        console.error("[sync-server] pair save failed", e);
+        return { status: 500, body: { error: "save_failed" }, headers: {} };
+      }
+      state = next;
+      return { status: 200, body: { ok: true, deviceId, deviceSecret }, headers: {} };
+    });
+    json(res, result.status, result.body, result.headers || {});
     return;
   }
 
@@ -515,6 +672,7 @@ const server = createServer(async (req, res) => {
 
   // 设备表只读视图：用于排查「谁确认到哪个版本」，不含任何书签内容。
   if (url.pathname === "/v1/sync/devices" && method === "GET") {
+    if (!requireMaster(req, res)) return;
     if (!state) {
       json(res, 404, { error: "not_found" });
       return;
@@ -522,7 +680,12 @@ const server = createServer(async (req, res) => {
     json(res, 200, {
       revision: state.revision,
       epoch: state.epoch || 0,
-      devices: Object.values(state.devices || {}),
+      devices: Object.values(state.devices || {}).map((device) => {
+        // secretHash 绝不出网：设备列表响应必须先剥掉凭据哈希再序列化
+        const safe = { ...device };
+        delete safe.secretHash;
+        return safe;
+      }),
       deletions: state.deletions || {},
       // 只读诊断：哪些墓碑已经可以被回收（本阶段不执行回收）
       reclaimCandidates: computeReclaimCandidates(state),
@@ -531,8 +694,10 @@ const server = createServer(async (req, res) => {
   }
 
   // 设备退役 / 复职：显式管理设备表，避免废弃设备永久卡住墓碑回收。
+  // 管理操作，仅主管理 Token 可调用。
   // body: { deviceId: string, retired: boolean }
   if (url.pathname === "/v1/sync/devices/retire" && method === "POST") {
+    if (!requireMaster(req, res)) return;
     let raw;
     try {
       raw = await readBody(req, 16 * 1024);
@@ -586,8 +751,10 @@ const server = createServer(async (req, res) => {
   }
 
   // 墓碑回收：默认只做演练（dryRun），真正执行需要显式 {"dryRun": false}。
+  // 管理操作，仅主管理 Token 可调用。
   // 执行时递增 epoch，并原子落盘文档 + 设备表 + 删除索引。
   if (url.pathname === "/v1/sync/reclaim" && method === "POST") {
+    if (!requireMaster(req, res)) return;
     let raw;
     try {
       raw = await readBody(req, 64 * 1024);
@@ -708,7 +875,8 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.pathname === "/v1/sync/state" && method === "GET") {
-    if (!state) {
+    // 占位状态（只配对过、从未写入文档）对客户端等价于「云端尚无数据」
+    if (!state?.doc) {
       json(res, 404, { error: "not_found" });
       return;
     }

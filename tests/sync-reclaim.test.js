@@ -394,7 +394,7 @@ describe("墓碑回涌防御（reclaimedIds）", () => {
 
       // 关键断言：deletions 不回涌、不再出现回收候选
       const devices = await api(server.baseUrl, TOKEN, "/v1/sync/devices");
-      assert.equal(devices.body.deletions["n1"], undefined, "已回收墓碑重推不得再次进入 deletions");
+      assert.equal(devices.body.deletions.n1, undefined, "已回收墓碑重推不得再次进入 deletions");
       assert.deepEqual(devices.body.reclaimCandidates, [], "已回收墓碑不得再次成为候选（否则回收无限循环）");
 
       // 回推之后再做一次正常活节点推送：reclaimedIds 必须仍在（PUT 落盘不得抹掉防御集合）

@@ -76,7 +76,7 @@ import {
   resolveDocConflict,
   schedulePush,
 } from "./sync_engine.js";
-import { httpHealth, httpPullState } from "./sync_http_transport.js";
+import { httpGetDevices, httpHealth, httpPullState, httpRetireDevice } from "./sync_http_transport.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
 import { mergeHomepage } from "./sync_merge.js";
 import {
@@ -2806,6 +2806,8 @@ async function init() {
       importSyncBundle,
       httpHealth,
       httpPullState,
+      httpGetDevices,
+      httpRetireDevice,
       ALL_BOOKMARKS_GROUP_ID,
       RECENT_GROUP_ID,
       SYNC_INTERVAL_OPTIONS,

@@ -1095,6 +1095,24 @@ body {
 
 .settings-sync-http{margin:8px 0;padding:8px 0;border-top:1px solid rgba(127,127,127,.2);}
 
+/* 协同设备与健康度仪表盘：设备清单 + 状态指示灯 */
+.settings-sync-devices{margin:6px 0;padding:8px 0 4px;border-top:1px dashed rgba(127,127,127,.25);}
+.settings-sync-devices-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.settings-sync-devices-head .icon-btn{flex:0 0 auto;min-width:0;width:auto;padding:0 10px;}
+.settings-sync-health{margin:4px 0;opacity:.8;font-size:.82em;line-height:1.4;}
+.settings-sync-device-list{display:flex;flex-direction:column;gap:2px;}
+.settings-sync-device-list[data-state="loading"]{opacity:.6;}
+.settings-sync-device-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:3px 0;font-size:.9em;min-width:0;}
+.settings-sync-dot{width:8px;height:8px;border-radius:50%;flex:none;background:#7bd88f;box-shadow:0 0 5px rgba(123,216,143,.9);}
+.settings-sync-dot.is-active{background:#7bd88f;}
+.settings-sync-dot.is-retired{background:#9aa0a6;box-shadow:none;}
+.settings-sync-device-name{font-weight:600;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.settings-sync-device-id{opacity:.6;font-size:.85em;font-family:ui-monospace,Menlo,Consolas,monospace;}
+.settings-sync-device-seen{opacity:.75;font-size:.85em;}
+.settings-sync-device-mine{font-size:.82em;color:#4f9cf9;border:1px solid rgba(79,156,249,.45);border-radius:10px;padding:0 8px;}
+.settings-sync-device-retired{font-size:.82em;color:#e57373;}
+.settings-sync-device-retire-btn{flex:0 0 auto;width:auto;min-width:0;height:auto;min-height:26px;padding:0 10px;font-size:.82em;}
+
 /* 同步异常提示条：固定在顶部，不遮挡工具栏（body 额外留出空间由 JS 设置） */
 .sync-banner{
   position:fixed;top:0;left:0;right:0;z-index:60;

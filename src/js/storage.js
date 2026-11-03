@@ -281,9 +281,9 @@ export function migrateData(data) {
 export async function loadData() {
   const base = createDefaultData();
   const api = getChromeApi();
-  if (!api) return base;
-
   const local = storageArea(false);
+  // 无扩展 API 且无 Web 回退存储（极端环境）才退回内存默认值
+  if (!api && !local) return base;
   // 读失败时最多重试 2 次，避免瞬时错误被当成「无数据」并覆盖默认主页
   let got = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -329,8 +329,9 @@ export async function loadData() {
  */
 export async function loadDataFromArea(useSync = false) {
   const api = getChromeApi();
-  if (!api) return null;
   const area = storageArea(useSync);
+  // 无扩展 API 但有 Web 回退存储（localStorage）时照常读写
+  if (!api && !area) return null;
   const got = await storageGetLocal(area, ROOT_KEY);
   // 读失败与「无 key」都返回 null，由调用方按「无远端数据」处理，避免用错误默认覆盖
   if (!got?.ok || got.value == null) return null;
@@ -349,8 +350,9 @@ export async function loadDataFromArea(useSync = false) {
  */
 export async function saveData(data, useSync = false) {
   const api = getChromeApi();
-  if (!api) return "no_api";
   const area = storageArea(useSync);
+  // 无扩展 API 但有 Web 回退存储（localStorage）时照常读写
+  if (!api && !area) return "no_api";
   const prevLastUpdated = data.lastUpdated;
   data.lastUpdated = nowTs();
   const payload = useSync ? sanitizeForSync(data, ICON_DATA_MAX_LENGTH) : data;
@@ -398,8 +400,8 @@ export async function saveData(data, useSync = false) {
 
 export async function clearData(useSync = false) {
   const api = getChromeApi();
-  if (!api) return;
   const area = storageArea(useSync);
+  if (!api && !area) return;
   await storageRemoveLocal(area, ROOT_KEY);
   if (!useSync) await clearSafariStableHomepage(api);
 }
@@ -512,8 +514,8 @@ export function pruneIconCacheOrphans(cache, bookmarkUrls, siteKeyOf) {
 export async function loadIconCache() {
   if (_iconCacheMemory) return _iconCacheMemory;
   const api = getChromeApi();
-  if (!api) return {};
   const local = storageArea(false);
+  if (!api && !local) return {};
   const got = await storageGetLocal(local, ICON_CACHE_KEY);
   const raw = got?.ok && got.value && typeof got.value === "object" ? got.value : {};
   const normalized = {};
@@ -540,8 +542,8 @@ async function flushIconCacheOnce() {
   try {
     while (true) {
       const api = getChromeApi();
-      if (!api) break;
       const local = storageArea(false);
+      if (!api && !local) break;
       await storageSetLocal(local, { [ICON_CACHE_KEY]: _iconCacheMemory });
       if (!_iconCacheSaveQueued) break;
       _iconCacheSaveQueued = false;
@@ -583,8 +585,8 @@ export async function saveIconCache(cache) {
 
 export async function loadBgCache() {
   const api = getChromeApi();
-  if (!api) return {};
   const local = storageArea(false);
+  if (!api && !local) return {};
   const got = await storageGetLocal(local, BG_CACHE_KEY);
   if (!got?.ok || !got.value || typeof got.value !== "object") return {};
   return got.value;
@@ -592,8 +594,8 @@ export async function loadBgCache() {
 
 export async function saveBgCache(cache) {
   const api = getChromeApi();
-  if (!api) return;
   const local = storageArea(false);
+  if (!api && !local) return;
   await storageSetLocal(local, { [BG_CACHE_KEY]: cache });
 }
 

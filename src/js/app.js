@@ -30,25 +30,12 @@ import {
   toPlainRect,
 } from "./drag-geometry.js";
 import { createHistoryManager } from "./history-manager.js";
-import {
-  applyFailureToCache,
-  avatarDataUrl,
-  clearIconCacheForUrl,
-  compressImageFileToDataUrl,
-  fetchAsDataUrl,
-  getFaviconCandidates,
-  getSiteKey,
-  hashColor,
-  probeImage,
-  refreshAllIcons,
-  resolveIcon,
-  retryFailedIconsIfDue,
-  withIconFetchConcurrency,
-} from "./icons.js";
+import { createIconManager } from "./icon-manager.js";
+import { clearIconCacheForUrl, compressImageFileToDataUrl, getSiteKey, retryFailedIconsIfDue } from "./icons.js";
 import { createModalManager } from "./modal-manager.js";
 import { createSearchManager } from "./search-manager.js";
 import { createSettingsController } from "./settings-controller.js";
-import { normalizeUrl, RECENT_GROUP_ID, SAFE_URL_PROTOCOLS } from "./shared-utils.js";
+import { getStorageMode, normalizeUrl, RECENT_GROUP_ID, SAFE_URL_PROTOCOLS } from "./shared-utils.js";
 import {
   clearData,
   createBackupSnapshot,
@@ -177,6 +164,8 @@ let recentItems = [];
 let historyManager = null;
 /** 顶部搜索管理器（search-manager.js），init 时创建 */
 let searchManager = null;
+/** 图标管线管理器（icon-manager.js），init 时创建 */
+let iconManager = null;
 let draggingGroupId = null;
 let boxSelecting = false;
 let selectionBox = null;
@@ -244,8 +233,6 @@ const STORAGE_RELOAD_DELAY_MS = 120;
 const STORAGE_SUPPRESS_MS = 350;
 const SETTINGS_SAVE_DELAY_MS = 120;
 const TOAST_CONSUME_TIMEOUT_MS = 15000;
-const TITLE_FETCH_TIMEOUT_MS = 6000;
-const ICON_PROBE_TIMEOUT_MS = 6000;
 const MIN_TILE_SIZE = 32;
 const MAX_TILE_SIZE = 220;
 const MAX_DEBUG_LOG_ENTRIES = 200;
@@ -425,7 +412,7 @@ async function reloadFromStorage() {
   ensureLanguageSetting();
   syncBackupBaseline(data);
   render();
-  processPendingIconFetches();
+  iconManager.processPendingIconFetches();
   await consumeSaveToast();
   // popup 等只写了 local：reload 后把投影推到 sync
   if (data?.settings?.syncEnabled) schedulePush();
@@ -1259,34 +1246,11 @@ async function renderGrid() {
     icon.className = "tile-icon";
     const img = document.createElement("img");
     img.alt = node.title || node.url || "";
-    // 先用字母头像占位，图标并发解析后异步更新，避免串行 await 阻塞渲染
-    img.src = letterIconDataUrl(node.title || node.url || "?", node.color);
-    resolveIcon(node, data.settings, iconCache).then((iconSrc) => {
-      if (seq !== renderSeq || !img.isConnected) return;
-      img.src = iconSrc;
-      if (node.url && data.settings.iconFetch && !iconSrc.startsWith("data:")) {
-        const fallback = letterIconDataUrl(node.title || node.url || "?", node.color);
-        const triedCandidates = new Set([iconSrc]);
-        const tryNext = async () => {
-          const nextIcon = await trySwitchToNextFavicon(node.url, triedCandidates);
-          if (nextIcon) {
-            img.src = nextIcon;
-            return;
-          }
-          img.onerror = null;
-          img.onload = null;
-          img.src = fallback;
-          await markIconLoadFailed(node.url);
-        };
-        img.onerror = tryNext;
-        img.onload = () => {
-          if (img.naturalWidth < 16 && img.naturalHeight < 16) {
-            tryNext();
-          }
-        };
-        // 旧缓存只有远程 URL，后台异步抓取为 dataURL 更新缓存，成功后直接更新 img.src
-        migrateIconCacheToDataUrl(node, img);
-      }
+    // 字母头像占位 → 缓存解析异步替换 → 远程失败按候选回退（完整链路见 icon-manager.js）
+    iconManager.bindTileIcon(img, node, {
+      cache: iconCache,
+      // 渲染批次已过期（seq 变化）则放弃更新 DOM
+      isStale: () => seq !== renderSeq,
     });
     icon.appendChild(img);
 
@@ -2122,9 +2086,9 @@ function getModalManager() {
       },
       readFileAsDataUrl,
       readIconAsDataUrl,
-      fetchTitleInBackground,
-      fetchFaviconInBackground,
-      fetchFaviconNow,
+      fetchTitleInBackground: (nodeId, url) => iconManager.fetchTitleInBackground(nodeId, url),
+      fetchFaviconInBackground: (nodeId, url) => iconManager.fetchFaviconInBackground(nodeId, url),
+      fetchFaviconNow: (nodeId, url) => iconManager.fetchFaviconNow(nodeId, url),
       clearIconCacheForUrl,
       pushBackup,
       persistData,
@@ -2241,198 +2205,16 @@ async function readIconAsDataUrl(file) {
   return compressImageFileToDataUrl(file, 128, 0.85);
 }
 
-function letterIconDataUrl(text, color) {
-  // 复用 icons.js 的 avatarDataUrl + hashColor，避免在 app.js 重复实现字母头像逻辑
-  return avatarDataUrl(text || "?", color || hashColor(text || "?"));
-}
-
-async function markIconLoadFailed(url) {
-  if (!url) return;
-  const cache = await loadIconCache();
-  applyFailureToCache(cache, url, cache[url]);
-  const siteKey = getSiteKey(url);
-  if (siteKey) applyFailureToCache(cache, siteKey, cache[siteKey]);
-  await saveIconCache(cache);
-}
-
-async function trySwitchToNextFavicon(url, triedCandidates) {
-  if (!url) return "";
-  const candidates = getFaviconCandidates(url);
-  if (!candidates.length) return "";
-  // 在全局并发信号量内串行尝试候选，避免一次渲染 N 个 tile 全部并发触发请求风暴
-  return withIconFetchConcurrency(async () => {
-    const cache = await loadIconCache();
-    const siteKey = getSiteKey(url);
-    for (const candidate of candidates) {
-      if (triedCandidates.has(candidate)) continue;
-      triedCandidates.add(candidate);
-      const ok = await probeImageWithIconTimeout(candidate);
-      if (!ok) continue;
-      // 抓取为 dataURL 后缓存，下次打开页面可瞬显
-      const dataUrl = await fetchAsDataUrl(candidate);
-      if (dataUrl) {
-        cache[url] = { dataUrl, ts: Date.now() };
-        if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
-        await saveIconCache(cache);
-        return dataUrl;
-      }
-      // dataURL 化失败时退回远程 URL
-      cache[url] = { url: candidate, ts: Date.now() };
-      if (siteKey) cache[siteKey] = { url: candidate, ts: Date.now() };
-      await saveIconCache(cache);
-      return candidate;
-    }
-    return "";
-  });
-}
-
-function probeImageWithIconTimeout(url) {
-  // 复用 icons.js 的 probeImage（带 done 守卫与超时），仅注入本模块的超时常量
-  return probeImage(url, 16, ICON_PROBE_TIMEOUT_MS);
-}
-
-async function fetchTitleInBackground(nodeId, url) {
-  const title = await fetchTitleViaTab(url);
-  if (!title) return;
-  const target = data?.nodes?.[nodeId];
-  if (!target?.titlePending) return;
-  stampNodeFieldChanges(target, { titleChanged: true });
-  target.title = title;
-  target.titlePending = false;
-  await persistData();
-  render();
-}
-
-async function fetchFaviconNow(nodeId, url) {
-  const candidates = getFaviconCandidates(url);
-  if (!candidates.length) return false;
-  return withIconFetchConcurrency(async () => {
-    const cache = await loadIconCache();
-    const siteKey = getSiteKey(url);
-    for (const candidate of candidates) {
-      const dataUrl = await fetchAsDataUrl(candidate);
-      if (!dataUrl) continue;
-      // 只写图标缓存，不改 node、不 persist——避免「取消」后仍落盘
-      cache[url] = { dataUrl, ts: Date.now() };
-      if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
-      await saveIconCache(cache);
-      const target = data?.nodes?.[nodeId];
-      // 仅当抓取的就是当前已保存 URL 时，清 pending 标记（仍不 persist，由调用方决定）
-      if (target && target.url === url) {
-        target.iconPending = false;
-      }
-      return true;
-    }
-    applyFailureToCache(cache, url, cache[url]);
-    if (siteKey) applyFailureToCache(cache, siteKey, cache[siteKey]);
-    await saveIconCache(cache);
-    return false;
-  });
-}
-
-function processPendingIconFetches() {
-  if (!data?.settings?.iconFetch || !data?.nodes) return;
-  for (const node of Object.values(data.nodes)) {
-    if (node?.type === "item" && node.iconPending && node.url) {
-      fetchFaviconInBackground(node.id, node.url);
-    }
-  }
-}
-
-async function fetchFaviconInBackground(nodeId, url) {
-  if (!data?.settings?.iconFetch) return;
-  const candidates = getFaviconCandidates(url);
-  if (!candidates.length) return;
-  // 在全局并发信号量内串行尝试候选，避免多节点并发抓取触发请求风暴
-  await withIconFetchConcurrency(async () => {
-    const cache = await loadIconCache();
-    const siteKey = getSiteKey(url);
-    for (const candidate of candidates) {
-      const ok = await probeImageWithIconTimeout(candidate);
-      if (!ok) continue;
-      // 抓取为 dataURL 后缓存，下次打开页面可瞬显
-      const dataUrl = await fetchAsDataUrl(candidate);
-      if (dataUrl) {
-        cache[url] = { dataUrl, ts: Date.now() };
-        if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
-        await saveIconCache(cache);
-        const target = data?.nodes?.[nodeId];
-        if (target) target.iconPending = false;
-        await persistData();
-        render();
-        return;
-      }
-      // dataURL 化失败时退回远程 URL
-      cache[url] = { url: candidate, ts: Date.now() };
-      if (siteKey) cache[siteKey] = { url: candidate, ts: Date.now() };
-      await saveIconCache(cache);
-      const target = data?.nodes?.[nodeId];
-      if (target) target.iconPending = false;
-      await persistData();
-      render();
-      return;
-    }
-    const target = data?.nodes?.[nodeId];
-    if (target) {
-      target.iconPending = false;
-      // 全部候选失败：按失败次数退避（首次 15min，递增封顶 7 天）
-      applyFailureToCache(cache, url, cache[url]);
-      if (siteKey) applyFailureToCache(cache, siteKey, cache[siteKey]);
-      await saveIconCache(cache);
-      await persistData();
-      render();
-    }
-  });
-}
-
-const _migratingIcons = new Set();
 /**
- * 旧缓存只有远程 URL（{ url }），后台异步抓取为 dataURL 并更新缓存。
- * 成功后直接更新 img.src，避免全量 render 闪烁；下次打开页面瞬显。
+ * 创建图标管线管理器实例（能力与依赖见 icon-manager.js）：
+ * 字母头像、缓存解析、候选回退、失败退避、后台补抓、批量刷新。
  */
-async function migrateIconCacheToDataUrl(node, img) {
-  if (!node?.url || node.iconType !== "auto" || _migratingIcons.has(node.url)) return;
-  _migratingIcons.add(node.url);
-  try {
-    const cache = await loadIconCache();
-    const siteKey = getSiteKey(node.url);
-    const entry = (siteKey && cache[siteKey]) || cache[node.url];
-    if (!entry || entry.dataUrl || !entry.url) return;
-    const dataUrl = await fetchAsDataUrl(entry.url);
-    if (!dataUrl) return;
-    cache[node.url] = { dataUrl, ts: Date.now() };
-    if (siteKey) cache[siteKey] = { dataUrl, ts: Date.now() };
-    await saveIconCache(cache);
-    if (img?.isConnected) img.src = dataUrl;
-  } finally {
-    _migratingIcons.delete(node.url);
-  }
-}
-
-async function fetchTitleViaTab(url) {
-  const api = getChromeApi();
-  if (!api?.tabs) return "";
-  return new Promise((resolve) => {
-    api.tabs.create({ url, active: false }, (tab) => {
-      if (!tab?.id) return resolve("");
-      const tabId = tab.id;
-      const timeout = setTimeout(() => finish(""), TITLE_FETCH_TIMEOUT_MS);
-      const finish = (title) => {
-        clearTimeout(timeout);
-        api.tabs.onUpdated.removeListener(onUpdated);
-        api.tabs.remove(tabId, () => resolve(title || ""));
-      };
-      const onUpdated = (id, info, updatedTab) => {
-        if (id === tabId && info.status === "complete") {
-          finish(updatedTab?.title || "");
-        }
-      };
-      try {
-        api.tabs.onUpdated.addListener(onUpdated);
-      } catch (_e) {
-        finish("");
-      }
-    });
+function createIconManagerInstance() {
+  return createIconManager({
+    getData: () => data,
+    persistData,
+    render,
+    stampNodeFieldChanges,
   });
 }
 
@@ -2455,7 +2237,7 @@ function createHistoryManagerInstance() {
     pushBackup,
     persistData,
     render,
-    processPendingIconFetches,
+    processPendingIconFetches: () => iconManager.processPendingIconFetches(),
     openModal,
     closeModal,
     html,
@@ -2529,6 +2311,12 @@ function getDropIndex(grid, x, y) {
 
 async function init() {
   debugLog("init_start", getRuntimeInfo());
+  // 图标管线管理器先建好（renderGrid / 弹窗 / 存储监听都会用到）
+  iconManager = createIconManagerInstance();
+  // 纯 Web / PWA 模式（无扩展 API 直接打开页面）：数据走 localStorage，扩展专属能力已安全降级
+  if (getStorageMode() === "web-local") {
+    console.info("[homepage] Web 模式就绪：无扩展环境，数据保存在浏览器 localStorage，历史/标签页等扩展能力已降级");
+  }
   // 设置面板控制器：注入数据访问、共享状态与 UI/业务依赖。
   // 使用 getter 读取 data，保证控制器始终看到最新的主页数据。
   settingsCtl = createSettingsController({
@@ -2589,7 +2377,7 @@ async function init() {
       persistData,
       queuePersist,
       pushBackup,
-      processPendingIconFetches,
+      processPendingIconFetches: () => iconManager.processPendingIconFetches(),
       loadBackground,
       applyDensity,
       applyTheme,
@@ -2628,7 +2416,7 @@ async function init() {
       setPlacementList,
       touchPlacementContainer,
       isAllBookmarksGroup,
-      refreshAllIcons,
+      refreshAllIcons: (nodes) => iconManager.batchRefreshAllIcons(nodes),
       syncBytesBudgetLevel,
       estimateSyncProjectionBytes,
       createDocId,
@@ -2687,7 +2475,7 @@ async function init() {
         }
         // render() 内部会重新应用主题/密度/背景，覆盖远端改的「副作用型」设置
         render();
-        processPendingIconFetches();
+        iconManager.processPendingIconFetches();
       }
     },
   });
@@ -2742,7 +2530,7 @@ async function init() {
   closeFolder();
   // 先渲染 UI，图标走缓存瞬显；背景和图标重试后台异步进行，不阻塞首屏
   render();
-  processPendingIconFetches();
+  iconManager.processPendingIconFetches();
   loadBackground({ silent: true });
   retryFailedIconsIfDue(data.settings);
   void consumeSaveToast();

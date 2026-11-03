@@ -10,6 +10,7 @@
     "safari_native_storage.js",
     "storage.js",
     "icons.js",
+    "icon-manager.js",
     "bing-wallpaper.js",
     "visit-history.js",
     "history-manager.js",

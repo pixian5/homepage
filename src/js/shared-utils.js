@@ -85,14 +85,142 @@ export function getChromeApi() {
 }
 
 /**
+ * localStorage 支撑的 chrome.storage 兼容层（纯 Web / PWA 模式回退）。
+ * 实现 chrome.storage.StorageArea 语义（get 支持 string/array/object/null），
+ * 同时兼容回调与 Promise 两种调用形态（与 Firefox hybrid 一致），值经 JSON 序列化。
+ */
+function createLocalStorageArea() {
+  const readKey = (key) => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw === null ? undefined : JSON.parse(raw);
+    } catch (_e) {
+      return undefined;
+    }
+  };
+  const writeKey = (key, value) => {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) {
+      console.warn("localStorage set failed:", e?.message || e);
+    }
+  };
+  const area = {
+    get(keys, callback) {
+      let result = {};
+      if (keys === null || keys === undefined) {
+        // 全量读取（与 chrome.storage 语义一致）
+        for (let i = 0; i < localStorage.length; i += 1) {
+          const key = localStorage.key(i);
+          const value = readKey(key);
+          if (value !== undefined) result[key] = value;
+        }
+      } else if (typeof keys === "string") {
+        const value = readKey(keys);
+        if (value !== undefined) result[keys] = value;
+      } else if (Array.isArray(keys)) {
+        for (const key of keys) {
+          const value = readKey(key);
+          if (value !== undefined) result[key] = value;
+        }
+      } else if (typeof keys === "object") {
+        // 对象形态：缺失键使用调用方给出的默认值
+        result = { ...keys };
+        for (const key of Object.keys(keys)) {
+          const value = readKey(key);
+          if (value !== undefined) result[key] = value;
+        }
+      }
+      if (typeof callback === "function") {
+        try {
+          callback(result);
+        } catch (_e) {
+          // 回调异常不阻断 Promise 返回
+        }
+      }
+      return Promise.resolve(result);
+    },
+    set(obj, callback) {
+      for (const [key, value] of Object.entries(obj || {})) writeKey(key, value);
+      if (typeof callback === "function") {
+        try {
+          callback();
+        } catch (_e) {
+          // ignore
+        }
+      }
+      return Promise.resolve();
+    },
+    remove(keys, callback) {
+      const list = Array.isArray(keys) ? keys : [keys];
+      for (const key of list) {
+        try {
+          localStorage.removeItem(key);
+        } catch (_e) {
+          // ignore
+        }
+      }
+      if (typeof callback === "function") {
+        try {
+          callback();
+        } catch (_e) {
+          // ignore
+        }
+      }
+      return Promise.resolve();
+    },
+    clear(callback) {
+      try {
+        localStorage.clear();
+      } catch (_e) {
+        // ignore
+      }
+      if (typeof callback === "function") {
+        try {
+          callback();
+        } catch (_e) {
+          // ignore
+        }
+      }
+      return Promise.resolve();
+    },
+  };
+  return area;
+}
+
+/** 缓存的 Web 回退存储层（同一页面内复用，保证引用稳定） */
+let _webFallbackArea = null;
+
+/**
+ * 当前存储模式：
+ * - "extension"：扩展环境（chrome.storage 可用）；
+ * - "web-local"：纯 Web / PWA 模式，回退到 window.localStorage；
+ * - "memory"：两者皆不可用（极端环境），调用方自行兜底。
+ * @returns {"extension"|"web-local"|"memory"}
+ */
+export function getStorageMode() {
+  const api = getChromeApi();
+  if (api?.storage?.local) return "extension";
+  if (typeof localStorage !== "undefined") return "web-local";
+  return "memory";
+}
+
+/**
  * 获取存储区域
+ * 纯 Web / PWA 模式（无扩展 API 直接打开页面）下无缝回退到 window.localStorage，
+ * 扩展环境行为完全不变。
  * @param {boolean} useSync
  * @returns {chrome.storage.StorageArea | null}
  */
 export function storageArea(useSync) {
   const api = getChromeApi();
-  if (!api?.storage) return null;
-  return useSync ? api.storage.sync : api.storage.local;
+  if (api?.storage) {
+    return useSync ? api.storage.sync : api.storage.local;
+  }
+  if (!_webFallbackArea && typeof localStorage !== "undefined") {
+    _webFallbackArea = createLocalStorageArea();
+  }
+  return _webFallbackArea;
 }
 
 /**
@@ -141,12 +269,13 @@ export function sanitizeForSync(data, iconDataMaxLength) {
 }
 
 /**
- * 从存储区域读取指定 key
+ * 从存储区域读取指定 key（空区域安全：返回 undefined）
  * @param {chrome.storage.StorageArea} area
  * @param {string} key
  * @returns {Promise<any>}
  */
 export function storageGet(area, key) {
+  if (!area) return Promise.resolve(undefined);
   return new Promise((resolve) => {
     area.get(key, (res) => {
       const err = getLastError();
@@ -157,12 +286,13 @@ export function storageGet(area, key) {
 }
 
 /**
- * 写入存储区域
+ * 写入存储区域（空区域安全：返回错误串）
  * @param {chrome.storage.StorageArea} area
  * @param {object} obj
  * @returns {Promise<string | null>}
  */
 export function storageSet(area, obj) {
+  if (!area) return Promise.resolve("no_storage_area");
   return new Promise((resolve) => {
     area.set(obj, () => {
       const err = getLastError();

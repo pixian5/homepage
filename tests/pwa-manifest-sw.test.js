@@ -84,7 +84,6 @@ describe("sw.js cache manifest & strategy", () => {
         handlers.deletedCaches.push(name);
       },
     };
-    const waits = [];
     const selfMock = {
       location: { origin: "http://127.0.0.1:8899" },
       skipWaiting: async () => {},
@@ -134,7 +133,7 @@ describe("sw.js cache manifest & strategy", () => {
 
     // fetch：非 GET 与跨源请求不接管
     let responded = null;
-    const fetchEvent = (request, mode) => ({
+    const fetchEvent = (request) => ({
       request,
       waitUntil: () => {},
       respondWith: (p) => {
@@ -210,7 +209,14 @@ describe("registerServiceWorkerIfNeeded", () => {
     delete globalThis.chrome;
     globalThis.chrome = undefined;
     const registrations = [];
-    setNavigator({ serviceWorker: { register: async (url) => (registrations.push(url), {}) } });
+    setNavigator({
+      serviceWorker: {
+        register: async (url) => {
+          registrations.push(url);
+          return {};
+        },
+      },
+    });
     globalThis.window = globalThis.window || {};
     globalThis.window.isSecureContext = true;
     // 前序用例可能清掉 location：这里补一个最小存在值

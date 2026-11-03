@@ -119,21 +119,14 @@ if [[ -n "${PROJECT_FILE}" ]]; then
 
     # Safari 正在运行时重装 app，pluginkit 可能不会登记新扩展，
     # 表现为“扩展突然没了、新标签页回落 favorites://”。
-    # 这里显式注册并校验；Safari 运行中注册可能延迟生效，所以只告警不失败。
+    # 注册逻辑抽到 safari-extension-register.sh（幂等：在册直接成功）；
+    # 构建失败不影响产物——每小时 launchd 自愈任务（setup-safari-extension-register.sh）会兜底补注册。
     echo "[build] Registering Safari extension with pluginkit..."
-    pluginkit -a "${APPS_DIR_APP}/Contents/PlugIns/${SAFARI_APP_NAME} Extension.appex" 2>/dev/null || true
-    for _ in $(seq 1 20); do
-      pluginkit -m -p com.apple.Safari.web-extension 2>/dev/null \
-        | grep -q "com.aeroluna.homepage.safari.extension" && break
-      sleep 0.25
-    done
-    if pluginkit -m -p com.apple.Safari.web-extension 2>/dev/null \
-      | grep -q "com.aeroluna.homepage.safari.extension"; then
+    if bash "${SCRIPT_DIR}/safari-extension-register.sh"; then
       echo "[build] Safari extension registered"
     else
-      echo "[build] WARNING: Safari extension is not registered yet." >&2
-      echo "[build]           Quit Safari, then run:" >&2
-      echo "[build]           pluginkit -a \"${APPS_DIR_APP}/Contents/PlugIns/${SAFARI_APP_NAME} Extension.appex\"" >&2
+      echo "[build] WARNING: 本次注册未确认，launchd 自愈任务将在一小时内自动重试" >&2
+      echo "[build]           也可立即执行：bash ${SCRIPT_DIR}/safari-extension-register.sh" >&2
     fi
 
     # Xcode 构建时会将 build-output 里的 .app 注册到 LaunchServices，

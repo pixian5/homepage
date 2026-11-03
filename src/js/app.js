@@ -39,6 +39,7 @@ import {
   registerServiceWorkerIfNeeded,
   SAFE_URL_PROTOCOLS,
 } from "./shared-utils.js";
+import { createSidebarManager } from "./sidebar-manager.js";
 import {
   clearData,
   createBackupSnapshot,
@@ -96,6 +97,7 @@ import {
 import { stampChangedSyncSettings } from "./sync_settings.js";
 import { createSyncBanner } from "./sync-banner.js";
 import { createThemeManager } from "./theme-manager.js";
+import { createToastManager } from "./toast-manager.js";
 import { createTouchDragManager } from "./touch-drag-manager.js";
 import { escapeHtml, html, rawHtml, runWithButtonState } from "./ui-utils.js";
 import { attachVisitTracking, recordVisit } from "./visit-history.js";
@@ -172,6 +174,16 @@ let selectionMgr = null;
 let themeMgr = null;
 /** 卡片打开方式管理器（open-mode-manager.js），init 时创建 */
 let openModeMgr = null;
+/** Toast 提示管理器（toast-manager.js），模块加载即建（全文件大量调用） */
+let toastMgr = null;
+/** 侧边栏管理器（sidebar-manager.js），init 时创建 */
+let sidebarMgr = null;
+
+// Toast 管理器立即创建：模块内任何时点的 toast() 调用都必须可用
+toastMgr = createToastManager({
+  containerEl: () => elements?.toastContainer || null,
+  getDurationMs: () => getToastDurationMs(),
+});
 let recentItems = [];
 /** 「最近历史」分组管理器（history-manager.js），init 时创建 */
 let historyManager = null;
@@ -424,86 +436,12 @@ function toastSyncMergedOnce() {
   toast(t("toast.syncOverwritten"), "warning");
 }
 
-function applySidebarState() {
-  document.body.classList.toggle("sidebar-collapsed", !!data.settings.sidebarCollapsed);
-  document.body.classList.toggle("sidebar-hidden", !!data.settings.sidebarHidden);
-  if (elements.btnToggleSidebar) {
-    elements.btnToggleSidebar.textContent = data.settings.sidebarCollapsed
-      ? t("sidebar.expand")
-      : t("sidebar.collapse");
-  }
-  syncSidebarTabLabels();
-}
-
-function syncSidebarTabLabels() {
-  if (!elements.recentTab) return;
-  const collapsed = !!data.settings.sidebarCollapsed;
-  const recentLabel = elements.recentTab.dataset.label || elements.recentTab.textContent || t("sidebar.history");
-  elements.recentTab.dataset.label = recentLabel;
-  elements.recentTab.setAttribute("aria-label", recentLabel);
-  elements.recentTab.textContent = collapsed ? "" : recentLabel;
-  qsa(".group-tab", elements.groupTabs).forEach((btn) => {
-    const label = btn.dataset.label || btn.textContent || "";
-    btn.dataset.label = label;
-    btn.setAttribute("aria-label", label || t("sidebar.addGroup"));
-    btn.textContent = collapsed ? "" : label;
-  });
-}
-
 /**
- * 显示 Toast。
- * 用法：
- * - toast(msg) / toast(msg, "success"|"error"|"warning")
- * - toast(msg, actionLabel, actionFn)
- * - toast(msg, actionLabel, actionFn, "warning")
- * 默认 success（绿色）；error 红；warning 黄。
- * @param {string} message
- * @param {string | (() => void)} [actionLabelOrType]
- * @param {(() => void) | string} [actionOrType]
- * @param {"success"|"error"|"warning"} [type]
+ * 显示 Toast（兼容签名见 toast-manager.js）。
+ * 全文件与子组件（modal/drag/selection/...）都沿用这个入口。
  */
 function toast(message, actionLabelOrType, actionOrType, type) {
-  let actionLabel = null;
-  let action = null;
-  let kind = "success";
-
-  if (typeof actionLabelOrType === "function") {
-    action = actionLabelOrType;
-  } else if (actionLabelOrType === "success" || actionLabelOrType === "error" || actionLabelOrType === "warning") {
-    kind = actionLabelOrType;
-  } else if (typeof actionLabelOrType === "string") {
-    actionLabel = actionLabelOrType;
-  }
-
-  if (typeof actionOrType === "function") {
-    action = actionOrType;
-  } else if (actionOrType === "success" || actionOrType === "error" || actionOrType === "warning") {
-    kind = actionOrType;
-  }
-
-  if (type === "success" || type === "error" || type === "warning") {
-    kind = type;
-  }
-
-  const el = document.createElement("div");
-  el.className = `toast toast-${kind}`;
-  el.setAttribute("role", "status");
-  el.setAttribute("aria-live", kind === "error" ? "assertive" : "polite");
-  const span = document.createElement("span");
-  span.textContent = message;
-  el.appendChild(span);
-  if (actionLabel && action) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = actionLabel;
-    btn.addEventListener("click", () => {
-      action();
-      el.remove();
-    });
-    el.appendChild(btn);
-  }
-  elements.toastContainer?.appendChild(el);
-  setTimeout(() => el.remove(), getToastDurationMs());
+  toastMgr?.toast(message, actionLabelOrType, actionOrType, type);
 }
 
 function listenForExternalToast() {
@@ -827,53 +765,6 @@ function uniqueNodes(nodes) {
     out.push(node);
   }
   return out;
-}
-
-function renderGroups() {
-  elements.groupTabs.replaceChildren();
-  elements.recentTab.classList.toggle("active", activeGroupId === RECENT_GROUP_ID);
-  const recentLabel = elements.recentTab.dataset.label || elements.recentTab.textContent || t("sidebar.history");
-  elements.recentTab.dataset.label = recentLabel;
-  elements.recentTab.setAttribute("aria-label", recentLabel);
-  elements.recentTab.textContent = data.settings.sidebarCollapsed ? "" : recentLabel;
-  elements.recentTab.dataset.short = t("sidebar.history");
-  const root = data.groups.find((group) => isAllBookmarksGroup(group)) || data.groups[0];
-  const sidebarEntries = [
-    root,
-    ...(root?.nodes || []).map((id) => data.nodes[id]).filter((node) => node?.type === "folder"),
-  ].filter(Boolean);
-  sidebarEntries.forEach((group, idx) => {
-    const fixedAllGroup = isAllBookmarksGroup(group);
-    const btn = document.createElement("button");
-    btn.className = `group-tab${fixedAllGroup ? "" : " draggable"} ${group.id === activeGroupId ? "active" : ""}`;
-    const label = fixedAllGroup ? group.name : group.title;
-    btn.dataset.label = label;
-    btn.setAttribute("aria-label", label);
-    btn.textContent = data.settings.sidebarCollapsed ? "" : label;
-    btn.dataset.short = String(idx + 1);
-    btn.dataset.groupId = group.id;
-    btn.draggable = !fixedAllGroup;
-    btn.addEventListener("click", (e) => {
-      if (touchDrag?.isClickSuppressed()) {
-        e.preventDefault();
-        return;
-      }
-      activeGroupId = group.id;
-      openFolderId = null;
-      data.settings.lastActiveGroupId = activeGroupId;
-      queuePersist();
-      render();
-    });
-    btn.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      if (!fixedAllGroup) openGroupContextMenu(e.clientX, e.clientY, group);
-    });
-    // 侧栏分组的卡片投放与分组拖拽排序统一由 drag-manager 处理
-    dragManager.bindSidebarFolderEvents(btn, { groupId: group.id, fixedAllGroup });
-    // 分组长按拖拽排序（触摸状态机见 touch-drag-manager.js）
-    touchDrag.bindGroupTouchEvents(btn, { groupId: group.id, disabled: fixedAllGroup });
-    elements.groupTabs.appendChild(btn);
-  });
 }
 
 async function renderGrid() {
@@ -1669,6 +1560,34 @@ function createStorageListenerInstance() {
 }
 
 /**
+ * 创建侧边栏管理器实例（渲染分组 Tab、折叠状态机、标签同步）。
+ */
+function createSidebarManagerInstance() {
+  return createSidebarManager({
+    getElements: () => elements,
+    getData: () => data,
+    getState: () => ({ activeGroupId, openFolderId }),
+    setActiveGroup: (groupId) => {
+      activeGroupId = groupId;
+    },
+    closeFolder: () => {
+      openFolderId = null;
+    },
+    persist: () => queuePersist(),
+    render,
+    t,
+    isRecentGroup: (groupId) => groupId === RECENT_GROUP_ID,
+    isAllBookmarksGroup,
+    isClickSuppressed: () => !!touchDrag?.isClickSuppressed(),
+    bindSidebarFolderEvents: (btn, opts) => dragManager.bindSidebarFolderEvents(btn, opts),
+    bindGroupTouchEvents: (btn, opts) => touchDrag.bindGroupTouchEvents(btn, opts),
+    openGroupContextMenu,
+    qsa,
+    getDocumentBody: () => document.body,
+  });
+}
+
+/**
  * 创建打开方式管理器实例（修饰键/中键判定、双环境打开、模式循环切换）。
  */
 function createOpenModeManagerInstance() {
@@ -1720,6 +1639,7 @@ async function init() {
   iconManager = createIconManagerInstance();
   themeMgr = createThemeManagerInstance();
   openModeMgr = createOpenModeManagerInstance();
+  sidebarMgr = createSidebarManagerInstance();
   selectionMgr = createSelectionManagerInstance();
   dragManager = createDragManagerInstance();
   touchDrag = createTouchDragManagerInstance();
@@ -1796,7 +1716,7 @@ async function init() {
       applyDensity: () => themeMgr.applyDensity(),
       applyTheme: () => themeMgr.applyTheme(),
       applyStaticI18n,
-      applySidebarState,
+      applySidebarState: () => sidebarMgr?.applySidebarState(),
       buildLanguageOptions,
       leaveSettingsForSubpanel,
       readFileAsDataUrl,
@@ -1938,7 +1858,7 @@ async function init() {
   recentItems = await recentPromise;
   themeMgr.applyDensity();
   themeMgr.applyTheme();
-  applySidebarState();
+  sidebarMgr?.applySidebarState();
   closeModal();
   closeFolder();
   // 先渲染 UI，图标走缓存瞬显；背景和图标重试后台异步进行，不阻塞首屏
@@ -1993,8 +1913,8 @@ async function init() {
 function render() {
   ensureAllBookmarksGroup(data);
   applyStaticI18n();
-  applySidebarState();
-  renderGroups();
+  sidebarMgr?.applySidebarState();
+  sidebarMgr?.renderGroups();
   renderGrid();
   // 网格渲染后统一刷新空态（含历史分组的不可用/无数据提示）
   updateEmptyState();
@@ -2020,7 +1940,7 @@ function bindEvents() {
   elements.btnFolderAdd.addEventListener("click", openAddModal);
   elements.btnToggleSidebar?.addEventListener("click", () => {
     data.settings.sidebarCollapsed = !data.settings.sidebarCollapsed;
-    applySidebarState();
+    sidebarMgr?.applySidebarState();
     queuePersist();
   });
   elements.recentTab.addEventListener("click", async () => {

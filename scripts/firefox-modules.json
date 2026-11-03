@@ -2,6 +2,8 @@
   "app": [
     "shared-utils.js",
     "storage-listener.js",
+    "sidebar-manager.js",
+    "toast-manager.js",
     "open-mode-manager.js",
     "theme-manager.js",
     "selection-manager.js",

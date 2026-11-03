@@ -24,6 +24,7 @@ import {
 } from "./data-utils.js";
 import { nextGridFocusIndex } from "./drag-geometry.js";
 import { createDragManager } from "./drag-manager.js";
+import { createFolderManager } from "./folder-manager.js";
 import { createHistoryManager } from "./history-manager.js";
 import { createIconManager } from "./icon-manager.js";
 import { clearIconCacheForUrl, compressImageFileToDataUrl, getSiteKey, retryFailedIconsIfDue } from "./icons.js";
@@ -98,6 +99,7 @@ import { stampChangedSyncSettings } from "./sync_settings.js";
 import { createSyncBanner } from "./sync-banner.js";
 import { createThemeManager } from "./theme-manager.js";
 import { createToastManager } from "./toast-manager.js";
+import { createTooltipManager } from "./tooltip-manager.js";
 import { createTouchDragManager } from "./touch-drag-manager.js";
 import { escapeHtml, html, rawHtml, runWithButtonState } from "./ui-utils.js";
 import { attachVisitTracking, recordVisit } from "./visit-history.js";
@@ -161,7 +163,6 @@ let data = null;
 let activeGroupId = null;
 let openFolderId = null;
 let pendingDeletion = null;
-let tooltipTimer = null;
 /** 拖拽与重排管理器（drag-manager.js），init 时创建 */
 let dragManager = null;
 /** 触摸拖拽状态机（touch-drag-manager.js），init 时创建 */
@@ -178,11 +179,21 @@ let openModeMgr = null;
 let toastMgr = null;
 /** 侧边栏管理器（sidebar-manager.js），init 时创建 */
 let sidebarMgr = null;
+/** 文件夹覆盖层管理器（folder-manager.js），init 时创建 */
+let folderMgr = null;
+/** Tooltip 提示管理器（tooltip-manager.js），模块加载即建 */
+let tooltipMgr = null;
 
 // Toast 管理器立即创建：模块内任何时点的 toast() 调用都必须可用
 toastMgr = createToastManager({
   containerEl: () => elements?.toastContainer || null,
   getDurationMs: () => getToastDurationMs(),
+});
+// Tooltip 管理器立即创建（渲染卡片即绑定悬停）
+tooltipMgr = createTooltipManager({
+  tooltipEl: () => elements?.tooltip || null,
+  delayMs: 200,
+  isEnabled: () => !!data?.settings?.tooltipEnabled,
 });
 let recentItems = [];
 /** 「最近历史」分组管理器（history-manager.js），init 时创建 */
@@ -217,7 +228,6 @@ function getToastDurationMs() {
   const normalized = Number.isFinite(seconds) ? Math.min(60, Math.max(1, seconds)) : DEFAULT_TOAST_DURATION_SECONDS;
   return normalized * 1000;
 }
-const TOOLTIP_DELAY_MS = 200;
 const UNDO_TIMEOUT_MS = 10000;
 const STORAGE_RELOAD_DELAY_MS = 120;
 const STORAGE_SUPPRESS_MS = 350;
@@ -470,19 +480,6 @@ async function consumeSaveToast() {
   toast(t("toast.savedToGroup", { name: groupName }));
   data.settings.lastSaveToast = null;
   await persistData();
-}
-
-function showTooltip(text, x, y) {
-  if (!data.settings.tooltipEnabled) return;
-  elements.tooltip.textContent = text;
-  elements.tooltip.style.left = "0";
-  elements.tooltip.style.top = "0";
-  elements.tooltip.style.transform = `translate3d(${x + 12}px, ${y + 12}px, 0)`;
-  elements.tooltip.classList.remove("hidden");
-}
-
-function hideTooltip() {
-  elements.tooltip.classList.add("hidden");
 }
 
 // normalizeUrl 直接从 shared-utils 导入（Firefox bundle 不可使用 import alias）
@@ -930,16 +927,12 @@ async function renderGrid() {
       openContextMenu(e.clientX, e.clientY, node);
     });
 
+    // 悬停提示防抖与越界钳制（tooltip-manager.js）
     tile.addEventListener("mouseenter", (e) => {
-      if (!data.settings.tooltipEnabled) return;
-      clearTimeout(tooltipTimer);
       const text = node.type === "folder" ? `${node.title}${t("tile.folderSuffix")}` : `${node.title}\n${node.url}`;
-      tooltipTimer = setTimeout(() => showTooltip(text, e.clientX, e.clientY), TOOLTIP_DELAY_MS);
+      tooltipMgr.scheduleShow(text, e.clientX, e.clientY);
     });
-    tile.addEventListener("mouseleave", () => {
-      clearTimeout(tooltipTimer);
-      hideTooltip();
-    });
+    tile.addEventListener("mouseleave", () => tooltipMgr.hideTooltip());
 
     // 拖拽三意图（排序/入文件夹/合并成组）统一由 drag-manager 处理
     dragManager.bindTileDragEvents(tile, node);
@@ -993,49 +986,6 @@ function updateEmptyState() {
   }
 }
 
-function openFolder(folderId) {
-  openFolderId = folderId;
-  elements.folderOverlay.removeAttribute("inert");
-  elements.folderOverlay.classList.remove("hidden");
-  elements.folderOverlay.setAttribute("aria-hidden", "false");
-  const folder = data.nodes[folderId];
-  elements.folderTitle.textContent = folder?.title || t("folder.defaultTitle");
-  render();
-  elements.folderGrid.focus({ preventScroll: true });
-}
-
-function findParentFolderId(folderId) {
-  if (!folderId) return "";
-  for (const node of Object.values(data.nodes || {})) {
-    if (node.type !== "folder" || !Array.isArray(node.children)) continue;
-    if (node.id === activeGroupId) continue;
-    if (node.children.includes(folderId)) {
-      return node.id;
-    }
-  }
-  return "";
-}
-
-function closeFolder() {
-  const parentId = findParentFolderId(openFolderId);
-  if (parentId) {
-    openFolderId = parentId;
-    const parent = data.nodes[parentId];
-    elements.folderTitle.textContent = parent?.title || t("folder.defaultTitle");
-    render();
-    return;
-  }
-  openFolderId = null;
-  const activeEl = document.activeElement;
-  if (activeEl && elements.folderOverlay.contains(activeEl)) {
-    elements.btnSettings?.focus?.({ preventScroll: true });
-  }
-  elements.folderOverlay.setAttribute("inert", "");
-  elements.folderOverlay.classList.add("hidden");
-  elements.folderOverlay.setAttribute("aria-hidden", "true");
-  render();
-}
-
 let contextMenuManager = null;
 function getContextMenuManager() {
   if (!contextMenuManager) {
@@ -1046,7 +996,7 @@ function getContextMenuManager() {
       callbacks: {
         openUrl,
         openFolder,
-        dissolveFolder,
+        dissolveFolder: (folderId) => folderMgr.dismissFolder(folderId),
         openEditModal,
         deleteNodes,
         openAddHistoryToGroup: (node) => historyManager?.openAddToGroupModal(node),
@@ -1072,44 +1022,6 @@ function openGroupContextMenu(x, y, group) {
 
 function getCurrentGridElement() {
   return openFolderId ? elements.folderGrid : elements.grid;
-}
-
-function dissolveFolder(folderId) {
-  const folder = data.nodes[folderId];
-  if (folder?.type !== "folder") return;
-  const children = Array.isArray(folder.children) ? folder.children.slice() : [];
-  pushBackup();
-  let replaced = false;
-  for (const group of data.groups) {
-    const idx = group.nodes.indexOf(folderId);
-    if (idx < 0) continue;
-    group.nodes.splice(idx, 1, ...children);
-    touchPlacementContainer(group);
-    replaced = true;
-    break;
-  }
-  if (!replaced) {
-    for (const node of Object.values(data.nodes)) {
-      if (node.type !== "folder" || !Array.isArray(node.children)) continue;
-      const idx = node.children.indexOf(folderId);
-      if (idx < 0) continue;
-      node.children.splice(idx, 1, ...children);
-      touchPlacementContainer(node);
-      replaced = true;
-      break;
-    }
-  }
-  if (!replaced) {
-    const group = getActiveGroup();
-    const list = getPlacementList(group);
-    list.push(...children);
-    setPlacementList(group, list);
-    touchPlacementContainer(group);
-  }
-  markNodeDeleted(data, folderId);
-  queuePersist();
-  render();
-  toast(t("folder.dissolved"));
 }
 
 function removeNodeFromLocation(id) {
@@ -1165,12 +1077,7 @@ function renameGroup(group) {
   if (isAllBookmarksGroup(group)) return;
   const name = prompt(t("group.promptName"), group.title);
   if (!name) return;
-  const nextTitle = name.trim();
-  if (nextTitle === group.title) return;
-  stampNodeFieldChanges(group, { titleChanged: true });
-  group.title = nextTitle;
-  queuePersist();
-  render();
+  folderMgr?.renameFolder(group.id, name);
 }
 
 function deleteGroup(group) {
@@ -1559,6 +1466,40 @@ function createStorageListenerInstance() {
   });
 }
 
+function openFolder(folderId) {
+  folderMgr.openFolder(folderId);
+}
+
+function closeFolder() {
+  folderMgr.closeFolder();
+}
+
+/**
+ * 创建文件夹覆盖层管理器实例（展开/后退/关闭、重命名、解散回填）。
+ */
+function createFolderManagerInstance() {
+  return createFolderManager({
+    getElements: () => elements,
+    getData: () => data,
+    getOpenFolderId: () => openFolderId,
+    setOpenFolderId: (id) => {
+      openFolderId = id;
+    },
+    getActiveGroup,
+    getPlacementList,
+    setPlacementList,
+    touchPlacementContainer,
+    markNodeDeleted,
+    stampNodeFieldChanges,
+    pushBackup,
+    queuePersist,
+    render,
+    toast,
+    t,
+    getActiveElement: () => document.activeElement,
+  });
+}
+
 /**
  * 创建侧边栏管理器实例（渲染分组 Tab、折叠状态机、标签同步）。
  */
@@ -1640,6 +1581,7 @@ async function init() {
   themeMgr = createThemeManagerInstance();
   openModeMgr = createOpenModeManagerInstance();
   sidebarMgr = createSidebarManagerInstance();
+  folderMgr = createFolderManagerInstance();
   selectionMgr = createSelectionManagerInstance();
   dragManager = createDragManagerInstance();
   touchDrag = createTouchDragManagerInstance();
@@ -1996,18 +1938,8 @@ function bindEvents() {
     render();
   });
 
-  elements.btnCloseFolder.addEventListener("click", closeFolder);
-  elements.btnFolderDissolve.addEventListener("click", () => {
-    if (!openFolderId) return;
-    const folderId = openFolderId;
-    closeFolder();
-    dissolveFolder(folderId);
-  });
-  elements.folderOverlay.addEventListener("click", (e) => {
-    if (e.target.closest(".tile")) return;
-    if (e.target.closest(".overlay-header")) return;
-    closeFolder();
-  });
+  // 文件夹覆盖层生命周期（返回/解散/空白关闭）统一由 folder-manager 处理
+  folderMgr.bindOverlayEvents();
 
   elements.modalOverlay.addEventListener("click", async (e) => {
     if (e.target !== elements.modalOverlay) return;

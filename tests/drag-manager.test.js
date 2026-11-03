@@ -30,7 +30,9 @@ function fakeEl({ rect = { left: 0, top: 0, width: 100, height: 100 }, dataset =
         add: (...names) => {
           for (const n of names) this.classes.add(n);
         },
-        remove: (...names) => names.forEach((n) => this.classes.delete(n)),
+        remove: (...names) => {
+          for (const n of names) this.classes.delete(n);
+        },
         toggle: (n, force) =>
           force === undefined
             ? this.classes.has(n)

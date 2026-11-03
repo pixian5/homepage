@@ -163,7 +163,6 @@ let storageListener = null;
 let selectionMgr = null;
 /** 主题与背景管线管理器（theme-manager.js），init 时创建 */
 let themeMgr = null;
-const lastSelectedIndex = null;
 let recentItems = [];
 /** 「最近历史」分组管理器（history-manager.js），init 时创建 */
 let historyManager = null;
@@ -329,7 +328,6 @@ function shouldDebugPersist() {
 async function reloadFromStorage() {
   const prevActive = activeGroupId;
   const prevOpenFolder = openFolderId;
-  const prevSelected = new Set(selectionMgr?.getSelectedIds() || []);
   const prevLocalTs = Number(data?.lastUpdated || 0);
   const prevPending = persistInFlight > 0;
   // 先从磁盘重载 local（popup 等外部写入），再按需 pull 合并远端投影
@@ -415,16 +413,6 @@ function toastSyncMergedOnce() {
     // localStorage 不可用（隐私模式等）时退化为每次都提示
   }
   toast(t("toast.syncOverwritten"), "warning");
-}
-
-/**
- * 主题与卡片密度属于「副作用型」设置：它们只改 CSS 变量和 html 属性，不经过 render()。
- * 数据被整包替换（同步合并 / 跨标签页重载）后必须重新应用，
- * 否则会出现和背景同一类问题——设置值同步过来了，但页面要等用户手动改一次才变。
- */
-function applyThemeAndDensity() {
-  applyTheme();
-  applyDensity();
 }
 
 function applySidebarState() {

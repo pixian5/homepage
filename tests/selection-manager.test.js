@@ -8,7 +8,7 @@
  */
 
 import assert from "node:assert/strict";
-import { beforeEach, describe, it } from "node:test";
+import { describe, it } from "node:test";
 
 import { createSelectionManager } from "../src/js/selection-manager.js";
 

@@ -54,7 +54,7 @@ function setup(overrides = {}) {
   }
   globalThis.document = { ...globalThis.document, documentElement: docEl };
   globalThis.window = {
-    matchMedia: (query) => ({
+    matchMedia: (_query) => ({
       matches: false,
       addEventListener: () => {},
     }),

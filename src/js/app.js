@@ -3395,15 +3395,15 @@ async function init() {
       t: (k, vars) => t(k, vars),
     });
     void syncBanner.start();
-    const interval = normalizeSyncInterval(data.settings.syncInterval);
-    // 首屏已经使用本地数据渲染；周期同步开启时才后台拉取。
-    // off 表示只在手动操作或本地变更时同步，不应因打开新标签页访问云端。
+    // 「同步间隔 = 关闭」只表示不做周期轮询，**不代表打开页面也不看云端**。
+    // 早先这里用 interval !== "off" 把首拉也一起关掉了，结果是：
+    // 别的设备改了背景/设置，本机只要不手动点「立即同步」就永远收不到，
+    // 看起来就是「在 Chrome 改了渐变，Safari/火狐一点变化都没有」。
+    // 打开页面拉一次只是一次轻量 GET；远端没变会直接短路返回，不会重绘也不会碰壁纸。
     void (async () => {
       try {
-        if (interval !== "off") {
-          const pull = await pullNow("init");
-          if (pull?.needPush) await pushNow("init_need_push");
-        }
+        const pull = await pullNow("init");
+        if (pull?.needPush) await pushNow("init_need_push");
         // 离线时由本地变更产生的待发送项仍可在打开页面后重试。
         await flushOutbox();
         render();

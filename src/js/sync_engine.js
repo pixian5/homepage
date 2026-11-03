@@ -126,6 +126,32 @@ export function initSyncEngine(hooks) {
   _saveLocal = hooks.saveLocal;
   _onMerged = hooks.onMerged || (async () => {});
   _createSafety = hooks.createSafetySnapshot || (async () => {});
+  installVisibilitySync();
+}
+
+/**
+ * 切回标签页时补拉一次（60 秒节流）。
+ *
+ * 「同步间隔 = 关闭」只关掉周期轮询；用户切回页面时应该看到别处的最新数据，
+ * 否则就变成「别的设备改了，这边永远不动」。远端没变时 pullNow 会直接短路，不会重绘。
+ */
+const VISIBILITY_SYNC_MIN_MS = 60_000;
+let _visibilityBound = false;
+let _lastVisibilitySyncAt = 0;
+
+function installVisibilitySync() {
+  if (_visibilityBound) return;
+  if (typeof document === "undefined" || typeof document.addEventListener !== "function") return;
+  _visibilityBound = true;
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    const data = _getData();
+    if (!data?.settings?.syncEnabled) return;
+    const now = Date.now();
+    if (now - _lastVisibilitySyncAt < VISIBILITY_SYNC_MIN_MS) return;
+    _lastVisibilitySyncAt = now;
+    void pullNow("visible").catch((e) => console.warn("visibility sync failed", e));
+  });
 }
 
 /**

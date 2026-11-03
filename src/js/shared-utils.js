@@ -192,6 +192,30 @@ function createLocalStorageArea() {
 let _webFallbackArea = null;
 
 /**
+ * 纯 Web / PWA 模式下注册离线 Service Worker（幂等）：
+ * 仅在非扩展环境（无 runtime.id）且浏览器支持 serviceWorker 时注册，
+ * 扩展环境自带打包资源，注册无意义。
+ * @param {string} [swUrl] 相对当前页面的 SW 脚本地址，默认 "sw.js"
+ * @returns {Promise<boolean>} 是否发起注册
+ */
+export async function registerServiceWorkerIfNeeded(swUrl = "sw.js") {
+  try {
+    const api = getChromeApi();
+    if (api?.runtime?.id) return false; // 扩展环境
+    if (typeof navigator === "undefined" || !navigator.serviceWorker) return false;
+    if (typeof window === "undefined" || !window.location) return false;
+    // 仅安全上下文（https / localhost）允许注册
+    if (!window.isSecureContext) return false;
+    await navigator.serviceWorker.register(swUrl);
+    console.info("[homepage] PWA 就绪：离线缓存已启用（Service Worker）");
+    return true;
+  } catch (e) {
+    console.warn("[homepage] Service Worker 注册失败（离线功能不可用，应用仍可在线使用）:", e?.message || e);
+    return false;
+  }
+}
+
+/**
  * 当前存储模式：
  * - "extension"：扩展环境（chrome.storage 可用）；
  * - "web-local"：纯 Web / PWA 模式，回退到 window.localStorage；

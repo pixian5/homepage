@@ -28,10 +28,17 @@ import { createHistoryManager } from "./history-manager.js";
 import { createIconManager } from "./icon-manager.js";
 import { clearIconCacheForUrl, compressImageFileToDataUrl, getSiteKey, retryFailedIconsIfDue } from "./icons.js";
 import { createModalManager } from "./modal-manager.js";
+import { createOpenModeManager } from "./open-mode-manager.js";
 import { createSearchManager } from "./search-manager.js";
 import { createSelectionManager } from "./selection-manager.js";
 import { createSettingsController } from "./settings-controller.js";
-import { getStorageMode, normalizeUrl, RECENT_GROUP_ID, SAFE_URL_PROTOCOLS } from "./shared-utils.js";
+import {
+  getStorageMode,
+  normalizeUrl,
+  RECENT_GROUP_ID,
+  registerServiceWorkerIfNeeded,
+  SAFE_URL_PROTOCOLS,
+} from "./shared-utils.js";
 import {
   clearData,
   createBackupSnapshot,
@@ -163,6 +170,8 @@ let storageListener = null;
 let selectionMgr = null;
 /** 主题与背景管线管理器（theme-manager.js），init 时创建 */
 let themeMgr = null;
+/** 卡片打开方式管理器（open-mode-manager.js），init 时创建 */
+let openModeMgr = null;
 let recentItems = [];
 /** 「最近历史」分组管理器（history-manager.js），init 时创建 */
 let historyManager = null;
@@ -556,22 +565,8 @@ function normalizeUrlWithScheme(input, scheme) {
   }
 }
 
-async function openUrl(url, mode) {
-  const api = getChromeApi();
-  const openMode = mode || data.settings.openMode;
-  // 用户从本扩展打开的链接也记入「最近访问」（Safari 无系统历史时的数据来源）
-  void recordVisit({ url, title: "" }).catch((e) => console.warn("recordVisit failed", e));
-  if (api?.tabs && (openMode === "new" || openMode === "background")) {
-    api.tabs.create({ url, active: openMode !== "background" });
-    return;
-  }
-  if (openMode === "new") {
-    window.open(url, "_blank", "noopener,noreferrer");
-  } else if (openMode === "background") {
-    window.open(url, "_blank", "noopener,noreferrer");
-  } else {
-    window.location.href = url;
-  }
+function openUrl(url, mode) {
+  return openModeMgr.openUrlWithMode(url, mode);
 }
 
 async function pruneCachesQuietly() {
@@ -1005,8 +1000,18 @@ async function renderGrid() {
           toast(t("error.invalidUrlSimple"), "error");
           return;
         }
-        openUrl(url);
+        openModeMgr.openCard(url, e);
       }
+    });
+    // 中键点击：后台新标签（浏览器默认之外补充统一编排）
+    tile.addEventListener("auxclick", (e) => {
+      if (e.button !== 1) return;
+      e.preventDefault();
+      if (selectionMgr?.isBatchModeActive()) return;
+      if (node.type === "folder") return;
+      const url = normalizeUrl(node.url);
+      if (!url) return;
+      openModeMgr.openCard(url, e);
     });
 
     tile.addEventListener("keydown", (e) => {
@@ -1472,26 +1477,6 @@ function openEditModal(node) {
   getModalManager().openEditModal(node);
 }
 
-async function openOpenModeMenu() {
-  const modes = [
-    { id: "current", label: t("openMode.current") },
-    { id: "new", label: t("openMode.new") },
-    { id: "background", label: t("openMode.background") },
-  ];
-  const idx = modes.findIndex((m) => m.id === data.settings.openMode);
-  const next = modes[(idx + 1) % modes.length];
-  const prevMode = data.settings.openMode;
-  data.settings.openMode = next.id;
-  updateOpenModeButton();
-  toast(`${next.label}`);
-  const result = await persistData();
-  if (!result?.ok) {
-    data.settings.openMode = prevMode;
-    updateOpenModeButton();
-    toast(t("openMode.saveFailed"), "error");
-  }
-}
-
 /** 离开设置主表单进入子面板前：刷掉 debounce 中的保存，避免改动丢失 */
 async function leaveSettingsForSubpanel() {
   if (settingsSaveTimer) {
@@ -1684,6 +1669,20 @@ function createStorageListenerInstance() {
 }
 
 /**
+ * 创建打开方式管理器实例（修饰键/中键判定、双环境打开、模式循环切换）。
+ */
+function createOpenModeManagerInstance() {
+  return createOpenModeManager({
+    getData: () => data,
+    persist: () => persistData(),
+    recordVisit,
+    toast,
+    t,
+    getButton: () => elements.btnOpenMode,
+  });
+}
+
+/**
  * 创建批量选择管理器实例（能力与依赖见 selection-manager.js）。
  */
 function createSelectionManagerInstance() {
@@ -1720,6 +1719,7 @@ async function init() {
   // 图标管线与拖拽管理器先建好（renderGrid / 弹窗 / 存储监听都会用到）
   iconManager = createIconManagerInstance();
   themeMgr = createThemeManagerInstance();
+  openModeMgr = createOpenModeManagerInstance();
   selectionMgr = createSelectionManagerInstance();
   dragManager = createDragManagerInstance();
   touchDrag = createTouchDragManagerInstance();
@@ -1728,6 +1728,8 @@ async function init() {
   // 纯 Web / PWA 模式（无扩展 API 直接打开页面）：数据走 localStorage，扩展专属能力已安全降级
   if (getStorageMode() === "web-local") {
     console.info("[homepage] Web 模式就绪：无扩展环境，数据保存在浏览器 localStorage，历史/标签页等扩展能力已降级");
+    // 注册离线 Service Worker（https / localhost 安全上下文时生效）
+    void registerServiceWorkerIfNeeded();
   }
   // 设置面板控制器：注入数据访问、共享状态与 UI/业务依赖。
   // 使用 getter 读取 data，保证控制器始终看到最新的主页数据。
@@ -1999,23 +2001,13 @@ function render() {
   elements.topSearchWrap.classList.toggle("hidden", !data.settings.showSearch);
   elements.emptyHintToggle.checked = data.settings.emptyHintDisabled;
   elements.btnFolderDissolve.classList.remove("hidden");
-  updateOpenModeButton();
+  openModeMgr?.updateToolbarButton();
   selectionMgr?.updateControls();
   // 收口在这里：主题/密度/背景都是「副作用型」设置，不经过渲染流程。
   // 导入、恢复备份、清空数据、同步合并、跨标签页重载最终都会走到 render()，
   // 统一在这里重新应用，才能避免「设置变了但页面要手动切一次才生效」这一类问题。
   themeMgr?.applyThemeAndDensity();
   void themeMgr?.refreshBackgroundIfChanged?.();
-}
-
-function updateOpenModeButton() {
-  const map = {
-    current: t("openMode.current"),
-    new: t("openMode.new"),
-    background: t("openMode.background"),
-  };
-  const label = map[data.settings.openMode] || t("openMode.current");
-  elements.btnOpenMode.textContent = `${label}`;
 }
 
 function bindEvents() {
@@ -2065,7 +2057,8 @@ function bindEvents() {
   selectionMgr.bindBoxSelectEvents();
   selectionMgr.bindBlankClickClear();
 
-  elements.btnOpenMode.addEventListener("click", openOpenModeMenu);
+  // 打开方式循环切换（open-mode-manager.js）
+  openModeMgr.bindButton();
   elements.btnSettings.addEventListener("click", async () => {
     if (settingsOpen) {
       closeModal();

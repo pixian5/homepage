@@ -4,7 +4,6 @@ import { bookmarksToHomepageData, exportNetscapeBookmarksHtml, parseNetscapeBook
 import { createContextMenuManager } from "./context-menu.js";
 import {
   ALL_BOOKMARKS_GROUP_ID,
-  buildBackupFingerprint,
   canMoveNodeToFolder,
   cloneDataSnapshot,
   collectNodeSubtreeIds,
@@ -45,7 +44,6 @@ import {
 import { createSidebarManager } from "./sidebar-manager.js";
 import {
   clearData,
-  createBackupSnapshot,
   deepClone,
   defaultData,
   defaultSettings,
@@ -91,13 +89,7 @@ import {
   SYNC_STATE_KEY,
   syncBytesBudgetLevel,
 } from "./sync_policy.js";
-import {
-  collectPlacementSnapshot,
-  estimateSyncProjectionBytes,
-  stampChangedPlacementClock,
-  toSyncDocument,
-} from "./sync_projection.js";
-import { stampChangedSyncSettings } from "./sync_settings.js";
+import { estimateSyncProjectionBytes, toSyncDocument } from "./sync_projection.js";
 import { createSyncBanner } from "./sync-banner.js";
 import { createThemeManager } from "./theme-manager.js";
 import { createToastManager } from "./toast-manager.js";

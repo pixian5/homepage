@@ -2106,6 +2106,7 @@ function getModalManager() {
         if (patch.openFolderId !== undefined) openFolderId = patch.openFolderId;
       },
       readFileAsDataUrl,
+      readIconAsDataUrl,
       fetchTitleInBackground,
       fetchFaviconInBackground,
       fetchFaviconNow,
@@ -2212,8 +2213,17 @@ function detectExtensionPlatform() {
   return "chrome";
 }
 
-async function readFileAsDataUrl(file) {
-  return compressImageFileToDataUrl(file);
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function readIconAsDataUrl(file) {
+  return compressImageFileToDataUrl(file, 128, 0.85);
 }
 
 function letterIconDataUrl(text, color) {

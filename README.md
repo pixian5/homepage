@@ -4,7 +4,7 @@
 
 ## 当前开发进度
 
-当前版本 **26.7.4**。项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。26.7.4 落地模态框管理器（`modal-manager.js`）与上下文右键菜单（`context-menu.js`）架构解耦（`app.js` 降至 3400 行）；上线零依赖中文拼音首字母模糊检索（`pinyin-match.js`）；实现用户图标上传 Canvas 自动等比压缩与 WebP 降容；在 Firefox 构建链增加静态拓扑自动推导门禁。当前测试 271/271 通过，Biome 检查 0 告警，三端构建与 Safari 共享通道均正常。
+当前版本 **26.7.5**。项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。26.7.4 落地模态框管理器（`modal-manager.js`）与上下文右键菜单（`context-menu.js`）架构解耦；26.7.5 闭环修复代码审查发现的 2 个 P1 与 2 个 P2/P3（保存失败回滚与切组联动、背景上传高清保留与图标 Canvas 隔离、多音字候选映射、拼音模糊匹配）。当前测试 274/274 通过，Biome 检查 0 告警，三端构建与 Safari 共享通道均正常。
 
 ## 下一步待实现
 

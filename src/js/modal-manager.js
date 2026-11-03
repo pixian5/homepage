@@ -99,7 +99,9 @@ export function createModalManager(options) {
     t,
     toast,
     getState,
+    setState,
     readFileAsDataUrl,
+    readIconAsDataUrl = readFileAsDataUrl,
     fetchTitleInBackground,
     fetchFaviconInBackground,
     fetchFaviconNow,
@@ -257,7 +259,7 @@ export function createModalManager(options) {
       if (iconType === "upload") {
         const file = $("fieldUpload")?.files?.[0];
         if (file) {
-          iconData = await readFileAsDataUrl(file);
+          iconData = await readIconAsDataUrl(file);
         }
       } else if (iconType === "color") {
         color = $("fieldColor")?.value || "#4dd6a8";
@@ -296,7 +298,7 @@ export function createModalManager(options) {
         helpers.setPlacementList(targetGroup, targetList);
         helpers.touchPlacementContainer(targetGroup);
         if (state.activeGroupId === RECENT_GROUP_ID) {
-          state.activeGroupId = targetGroup.id;
+          setState({ activeGroupId: targetGroup.id });
         }
       }
       state.data.settings.lastActiveGroupId = helpers.getActiveGroup().id;
@@ -309,7 +311,7 @@ export function createModalManager(options) {
 
       const result = await persistData();
       if (!result.ok) {
-        state.data = snapshot;
+        setState({ data: snapshot });
         render();
         toast(t("error.saveQuota"), "error");
         return;
@@ -491,7 +493,7 @@ export function createModalManager(options) {
         node.iconType = iconType;
         if (iconType === "upload") {
           const file = $("fieldUpload")?.files?.[0];
-          if (file) node.iconData = await readFileAsDataUrl(file);
+          if (file) node.iconData = await readIconAsDataUrl(file);
         } else if (iconType === "color") {
           node.color = $("fieldColor")?.value || node.color;
           node.iconData = "";
@@ -514,7 +516,7 @@ export function createModalManager(options) {
 
       const result = await persistData();
       if (!result.ok) {
-        state.data = snapshot;
+        setState({ data: snapshot });
         render();
         toast(t("error.saveQuota"), "error");
         return;

@@ -907,3 +907,97 @@ describe("sync_engine outbox hygiene", () => {
     }
   });
 });
+
+describe("sync_engine stale snapshot protection", () => {
+  // 回归：同机多标签/多浏览器共享数据。某个实例的 revision 记账已经跟上，
+  // 但内存里的 data 还是旧的（storage 监听是防抖的），此时直接推会把旧快照写上去，
+  // 覆盖别处刚做的修改——表现为「在一个浏览器改了，过一会儿被另一个改回去」。
+  it("merges remote content before pushing even when the revision counter looks current", async () => {
+    const port = 29000 + (process.pid % 2000);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const token = "sync-engine-stale-token";
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-stale."));
+    const child = spawn(process.execPath, [path.join(root, "scripts", "sync-server.mjs")], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HOST: "127.0.0.1",
+        TOKEN: token,
+        DATA_FILE: path.join(tempDir, "state.json"),
+      },
+      stdio: "ignore",
+    });
+    const store = {};
+    globalThis.chrome = {
+      runtime: { lastError: null },
+      storage: {
+        local: {
+          get(keys, callback) {
+            const out = {};
+            for (const key of Array.isArray(keys) ? keys : [keys]) {
+              if (key in store) out[key] = structuredClone(store[key]);
+            }
+            callback(out);
+          },
+          set(obj, callback) {
+            for (const [k, v] of Object.entries(obj)) store[k] = structuredClone(v);
+            callback?.();
+          },
+        },
+        sync: { get: (_k, cb) => cb?.({}), set: (_o, cb) => cb?.() },
+      },
+    };
+
+    try {
+      await waitForHealth(baseUrl, token);
+      let data = baseData(baseUrl, token);
+      _setDeviceIdForTests("dev_stale");
+      initSyncEngine({
+        getData: () => data,
+        setData: (next) => {
+          data = next;
+        },
+        saveLocal: async () => null,
+      });
+
+      // 本机先建立基线
+      const first = await pushNow("initial");
+      assert.equal(first.ok, true);
+
+      // 另一台设备改了标题并推送
+      const remote1 = await httpPullState({ baseUrl, token });
+      const peerDoc = structuredClone(remote1.doc);
+      peerDoc.deviceId = "dev_peer";
+      peerDoc.nodes[0].title = "Written by peer";
+      peerDoc.nodes[0].titleUpdatedAt = 50;
+      peerDoc.nodes[0].updatedAt = 50;
+      peerDoc.nodes[0].updatedBy = "dev_peer";
+      peerDoc.writtenAt = 50;
+      peerDoc.contentHash = hashSyncDocument(peerDoc);
+      const peerWrite = await httpPushState({ baseUrl, token }, peerDoc, { ifMatch: remote1.etag });
+      assert.equal(peerWrite.ok, true);
+      const afterPeer = await httpPullState({ baseUrl, token });
+
+      // 模拟「记账已跟上、但内存数据还是旧的」：本地 title 仍是 Initial，
+      // 而状态里的 revision / etag 已经指向对方那一版。
+      store.homepage_sync_state = {
+        ...(store.homepage_sync_state || {}),
+        lastRemoteRevision: afterPeer.revision,
+        lastRemoteEtag: afterPeer.etag,
+        status: "idle",
+      };
+
+      const pushed = await pushNow("stale");
+      assert.equal(pushed.ok, true);
+
+      const final = await httpPullState({ baseUrl, token });
+      assert.equal(final.doc.nodes[0].title, "Written by peer", "旧快照不能覆盖别处的新修改");
+    } finally {
+      delete globalThis.chrome;
+      _setDeviceIdForTests("");
+      await stopServer(child);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});

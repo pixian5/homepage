@@ -538,15 +538,24 @@ async function pushNowImpl(reason = "manual") {
       return { ok: false, reason: "doc_conflict" };
     }
     baseRevision = Number(remote.doc.revision) || 0;
-    if (baseRevision > (_status.lastRemoteRevision || 0)) {
+    latestRemote = remote;
+
+    // 关键：不再用「revision 是否比本机记录更新」来决定要不要预拉取。
+    // 同一台机器上的多个标签页、多个浏览器共享一份数据，某个实例的 lastRemoteRevision
+    // 可能已经被别的实例推到最新，但它内存里的 data 还没重载（storage 监听是防抖的）。
+    // 这种情况下直接推，会把整份旧快照写上去，覆盖别处刚做的修改——
+    // 表现出来就是「在一个浏览器里改了，过一会儿被另一个浏览器改回去」。
+    // 改成按内容判断：本地与远端不一致，就一定先把远端合并进来再推。
+    const sameAsRemote = isContentEqualToRemote(_getData(), remote.doc, _status.docId);
+    if (!sameAsRemote) {
       const pulled = await applyRemoteDoc(remote.doc, deviceId, "push_pre_pull");
       if (!pulled.ok && pulled.reason === "doc_conflict") return pulled;
-    }
-    latestRemote = remote;
-    const again = await readRemoteSyncDocument();
-    if (again.ok) {
-      baseRevision = Number(again.doc.revision) || baseRevision;
-      latestRemote = again;
+      // 合并可能把远端最新内容写进本地，重取一次拿到最新 revision / etag
+      const again = await readRemoteSyncDocument();
+      if (again.ok) {
+        baseRevision = Number(again.doc.revision) || baseRevision;
+        latestRemote = again;
+      }
     }
   }
 

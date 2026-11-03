@@ -56,6 +56,7 @@ const PRECACHE_URLS = [
   "js/toast-manager.js",
   "js/folder-manager.js",
   "js/tooltip-manager.js",
+  "js/grid-renderer.js",
   "js/sidebar-manager.js",
   "js/theme-manager.js",
   "js/open-mode-manager.js",

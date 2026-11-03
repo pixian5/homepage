@@ -25,6 +25,7 @@ import {
 import { nextGridFocusIndex } from "./drag-geometry.js";
 import { createDragManager } from "./drag-manager.js";
 import { createFolderManager } from "./folder-manager.js";
+import { createGridRenderer } from "./grid-renderer.js";
 import { createHistoryManager } from "./history-manager.js";
 import { createIconManager } from "./icon-manager.js";
 import { clearIconCacheForUrl, compressImageFileToDataUrl, getSiteKey, retryFailedIconsIfDue } from "./icons.js";
@@ -183,6 +184,8 @@ let sidebarMgr = null;
 let folderMgr = null;
 /** Tooltip 提示管理器（tooltip-manager.js），模块加载即建 */
 let tooltipMgr = null;
+/** 核心网格渲染器（grid-renderer.js），init 时创建 */
+let gridRenderer = null;
 
 // Toast 管理器立即创建：模块内任何时点的 toast() 调用都必须可用
 toastMgr = createToastManager({
@@ -208,8 +211,6 @@ let settingsSaveTimer = null;
 let settingsSaveQueued = false;
 /** 设置面板控制器（settings-controller.js），init 时注入依赖。 */
 let settingsCtl = null;
-let renderSeq = 0;
-let lastMainLayout = null;
 let suppressStorageUntil = 0;
 let persistInFlight = 0;
 /** 同步异常提示条控制器（init 时创建；storage 监听里可能先于创建触发，故用可选链） */
@@ -233,8 +234,6 @@ const STORAGE_RELOAD_DELAY_MS = 120;
 const STORAGE_SUPPRESS_MS = 350;
 const SETTINGS_SAVE_DELAY_MS = 120;
 const TOAST_CONSUME_TIMEOUT_MS = 15000;
-const MIN_TILE_SIZE = 32;
-const MAX_TILE_SIZE = 220;
 const MAX_DEBUG_LOG_ENTRIES = 200;
 const BACKUP_IGNORED_SETTINGS_KEYS = new Set(["lastActiveGroupId", "lastSaveUrl", "lastSaveTs", "lastSaveToast"]);
 
@@ -752,240 +751,6 @@ function getCurrentNodes() {
   return nodeIds.map((id) => data.nodes[id]).filter(Boolean);
 }
 
-function uniqueNodes(nodes) {
-  const seenId = new Set();
-  const out = [];
-  for (const node of nodes) {
-    if (!node?.id) continue;
-    if (seenId.has(node.id)) continue;
-    seenId.add(node.id);
-    out.push(node);
-  }
-  return out;
-}
-
-async function renderGrid() {
-  const seq = ++renderSeq;
-  const grid = openFolderId ? elements.folderGrid : elements.grid;
-  const nodes = uniqueNodes(getCurrentNodes());
-  grid.replaceChildren();
-
-  const referenceGrid = openFolderId ? elements.grid : grid;
-  const width = referenceGrid.getBoundingClientRect().width || referenceGrid.clientWidth || window.innerWidth;
-  // 网格密度表与 theme-manager 共用：compact 10 / standard 16 / spacious 22
-  const DENSITY_GAPS = { compact: 10, standard: 16, spacious: 22 };
-  const density = DENSITY_GAPS[data.settings.gridDensity] || DENSITY_GAPS.standard;
-  const gap = density.gap || 16;
-  const style = getComputedStyle(referenceGrid);
-  const paddingX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
-  const available = Math.max(0, width - paddingX);
-  const isMobileViewport = !!window.matchMedia?.("(max-width: 720px)").matches;
-  const baseSize = data.settings.lastTileSize || density.size || 96;
-  const maxColumns = Math.max(1, Math.floor((available + gap) / (baseSize + gap)));
-  let columns = maxColumns;
-  if (data.settings.fixedLayout) {
-    const desired = Math.max(1, data.settings.fixedCols || 8);
-    columns = desired;
-  } else if (isMobileViewport) {
-    columns = Math.max(3, columns);
-  }
-  let tileSize = baseSize;
-  if (data.settings.fixedLayout && available > 0) {
-    const fitSize = Math.floor((available - gap * (columns - 1)) / columns);
-    tileSize = Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, fitSize));
-  } else if (isMobileViewport && available > 0) {
-    const fitSize = Math.floor((available - gap * (columns - 1)) / columns);
-    tileSize = Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, fitSize));
-  } else if (columns <= 1 && available > 0) {
-    tileSize = Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, Math.floor(available)));
-  } else {
-    tileSize = Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, baseSize));
-  }
-  const iconRatio = density.icon && density.size ? density.icon / density.size : 0.58;
-  let iconSize = Math.max(18, Math.round(tileSize * (iconRatio || 0.58)));
-  const maxIcon = Math.floor(tileSize * 0.52);
-  if (iconSize > maxIcon) iconSize = maxIcon;
-  if (!openFolderId) {
-    lastMainLayout = { columns, tileSize, iconSize };
-  } else if (lastMainLayout) {
-    columns = lastMainLayout.columns;
-    tileSize = lastMainLayout.tileSize;
-    const iconRatioOverride = density.icon && density.size ? density.icon / density.size : 0.58;
-    iconSize = Math.max(18, Math.round(tileSize * iconRatioOverride));
-  }
-  grid.style.setProperty("--tile-size", `${tileSize}px`);
-  grid.style.setProperty("--tile-icon", `${iconSize}px`);
-  const tightLayout = columns >= 8;
-  const mediumLayout = columns >= 6;
-  const tilePad = tightLayout ? "4px 4px 6px" : mediumLayout ? "6px 6px 8px" : "8px 8px 10px";
-  const tileGap = tightLayout ? "2px" : mediumLayout ? "3px" : "4px";
-  grid.style.setProperty("--tile-pad", tilePad);
-  grid.style.setProperty("--tile-gap", tileGap);
-  grid.style.gridTemplateColumns = `repeat(${columns}, minmax(${tileSize}px, 1fr))`;
-
-  // 预加载图标缓存，避免每个 tile 都独立读存储
-  const iconCache = await loadIconCache();
-
-  for (const [idx, node] of nodes.entries()) {
-    if (seq !== renderSeq) return;
-    const tile = document.createElement("div");
-    tile.className = "tile";
-    tile.dataset.id = node.id;
-    tile.dataset.index = idx;
-    tile.draggable = true;
-    tile.tabIndex = 0;
-    // 无障碍：网格语义 + 卡片可读名称（键盘漫游 / 读屏依赖）
-    tile.setAttribute("role", "gridcell");
-    tile.setAttribute(
-      "aria-label",
-      node.type === "folder" ? `${node.title}${t("tile.folderSuffix")}` : `${node.title} ${node.url || ""}`.trim(),
-    );
-
-    const icon = document.createElement("div");
-    icon.className = "tile-icon";
-    const img = document.createElement("img");
-    img.alt = node.title || node.url || "";
-    // 字母头像占位 → 缓存解析异步替换 → 远程失败按候选回退（完整链路见 icon-manager.js）
-    iconManager.bindTileIcon(img, node, {
-      cache: iconCache,
-      // 渲染批次已过期（seq 变化）则放弃更新 DOM
-      isStale: () => seq !== renderSeq,
-    });
-    icon.appendChild(img);
-
-    const title = document.createElement("div");
-    title.className = "tile-title";
-    title.textContent = node.title || node.url || t("common.unnamed");
-
-    tile.appendChild(icon);
-    tile.appendChild(title);
-
-    if (node.type === "folder") {
-      const badge = document.createElement("div");
-      badge.className = "tile-badge";
-      badge.textContent = `${node.children?.length || 0}`;
-      tile.appendChild(badge);
-    }
-
-    if (selectionMgr?.has(node.id)) {
-      tile.classList.add("selected");
-    }
-
-    tile.addEventListener("click", (e) => {
-      if (touchDrag?.isClickSuppressed()) {
-        e.preventDefault();
-        return;
-      }
-      if (selectionMgr?.isBatchModeActive()) {
-        selectionMgr.toggleTileSelection(node.id, idx, e.shiftKey);
-        return;
-      }
-      if (node.type === "folder") {
-        openFolder(node.id);
-      } else {
-        const url = normalizeUrl(node.url);
-        if (!url) {
-          toast(t("error.invalidUrlSimple"), "error");
-          return;
-        }
-        openModeMgr.openCard(url, e);
-      }
-    });
-    // 中键点击：后台新标签（浏览器默认之外补充统一编排）
-    tile.addEventListener("auxclick", (e) => {
-      if (e.button !== 1) return;
-      e.preventDefault();
-      if (selectionMgr?.isBatchModeActive()) return;
-      if (node.type === "folder") return;
-      const url = normalizeUrl(node.url);
-      if (!url) return;
-      openModeMgr.openCard(url, e);
-    });
-
-    tile.addEventListener("keydown", (e) => {
-      if (!data.settings.keyboardNav) return;
-      if (e.key !== "Enter" && e.key !== " ") return;
-      e.preventDefault();
-      if (selectionMgr?.isBatchModeActive()) {
-        selectionMgr.toggleTileSelection(node.id, idx, e.shiftKey);
-        return;
-      }
-      if (node.type === "folder") {
-        openFolder(node.id);
-        return;
-      }
-      const url = normalizeUrl(node.url);
-      if (!url) {
-        toast(t("error.invalidUrlSimple"), "error");
-        return;
-      }
-      openUrl(url);
-    });
-
-    tile.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      openContextMenu(e.clientX, e.clientY, node);
-    });
-
-    // 悬停提示防抖与越界钳制（tooltip-manager.js）
-    tile.addEventListener("mouseenter", (e) => {
-      const text = node.type === "folder" ? `${node.title}${t("tile.folderSuffix")}` : `${node.title}\n${node.url}`;
-      tooltipMgr.scheduleShow(text, e.clientX, e.clientY);
-    });
-    tile.addEventListener("mouseleave", () => tooltipMgr.hideTooltip());
-
-    // 拖拽三意图（排序/入文件夹/合并成组）统一由 drag-manager 处理
-    dragManager.bindTileDragEvents(tile, node);
-
-    // 触摸长按：1s 上下文菜单 / 3s 拖拽（状态机见 touch-drag-manager.js）
-    touchDrag.bindTileTouchEvents(tile, node);
-
-    grid.appendChild(tile);
-  }
-
-  updateEmptyState();
-}
-
-function updateEmptyState() {
-  const emptyTitle = qs(".empty-title", elements.emptyState);
-  const emptyDesc = qs(".empty-desc", elements.emptyState);
-  const emptyCheck = qs(".empty-check", elements.emptyState);
-
-  if (activeGroupId === RECENT_GROUP_ID) {
-    // 历史分组：API 不可用或暂无数据时给出明确说明（不再整块隐藏）
-    if (recentItems.length > 0) {
-      elements.emptyState.classList.add("hidden");
-      return;
-    }
-    const historyStatus = historyManager?.status || "unknown";
-    if (emptyCheck) emptyCheck.classList.add("hidden");
-    if (historyStatus === "error") {
-      if (emptyTitle) emptyTitle.textContent = t("history.unavailable.title");
-      if (emptyDesc) emptyDesc.textContent = t("history.unavailable.desc");
-    } else if (historyStatus === "missing") {
-      // 理论上会被 fallback 覆盖；仍给出明确说明
-      if (emptyTitle) emptyTitle.textContent = t("history.unavailable.title");
-      if (emptyDesc) emptyDesc.textContent = t("history.fallback.desc");
-    } else {
-      if (emptyTitle) emptyTitle.textContent = t("history.empty.title");
-      if (emptyDesc)
-        emptyDesc.textContent = historyStatus === "fallback" ? t("history.fallback.desc") : t("history.empty.desc");
-    }
-    elements.emptyState.classList.remove("hidden");
-    return;
-  }
-
-  if (emptyCheck) emptyCheck.classList.remove("hidden");
-  if (emptyTitle) emptyTitle.textContent = t("empty.title");
-  if (emptyDesc) emptyDesc.textContent = t("empty.desc");
-  const nodes = getCurrentNodes();
-  if (nodes.length === 0 && !data.settings.emptyHintDisabled) {
-    elements.emptyState.classList.remove("hidden");
-  } else {
-    elements.emptyState.classList.add("hidden");
-  }
-}
-
 let contextMenuManager = null;
 function getContextMenuManager() {
   if (!contextMenuManager) {
@@ -1466,6 +1231,34 @@ function createStorageListenerInstance() {
   });
 }
 
+/**
+ * 创建核心网格渲染器实例（布局计算 + 卡片 DOM + 事件装配 + 空状态）。
+ */
+function createGridRendererInstance() {
+  return createGridRenderer({
+    getElements: () => elements,
+    getData: () => data,
+    getState: () => ({ activeGroupId, openFolderId }),
+    getCurrentNodes,
+    getRecentItems: () => recentItems,
+    loadIconCache,
+    iconManager,
+    dragManager,
+    touchDrag,
+    openModeMgr,
+    selectionMgr,
+    tooltipMgr,
+    historyManager,
+    openFolder,
+    openUrl,
+    openContextMenu,
+    toast,
+    t,
+    isRecentGroup: (groupId) => groupId === RECENT_GROUP_ID,
+    qs,
+  });
+}
+
 function openFolder(folderId) {
   folderMgr.openFolder(folderId);
 }
@@ -1585,6 +1378,8 @@ async function init() {
   selectionMgr = createSelectionManagerInstance();
   dragManager = createDragManagerInstance();
   touchDrag = createTouchDragManagerInstance();
+  // 网格渲染器依赖以上全部 manager 实例，必须最后创建
+  gridRenderer = createGridRendererInstance();
   storageListener = createStorageListenerInstance();
   storageListener.bind();
   // 纯 Web / PWA 模式（无扩展 API 直接打开页面）：数据走 localStorage，扩展专属能力已安全降级
@@ -1857,9 +1652,9 @@ function render() {
   applyStaticI18n();
   sidebarMgr?.applySidebarState();
   sidebarMgr?.renderGroups();
-  renderGrid();
+  gridRenderer?.renderGrid();
   // 网格渲染后统一刷新空态（含历史分组的不可用/无数据提示）
-  updateEmptyState();
+  gridRenderer?.updateEmptyState();
   elements.topSearchWrap.classList.toggle("hidden", !data.settings.showSearch);
   elements.emptyHintToggle.checked = data.settings.emptyHintDisabled;
   elements.btnFolderDissolve.classList.remove("hidden");

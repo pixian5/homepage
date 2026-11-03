@@ -2,6 +2,7 @@
   "app": [
     "shared-utils.js",
     "storage-listener.js",
+    "grid-renderer.js",
     "tooltip-manager.js",
     "folder-manager.js",
     "sidebar-manager.js",

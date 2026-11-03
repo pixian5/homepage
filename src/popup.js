@@ -1,5 +1,6 @@
 import { collectBookmarkFolders, collectBookmarkTree, getPopupBookmarkRoots } from "./js/bookmark-utils.js";
 import { createItemNode } from "./js/data-utils.js";
+import { filterSavableTabs, saveTabsToContainer } from "./js/popup-batch-save.js";
 import {
   detectPreferredLanguage,
   getChromeApi,
@@ -9,6 +10,7 @@ import {
   storageArea,
 } from "./js/shared-utils.js";
 import { getStorageKey, loadData } from "./js/storage.js";
+import { getOrCreateDeviceId } from "./js/sync_ids.js";
 
 const ROOT_KEY = getStorageKey();
 const _SYNC_ITEM_QUOTA_BYTES = 7500;
@@ -54,6 +56,10 @@ const POPUP_I18N = {
     saveFailed: "保存失败，请重试",
     openFailed: "打开书签失败，请重试",
     noData: "尚未初始化数据，请先打开一次新标签页",
+    saveAllTabs: "保存当前窗口所有标签",
+    savedAllToGroup: "已保存 {count} 个标签页到分组：{name}",
+    noValidTabs: "当前窗口没有可保存的标签页（仅支持 http/https/ftp）",
+    saveAllFailed: "批量保存失败，请重试",
   },
   "zh-TW": {
     title: "我的書籤",
@@ -74,6 +80,10 @@ const POPUP_I18N = {
     saveFailed: "儲存失敗，請重試",
     openFailed: "開啟書籤失敗，請重試",
     noData: "尚未初始化資料，請先開啟一次新分頁",
+    saveAllTabs: "儲存目前視窗所有分頁",
+    savedAllToGroup: "已儲存 {count} 個分頁到分組：{name}",
+    noValidTabs: "目前視窗沒有可儲存的分頁（僅支援 http/https/ftp）",
+    saveAllFailed: "批次儲存失敗，請重試",
   },
   en: {
     title: "My Bookmarks",
@@ -94,6 +104,10 @@ const POPUP_I18N = {
     saveFailed: "Save failed, please retry",
     openFailed: "Failed to open bookmark, please retry",
     noData: "Data not initialized. Open a new tab once first.",
+    saveAllTabs: "Save all tabs in this window",
+    savedAllToGroup: "Saved {count} tabs to group: {name}",
+    noValidTabs: "No savable tabs in this window (http/https/ftp only)",
+    saveAllFailed: "Batch save failed, please retry",
   },
 };
 
@@ -121,6 +135,8 @@ function applyPopupI18n(language) {
   if (title) title.textContent = tr("title", language);
   const saveBtn = document.getElementById("btnSave");
   if (saveBtn) saveBtn.textContent = tr("save", language);
+  const saveAllTabsLabel = document.getElementById("saveAllTabsLabel");
+  if (saveAllTabsLabel) saveAllTabsLabel.textContent = tr("saveAllTabs", language);
   const label = document.querySelector(".section .label");
   if (label) label.textContent = tr("saveToGroup", language);
   for (const id of ["bookmarkPaneLeftTitle", "bookmarkPaneRightTitle"]) {
@@ -207,6 +223,23 @@ async function getCurrentTab() {
       resolve(tabs?.[0] || null);
     }),
   );
+}
+
+/**
+ * 获取当前窗口的全部标签页（兼容 Promise 与回调两种 API 形态）
+ * @returns {Promise<Array<chrome.tabs.Tab>>}
+ */
+async function getCurrentWindowTabs() {
+  const api = getChromeApi();
+  if (!api?.tabs) return [];
+  try {
+    const result = api.tabs.query({ currentWindow: true });
+    if (typeof result?.then === "function") return (await result) || [];
+    return await new Promise((resolve) => api.tabs.query({ currentWindow: true }, (tabs) => resolve(tabs || [])));
+  } catch (e) {
+    console.warn("getCurrentWindowTabs error:", e?.message || e);
+    return [];
+  }
 }
 
 /**
@@ -314,20 +347,16 @@ async function openBookmarkSidebar(tab, data, side) {
   });
 }
 
-function renderBookmarkFolderMenu(data, tab) {
-  const menu = document.getElementById("bookmarkFolderMenu");
-  const parent = document.getElementById("addBookmarkMenu");
-  const toggleButton = document.getElementById("addBookmarkToggle");
-  if (!menu || !parent || !toggleButton) return;
-  toggleButton.setAttribute("aria-expanded", "false");
-  toggleButton.addEventListener("click", (event) => {
-    event.stopPropagation();
-    const open = parent.classList.toggle("menu-open");
-    toggleButton.setAttribute("aria-expanded", String(open));
-  });
-  const folders = collectBookmarkFolders(data);
+/**
+ * 把 collectBookmarkFolders 的目标树渲染成可展开的文件夹菜单（纯 DOM 构建）。
+ * 「添加书签」与「保存所有标签」两个入口共用同一棵树。
+ * @param {HTMLElement} host 容器
+ * @param {Array<object>} folders collectBookmarkFolders 结果
+ * @param {(folder: object) => void} onPick 选中目标（分组/文件夹）后的回调
+ */
+function buildFolderMenuTree(host, folders, onPick) {
   const childrenOf = (folder) => folders.filter((entry) => entry.parentId === folder.id);
-  const appendFolder = (folder, host) => {
+  const appendFolder = (folder, container) => {
     const row = document.createElement("div");
     row.className = "menu-folder-row";
     const button = document.createElement("button");
@@ -335,19 +364,9 @@ function renderBookmarkFolderMenu(data, tab) {
     button.className = "menu-folder-button";
     button.textContent = folder.name;
     button.title = folder.path.join(" / ");
-    button.addEventListener("click", async (event) => {
+    button.addEventListener("click", (event) => {
       event.stopPropagation();
-      const result = await saveToContainer(tab, folder.id, tab?.title || "");
-      if (result?.error) {
-        showPopupError(explainSaveError(result) || tr("saveFailed", popupLanguage));
-        return;
-      }
-      await showToastInTab(
-        tab,
-        tr("savedToGroup", popupLanguage, { name: result.groupName || tr("unnamed", popupLanguage) }),
-        result.fontSize,
-      );
-      window.close();
+      onPick(folder);
     });
     row.appendChild(button);
     const children = childrenOf(folder);
@@ -375,10 +394,110 @@ function renderBookmarkFolderMenu(data, tab) {
       for (const child of children) appendFolder(child, submenu);
       row.appendChild(submenu);
     }
-    host.appendChild(row);
+    container.appendChild(row);
   };
-  menu.replaceChildren();
-  for (const folder of folders.filter((entry) => entry.depth === 0)) appendFolder(folder, menu);
+  host.replaceChildren();
+  for (const folder of folders.filter((entry) => entry.depth === 0)) appendFolder(folder, host);
+}
+
+/** 绑定“父菜单项点击展开/收起”的通用行为 */
+function bindMenuToggle(parentId, toggleId) {
+  const parent = document.getElementById(parentId);
+  const toggleButton = document.getElementById(toggleId);
+  if (!parent || !toggleButton) return;
+  toggleButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const open = parent.classList.toggle("menu-open");
+    toggleButton.setAttribute("aria-expanded", String(open));
+  });
+}
+
+function renderBookmarkFolderMenu(data, tab) {
+  const menu = document.getElementById("bookmarkFolderMenu");
+  if (!menu) return;
+  bindMenuToggle("addBookmarkMenu", "addBookmarkToggle");
+  buildFolderMenuTree(menu, collectBookmarkFolders(data), async (folder) => {
+    const result = await saveToContainer(tab, folder.id, tab?.title || "");
+    if (result?.error) {
+      showPopupError(explainSaveError(result) || tr("saveFailed", popupLanguage));
+      return;
+    }
+    await showToastInTab(
+      tab,
+      tr("savedToGroup", popupLanguage, { name: result.groupName || tr("unnamed", popupLanguage) }),
+      result.fontSize,
+    );
+    window.close();
+  });
+}
+
+/**
+ * 批量保存当前窗口所有有效标签页到目标分组/文件夹。
+ * @param {string} containerId 目标分组或文件夹 ID
+ * @returns {Promise<{count: number, groupName: string, fontSize: number} | {error: string}>}
+ */
+async function saveAllTabsToContainer(containerId) {
+  const tabs = await getCurrentWindowTabs();
+  const savable = filterSavableTabs(tabs);
+  if (!savable.length) {
+    await appendLog({ ts: Date.now(), stage: "no_valid_tabs", windowTabs: tabs.length });
+    return { error: "no_valid_tabs" };
+  }
+  const { data } = await loadLatestData();
+  if (!data?.groups || !data.nodes) {
+    await appendLog({ ts: Date.now(), stage: "no_data" });
+    return { error: "no_data" };
+  }
+  const deviceId = await getOrCreateDeviceId().catch(() => "");
+  const result = saveTabsToContainer(data, savable, { containerId, deviceId });
+  if (result.error) {
+    await appendLog({ ts: Date.now(), stage: result.error });
+    return result;
+  }
+  // 弹窗保存只在网页里 toast，避免新标签页读取存储后重复提示
+  data.settings.lastSaveToast = null;
+  // 本地权威：popup 只写 local；newtab 监听 local 变更后 schedulePush 上传投影
+  const localErr = await storageSet({ [ROOT_KEY]: data }, false);
+  if (localErr) {
+    await appendLog({ ts: Date.now(), stage: "local_error", error: localErr });
+    return { error: "save_failed" };
+  }
+  await appendLog({ ts: Date.now(), stage: "saved_all_tabs", count: result.count, group: result.groupId });
+  return {
+    count: result.count,
+    groupName: result.groupName,
+    fontSize: data.settings.fontSize || DEFAULT_FONT_SIZE,
+  };
+}
+
+function explainSaveAllError(result) {
+  if (!result?.error) return "";
+  if (result.error === "no_valid_tabs") return tr("noValidTabs", popupLanguage);
+  if (result.error === "save_failed") return tr("saveAllFailed", popupLanguage);
+  return explainSaveError(result);
+}
+
+/** 渲染「保存当前窗口所有标签」的目标文件夹菜单 */
+function renderSaveAllTabsMenu(data, tab) {
+  const menu = document.getElementById("saveAllTabsFolderMenu");
+  if (!menu) return;
+  bindMenuToggle("saveAllTabsMenu", "saveAllTabsToggle");
+  buildFolderMenuTree(menu, collectBookmarkFolders(data), async (folder) => {
+    const result = await saveAllTabsToContainer(folder.id);
+    if (result?.error) {
+      showPopupError(explainSaveAllError(result) || tr("saveAllFailed", popupLanguage));
+      return;
+    }
+    await showToastInTab(
+      tab,
+      tr("savedAllToGroup", popupLanguage, {
+        count: result.count,
+        name: result.groupName || tr("unnamed", popupLanguage),
+      }),
+      result.fontSize,
+    );
+    window.close();
+  });
 }
 
 /**
@@ -627,6 +746,7 @@ async function init() {
   }
   document.body.classList.remove("hidden");
   renderBookmarkFolderMenu(data, tab);
+  renderSaveAllTabsMenu(data, tab);
   renderPopupBookmarks(data, tab);
   document.getElementById("btnOpenLeftSidebar")?.addEventListener("click", async () => {
     if (await openBookmarkSidebar(tab, data, "left")) window.close();

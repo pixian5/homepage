@@ -61,6 +61,9 @@ var HomepageSettingsController = (() => {
     httpPullState,
     httpGetDevices,
     httpRetireDevice,
+    exportNetscapeBookmarksHtml,
+    parseNetscapeBookmarksHtml,
+    bookmarksToHomepageData,
     leaveSettingsForSubpanel,
     readFileAsDataUrl,
     buildLanguageOptions,
@@ -94,6 +97,20 @@ var HomepageSettingsController = (() => {
 
   function downloadJsonFile(filename, obj) {
     const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  /** 下载纯文本文件（标准 HTML 书签导出用） */
+  function downloadTextFile(filename, text, mime = "text/html") {
+    const blob = new Blob([text], { type: `${mime}; charset=utf-8` });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -390,6 +407,8 @@ var HomepageSettingsController = (() => {
         <button id="btnImport" class="icon-btn">${t("settings.action.import")}</button>
         <button id="btnImportUrl" class="icon-btn">${t("settings.action.importUrl")}</button>
         <button id="btnBackupManage" class="icon-btn">${t("settings.action.backup")}</button>
+        <button id="btnExportBookmarksHtml" class="icon-btn">${t("settings.bookmarks.exportHtml")}</button>
+        <button id="btnImportBookmarksHtml" class="icon-btn">${t("settings.bookmarks.importHtml")}</button>
         <button id="btnClearData" class="icon-btn danger strong-label">${t("settings.action.clearData")}</button>
         <button id="btnClearCards" class="icon-btn danger">${t("settings.action.clearCards")}</button>
         <button id="btnRefreshIcons" class="icon-btn">${t("settings.action.refreshIcons")}</button>
@@ -552,6 +571,7 @@ var HomepageSettingsController = (() => {
           <button type="button" id="btnSyncImportFile" class="icon-btn">${t("settings.sync.importFile")}</button>
         </div>
         <input id="syncImportFileInput" type="file" accept="application/json,.json" class="hidden" />
+        <input id="importBookmarksHtmlInput" type="file" accept=".html,text/html" class="hidden" />
         <p class="settings-sync-hint">${t("settings.sync.hint")}</p>
         <div class="row-inline">
           <span class="inline-label">${t("settings.openMode")}</span>
@@ -935,6 +955,63 @@ var HomepageSettingsController = (() => {
     $("btnImport").addEventListener("click", () => openImportModal());
     $("btnImportUrl").addEventListener("click", () => openImportUrlModal());
     $("btnBackupManage").addEventListener("click", () => openBackupModal());
+
+    // 导出为标准 Netscape 书签 HTML：Chrome/Firefox/Safari/Edge 可直接导入
+    $("btnExportBookmarksHtml")?.addEventListener("click", async () => {
+      await runWithButtonState($("btnExportBookmarksHtml"), t("settings.bookmarks.exporting"), async () => {
+        try {
+          const htmlText = exportNetscapeBookmarksHtml(getData());
+          const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+          downloadTextFile(`homepage-bookmarks-${stamp}.html`, htmlText);
+          toast(t("settings.bookmarks.exportOk"));
+        } catch (e) {
+          toast(t("settings.bookmarks.exportFail", { reason: e?.message || "export" }), "error");
+        }
+      });
+    });
+
+    // 导入标准书签 HTML：解析后并入「全部」根（保留文件夹层级，重复 URL 自动去重）
+    $("btnImportBookmarksHtml")?.addEventListener("click", () => {
+      $("importBookmarksHtmlInput")?.click();
+    });
+    $("importBookmarksHtmlInput")?.addEventListener("change", async (e) => {
+      const file = e.target?.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      await runWithButtonState($("btnImportBookmarksHtml"), t("settings.bookmarks.importing"), async () => {
+        try {
+          const text = await file.text();
+          const parsed = parseNetscapeBookmarksHtml(text);
+          if (!parsed.groups.length) {
+            toast(t("settings.bookmarks.importEmpty"), "warning");
+            return;
+          }
+          const deviceId = await getOrCreateDeviceId();
+          // 按现有数据的全部书签 URL 去重：同一文件重复导入不会翻倍
+          const knownUrls = new Set(
+            Object.values(getData().nodes || {})
+              .filter((node) => node?.type === "item" && !node.deletedAt && node.url)
+              .map((node) => node.url),
+          );
+          const incoming = bookmarksToHomepageData(parsed, { now: Date.now(), updatedBy: deviceId, knownUrls });
+          if (!Object.keys(incoming.nodes).length) {
+            toast(t("settings.bookmarks.importEmpty"), "warning");
+            return;
+          }
+          pushBackup();
+          // mergeRootBookmarkData：同 ID 以本机为准、只追加缺失引用，天然幂等可重复导入
+          mergeRootBookmarkData(getData(), incoming);
+          await persistData();
+          render();
+          processPendingIconFetches();
+          toast(t("settings.bookmarks.importOk"));
+          void refreshSyncStatusLine();
+        } catch (err) {
+          toast(t("settings.bookmarks.importFail", { reason: err?.message || "parse" }), "error");
+        }
+      });
+    });
+
     $("btnClearData").addEventListener("click", async () => {
       if (!confirm(t("confirm.clearData"))) return;
       await runWithButtonState($("btnClearData"), t("settings.action.clearing"), async () => {
@@ -1503,6 +1580,9 @@ var HomepageSettingsController = (() => {
     httpPullState = all.httpPullState;
     httpGetDevices = all.httpGetDevices;
     httpRetireDevice = all.httpRetireDevice;
+    exportNetscapeBookmarksHtml = all.exportNetscapeBookmarksHtml;
+    parseNetscapeBookmarksHtml = all.parseNetscapeBookmarksHtml;
+    bookmarksToHomepageData = all.bookmarksToHomepageData;
     leaveSettingsForSubpanel = all.leaveSettingsForSubpanel;
     readFileAsDataUrl = all.readFileAsDataUrl;
     buildLanguageOptions = all.buildLanguageOptions;

@@ -1,5 +1,6 @@
 import { APP_SUPPORTED_LANGUAGES, translateAppText } from "./app-i18n.js";
 import { getBingWallpaper } from "./bing-wallpaper.js";
+import { bookmarksToHomepageData, exportNetscapeBookmarksHtml, parseNetscapeBookmarksHtml } from "./bookmark-html.js";
 import { createContextMenuManager } from "./context-menu.js";
 import {
   ALL_BOOKMARKS_GROUP_ID,
@@ -2808,6 +2809,9 @@ async function init() {
       httpPullState,
       httpGetDevices,
       httpRetireDevice,
+      exportNetscapeBookmarksHtml,
+      parseNetscapeBookmarksHtml,
+      bookmarksToHomepageData,
       ALL_BOOKMARKS_GROUP_ID,
       RECENT_GROUP_ID,
       SYNC_INTERVAL_OPTIONS,

@@ -4,6 +4,7 @@
     "pinyin-match.js",
     "sync_policy.js",
     "data-utils.js",
+    "bookmark-html.js",
     "drag-geometry.js",
     "safari_native_storage.js",
     "storage.js",

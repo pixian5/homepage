@@ -41,6 +41,7 @@
     "sync_http_transport.js",
     "sync_engine.js",
     "sync-banner.js",
+    "sync-startup-coordinator.js",
     "app-i18n.js",
     "ui-utils.js",
     "i18n-manager.js",

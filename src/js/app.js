@@ -92,7 +92,7 @@ import {
   syncBytesBudgetLevel,
 } from "./sync_policy.js";
 import { estimateSyncProjectionBytes, toSyncDocument } from "./sync_projection.js";
-import { createSyncBanner } from "./sync-banner.js";
+import { startSyncOnLaunch } from "./sync-startup-coordinator.js";
 import { createThemeManager } from "./theme-manager.js";
 import { createToastManager } from "./toast-manager.js";
 import { createTooltipManager } from "./tooltip-manager.js";
@@ -1123,43 +1123,21 @@ async function init() {
   // 缓存瘦身：首屏渲染后异步执行，不阻塞加载。
   // 清理已删书签残留的图标缓存，以及背景非 bing 时无用的壁纸缓存（实测单张 442KB）。
   void pruneUnusedCachesQuietly({ getData: () => data });
-  if (data.settings.syncEnabled) {
-    refreshSyncInterval();
-    // 同步异常提示条：让失败可见（此前断链两个月无人察觉）。
-    // 重试走手动 pushNow —— 它不受 outbox attempts 上限限制，是用户的唯一自救入口。
-    syncBanner = createSyncBanner({
-      getState: () => reloadSyncState(),
-      getOutbox: () => getOutboxSummary(),
-      onRetry: async () => {
-        // 先拉一次拿到最新基线（顺带刷 etag），再推本地；手动推送不受 outbox attempts 上限限制。
-        await pullNow("banner_retry");
-        return pushNow("banner_retry");
-      },
-      // openSettingsModal 由 settings-controller 提供，app.js 侧只能经 settingsCtl 访问
-      onOpenSettings: () => settingsCtl?.openSettingsModal(),
-      getStorage: () => getChromeApi()?.storage?.local,
-      t: (k, vars) => t(k, vars),
-    });
-    void syncBanner.start();
-    // 「同步间隔 = 关闭」只表示不做周期轮询，**不代表打开页面也不看云端**。
-    // 早先这里用 interval !== "off" 把首拉也一起关掉了，结果是：
-    // 别的设备改了背景/设置，本机只要不手动点「立即同步」就永远收不到，
-    // 看起来就是「在 Chrome 改了渐变，Safari/火狐一点变化都没有」。
-    // 打开页面拉一次只是一次轻量 GET；远端没变会直接短路返回，不会重绘也不会碰壁纸。
-    void (async () => {
-      try {
-        const pull = await pullNow("init");
-        if (pull?.needPush) await pushNow("init_need_push");
-        // 离线时由本地变更产生的待发送项仍可在打开页面后重试。
-        await flushOutbox();
-        render();
-      } catch (e) {
-        console.warn("init sync failed", e);
-      } finally {
-        // 首次同步结束后刷新提示条：此时才拿到真实结果
-        void syncBanner?.refresh?.();
-      }
-    })();
+  const syncLaunch = startSyncOnLaunch({
+    settings: data.settings,
+    refreshSyncInterval,
+    reloadSyncState,
+    getOutboxSummary,
+    pullNow,
+    pushNow,
+    flushOutbox,
+    openSettingsModal: () => settingsCtl?.openSettingsModal(),
+    getStorage: () => getChromeApi()?.storage?.local,
+    t: (k, vars) => t(k, vars),
+    render,
+  });
+  if (syncLaunch?.syncBanner) {
+    syncBanner = syncLaunch.syncBanner;
   }
 }
 

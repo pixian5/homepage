@@ -52,6 +52,7 @@ const PRECACHE_URLS = [
   "js/sync_http_transport.js",
   "js/sync_engine.js",
   "js/sync-banner.js",
+  "js/sync-startup-coordinator.js",
   "js/ui-utils.js",
   "js/context-menu.js",
   "js/modal-manager.js",

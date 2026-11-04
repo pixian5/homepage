@@ -1,3 +1,4 @@
+import { createAppReloadCoordinator, resolveActiveGroupId } from "./app-reload-coordinator.js";
 import { getBingWallpaper } from "./bing-wallpaper.js";
 import { bookmarksToHomepageData, exportNetscapeBookmarksHtml, parseNetscapeBookmarksHtml } from "./bookmark-html.js";
 import { pruneUnusedCachesQuietly } from "./cache-cleaner.js";
@@ -270,49 +271,46 @@ function shouldDebugPersist() {
   return runtimeDiagnostics.shouldDebugPersist();
 }
 
+let appReloadCoordinator = null;
+function getAppReloadCoordinator() {
+  if (!appReloadCoordinator) {
+    appReloadCoordinator = createAppReloadCoordinator({
+      getData: () => data,
+      setData: (next) => {
+        data = next;
+      },
+      getActiveGroupId: () => activeGroupId,
+      setActiveGroupId: (id) => {
+        activeGroupId = id;
+      },
+      getOpenFolderId: () => openFolderId,
+      setOpenFolderId: (id) => {
+        openFolderId = id;
+      },
+      isPersistInFlight: () => persistenceCoordinator?.isPersistInFlight() || false,
+      loadData,
+      pullNow,
+      resetSettingsClockBaseline,
+      resetPlacementClockBaseline,
+      getRootContainerById,
+      getRootGroup,
+      recentGroupId: RECENT_GROUP_ID,
+      getSelectionMgr: () => selectionMgr,
+      ensureLanguageSetting,
+      syncBackupBaseline,
+      render,
+      processPendingIconFetches: () => iconManager?.processPendingIconFetches(),
+      consumeSaveToast,
+      schedulePush,
+      toast,
+      t,
+    });
+  }
+  return appReloadCoordinator;
+}
+
 async function reloadFromStorage() {
-  const prevActive = activeGroupId;
-  const prevOpenFolder = openFolderId;
-  const prevLocalTs = Number(data?.lastUpdated || 0);
-  const prevPending = persistenceCoordinator?.isPersistInFlight() || false;
-  // 先从磁盘重载 local（popup 等外部写入），再按需 pull 合并远端投影
-  const diskLocal = await loadData();
-  const wasSync = !!diskLocal?.settings?.syncEnabled;
-  data = diskLocal;
-  if (wasSync) {
-    try {
-      await pullNow("storage_reload");
-    } catch (e) {
-      console.warn("reload pullNow failed", e);
-    }
-  }
-  resetSettingsClockBaseline(data);
-  resetPlacementClockBaseline(data);
-  const newTs = Number(data?.lastUpdated || 0);
-  // merge 提示由 engine onMerged 负责；此处仅非 sync 粗提示
-  if (!wasSync && newTs > prevLocalTs && prevLocalTs > 0 && !prevPending) {
-    toast(t("toast.syncOverwritten"), "warning");
-  }
-  if (prevActive === RECENT_GROUP_ID) {
-    activeGroupId = RECENT_GROUP_ID;
-  } else if (prevActive && getRootContainerById(prevActive)) {
-    activeGroupId = prevActive;
-  } else {
-    activeGroupId = getRootGroup()?.id || RECENT_GROUP_ID;
-  }
-  if (prevOpenFolder && data.nodes?.[prevOpenFolder]?.type === "folder") {
-    openFolderId = prevOpenFolder;
-  } else {
-    openFolderId = null;
-  }
-  selectionMgr?.retainOnly(new Set(Object.keys(data.nodes || {})));
-  ensureLanguageSetting();
-  syncBackupBaseline(data);
-  render();
-  iconManager.processPendingIconFetches();
-  await consumeSaveToast();
-  // popup 等只写了 local：reload 后把投影推到 sync
-  if (data?.settings?.syncEnabled) schedulePush();
+  return getAppReloadCoordinator().reloadFromStorage();
 }
 
 // 调试接口仅在开发构建中暴露，避免生产环境泄露运行时信息
@@ -1146,12 +1144,12 @@ async function init() {
     activeGroupId,
   });
   const preferredGroupId = data.settings.lastActiveGroupId;
-  if (preferredGroupId === RECENT_GROUP_ID) {
-    activeGroupId = RECENT_GROUP_ID;
-  } else if (preferredGroupId && getRootContainerById(preferredGroupId)) {
-    activeGroupId = preferredGroupId;
-  } else {
-    activeGroupId = getRootGroup()?.id || RECENT_GROUP_ID;
+  activeGroupId = resolveActiveGroupId(preferredGroupId, {
+    getRootContainerById,
+    getRootGroup,
+    recentGroupId: RECENT_GROUP_ID,
+  });
+  if (preferredGroupId !== activeGroupId && preferredGroupId !== RECENT_GROUP_ID) {
     data.settings.lastActiveGroupId = activeGroupId;
   }
   recentItems = await recentPromise;

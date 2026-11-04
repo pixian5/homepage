@@ -47,6 +47,7 @@
     "context-menu.js",
     "modal-manager.js",
     "settings-controller.js",
+    "app-reload-coordinator.js",
     "app.js"
   ],
   "background": [

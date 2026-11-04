@@ -1,3 +1,4 @@
+import { bindAppDomEvents } from "./app-events-binder.js";
 import { createAppReloadCoordinator, resolveActiveGroupId } from "./app-reload-coordinator.js";
 import { getBingWallpaper } from "./bing-wallpaper.js";
 import { bookmarksToHomepageData, exportNetscapeBookmarksHtml, parseNetscapeBookmarksHtml } from "./bookmark-html.js";
@@ -213,7 +214,7 @@ let settingsSaveQueued = false;
 let settingsCtl = null;
 /** 同步异常提示条控制器（init 时创建；storage 监听里可能先于创建触发，故用可选链） */
 let syncBanner = null;
-let modalPointerDownInsideDialog = false;
+let appEventsBinder = null;
 
 // ==================== 常量定义 ====================
 const DEFAULT_TOAST_DURATION_SECONDS = 5;
@@ -540,7 +541,7 @@ function getModalManager() {
             console.warn("flush settings on closeModal failed", e);
           }
         }
-        modalPointerDownInsideDialog = false;
+        appEventsBinder?.resetModalPointerOrigin?.();
         settingsOpen = false;
         settingsSaving = false;
         settingsSaveQueued = false;
@@ -1236,135 +1237,54 @@ function render() {
 }
 
 function bindEvents() {
-  window.addEventListener(
-    "resize",
-    rafThrottle(() => render()),
-  );
-
-  elements.btnAdd.addEventListener("click", openAddModal);
-  elements.btnFolderAdd.addEventListener("click", openAddModal);
-  elements.btnToggleSidebar?.addEventListener("click", () => {
-    data.settings.sidebarCollapsed = !data.settings.sidebarCollapsed;
-    sidebarMgr?.applySidebarState();
-    queuePersist();
-  });
-  elements.recentTab.addEventListener("click", async () => {
-    activeGroupId = RECENT_GROUP_ID;
-    openFolderId = null;
-    data.settings.lastActiveGroupId = activeGroupId;
-    queuePersist();
-    recentItems = await historyManager.fetchRecentHistory();
-    render();
-  });
-  elements.btnAddGroup.addEventListener("click", () => {
-    const folderId = `fld_${Date.now()}`;
-    const createdAt = Date.now();
-    data.nodes[folderId] = {
-      id: folderId,
-      type: "folder",
-      title: t("group.new"),
-      children: [],
-      createdAt,
-      updatedAt: createdAt,
-      titleUpdatedAt: createdAt,
-    };
-    const root = getRootGroup();
-    root.nodes.push(folderId);
-    touchPlacementContainer(root);
-    activeGroupId = folderId;
-    data.settings.lastActiveGroupId = activeGroupId;
-    queuePersist();
-    render();
-  });
-
-  // 批量选择交互（按钮/框选/空白清除）统一由 selection-manager 处理
-  selectionMgr.bindBatchButtons();
-  selectionMgr.bindBoxSelectEvents();
-  selectionMgr.bindBlankClickClear();
-
-  // 打开方式循环切换（open-mode-manager.js）
-  openModeMgr.bindButton();
-  elements.btnSettings.addEventListener("click", async () => {
-    if (settingsOpen) {
-      closeModal();
-      return;
-    }
-    settingsCtl.openSettingsModal();
-  });
   // 顶部搜索：实时过滤（拼音）、Enter/按钮跳搜索引擎、Escape 恢复全量
   searchManager = createSearchManagerInstance();
-  searchManager.bind();
 
-  elements.emptyHintToggle.addEventListener("change", async (e) => {
-    data.settings.emptyHintDisabled = e.target.checked;
-    await persistData();
-    render();
+  appEventsBinder = bindAppDomEvents({
+    elements,
+    getData: () => data,
+    getState: () => ({ activeGroupId, openFolderId, settingsOpen }),
+    setState: (patch) => {
+      if (patch.activeGroupId) activeGroupId = patch.activeGroupId;
+      if (patch.openFolderId !== undefined) openFolderId = patch.openFolderId;
+    },
+    actions: {
+      render,
+      queuePersist,
+      persistData,
+      openAddModal,
+      closeModal,
+      openSettingsModal: () => settingsCtl?.openSettingsModal?.(),
+      fetchRecentHistory: () => historyManager?.fetchRecentHistory?.(),
+      setRecentItems: (items) => {
+        recentItems = items;
+      },
+      touchPlacementContainer,
+      getRootGroup,
+      showTooltip: (text, x, y) => tooltipMgr?.show?.(text, x, y),
+      hideTooltip: () => tooltipMgr?.hide?.(),
+      closeContextMenu,
+      getActiveGroup,
+      getFolderPlacementContainer,
+    },
+    managers: {
+      sidebarMgr,
+      selectionMgr,
+      openModeMgr,
+      searchManager,
+      folderMgr,
+      keyboardNav,
+      touchDrag,
+      dragManager,
+    },
+    constants: {
+      recentGroupId: RECENT_GROUP_ID,
+    },
+    t,
+    rafThrottle,
+    win: window,
+    doc: document,
   });
-
-  // 文件夹覆盖层生命周期（返回/解散/空白关闭）统一由 folder-manager 处理
-  folderMgr.bindOverlayEvents();
-
-  elements.modalOverlay.addEventListener("click", async (e) => {
-    if (e.target !== elements.modalOverlay) return;
-    if (modalPointerDownInsideDialog) {
-      modalPointerDownInsideDialog = false;
-      return;
-    }
-    if (settingsOpen) {
-      closeModal();
-      return;
-    }
-    closeModal();
-  });
-  const markModalPointerOrigin = (e) => {
-    modalPointerDownInsideDialog = !!e.target.closest("#modal");
-  };
-  elements.modalOverlay.addEventListener("mousedown", markModalPointerOrigin);
-  elements.modalOverlay.addEventListener("pointerdown", markModalPointerOrigin);
-
-  document.addEventListener("click", (e) => {
-    if (!elements.contextMenu.contains(e.target)) closeContextMenu();
-  });
-
-  document.addEventListener(
-    "mousemove",
-    rafThrottle((e) => {
-      if (!elements.tooltip.classList.contains("hidden")) {
-        elements.tooltip.style.transform = `translate3d(${e.clientX + 12}px, ${e.clientY + 12}px, 0)`;
-      }
-    }),
-  );
-
-  document.addEventListener("mouseover", (e) => {
-    const target = e.target.closest("[data-tooltip]");
-    if (!target) return;
-    const text = target.getAttribute("data-tooltip");
-    if (text) showTooltip(text, e.clientX, e.clientY);
-  });
-
-  document.addEventListener("mouseout", (e) => {
-    const target = e.target.closest("[data-tooltip]");
-    if (!target) return;
-    hideTooltip();
-  });
-
-  // 全局键盘无障碍导航（方向键漫游、/ 聚焦搜索、Esc 文件夹返回、Delete 删除）
-  keyboardNav.bind();
-
-  // 触摸拖拽全局监听（状态机见 touch-drag-manager.js）
-  touchDrag.bindDocumentTouchEvents();
-
-  // 网格空白区投放（主网格 / 文件夹覆盖层）与侧栏分组容器拖拽，统一由 drag-manager 处理
-  dragManager.bindGridDropEvents(elements.grid, {
-    getContainer: () => getActiveGroup(),
-    enabled: () => !openFolderId && activeGroupId !== RECENT_GROUP_ID,
-  });
-  dragManager.bindGridDropEvents(elements.folderGrid, {
-    getContainer: () => getFolderPlacementContainer(openFolderId),
-    enabled: () => !!openFolderId,
-  });
-
-  dragManager.bindGroupTabsEvents(elements.groupTabs);
 }
 
 (async () => {

@@ -4,6 +4,11 @@
   const api = globalThis.browser || globalThis.chrome;
   const checks = [];
   const errors = [];
+  const originalConsoleError = console.error;
+  console.error = (...args) => {
+    errors.push(args.map((a) => a?.stack || a?.message || String(a)).join(" "));
+    originalConsoleError?.apply(console, args);
+  };
   window.addEventListener("error", (event) => errors.push(event.message));
   window.addEventListener("unhandledrejection", (event) => errors.push(String(event.reason)));
   const waitFor = async (predicate, label) => {

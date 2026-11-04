@@ -48,6 +48,7 @@
     "modal-manager.js",
     "settings-controller.js",
     "app-reload-coordinator.js",
+    "app-events-binder.js",
     "app.js"
   ],
   "background": [

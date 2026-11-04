@@ -57,6 +57,7 @@ const PRECACHE_URLS = [
   "js/modal-manager.js",
   "js/settings-controller.js",
   "js/app-reload-coordinator.js",
+  "js/app-events-binder.js",
   "js/selection-manager.js",
   "js/toast-manager.js",
   "js/folder-manager.js",

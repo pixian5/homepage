@@ -60,6 +60,7 @@ const PRECACHE_URLS = [
   "js/settings-state-coordinator.js",
   "js/app-reload-coordinator.js",
   "js/app-events-binder.js",
+  "js/view-renderer.js",
   "js/selection-manager.js",
   "js/toast-manager.js",
   "js/folder-manager.js",

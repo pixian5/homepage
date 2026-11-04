@@ -51,6 +51,7 @@
     "settings-state-coordinator.js",
     "app-reload-coordinator.js",
     "app-events-binder.js",
+    "view-renderer.js",
     "app.js"
   ],
   "background": [

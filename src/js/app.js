@@ -98,6 +98,7 @@ import { createToastManager } from "./toast-manager.js";
 import { createTooltipManager } from "./tooltip-manager.js";
 import { createTouchDragManager } from "./touch-drag-manager.js";
 import { escapeHtml, html, rawHtml, runWithButtonState } from "./ui-utils.js";
+import { createViewRenderer } from "./view-renderer.js";
 import { attachVisitTracking, recordVisit } from "./visit-history.js";
 
 const $ = (id) => document.getElementById(id);
@@ -1141,24 +1142,26 @@ async function init() {
   }
 }
 
+let viewRenderer = null;
+function getViewRenderer() {
+  if (!viewRenderer) {
+    viewRenderer = createViewRenderer({
+      getData: () => data,
+      getElements: () => elements,
+      ensureAllBookmarksGroup,
+      applyStaticI18n,
+      getSidebarMgr: () => sidebarMgr,
+      getGridRenderer: () => gridRenderer,
+      getOpenModeMgr: () => openModeMgr,
+      getSelectionMgr: () => selectionMgr,
+      getThemeMgr: () => themeMgr,
+    });
+  }
+  return viewRenderer;
+}
+
 function render() {
-  ensureAllBookmarksGroup(data);
-  applyStaticI18n();
-  sidebarMgr?.applySidebarState();
-  sidebarMgr?.renderGroups();
-  gridRenderer?.renderGrid();
-  // 网格渲染后统一刷新空态（含历史分组的不可用/无数据提示）
-  gridRenderer?.updateEmptyState();
-  elements.topSearchWrap.classList.toggle("hidden", !data.settings.showSearch);
-  elements.emptyHintToggle.checked = data.settings.emptyHintDisabled;
-  elements.btnFolderDissolve.classList.remove("hidden");
-  openModeMgr?.updateToolbarButton();
-  selectionMgr?.updateControls();
-  // 收口在这里：主题/密度/背景都是「副作用型」设置，不经过渲染流程。
-  // 导入、恢复备份、清空数据、同步合并、跨标签页重载最终都会走到 render()，
-  // 统一在这里重新应用，才能避免「设置变了但页面要手动切一次才生效」这一类问题。
-  themeMgr?.applyThemeAndDensity();
-  void themeMgr?.refreshBackgroundIfChanged?.();
+  getViewRenderer().render();
 }
 
 function bindEvents() {

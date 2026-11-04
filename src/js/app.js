@@ -38,6 +38,7 @@ import { createRuntimeDiagnostics } from "./runtime-diagnostics.js";
 import { createSearchManager } from "./search-manager.js";
 import { createSelectionManager } from "./selection-manager.js";
 import { createSettingsController } from "./settings-controller.js";
+import { createSettingsStateCoordinator } from "./settings-state-coordinator.js";
 import {
   detectExtensionPlatform,
   getStorageMode,
@@ -206,10 +207,7 @@ let historyManager = null;
 let searchManager = null;
 /** 图标管线管理器（icon-manager.js），init 时创建 */
 let iconManager = null;
-let settingsOpen = false;
-let settingsSaving = false;
-let settingsSaveTimer = null;
-let settingsSaveQueued = false;
+const settingsStateCoordinator = createSettingsStateCoordinator();
 /** 设置面板控制器（settings-controller.js），init 时注入依赖。 */
 let settingsCtl = null;
 /** 同步异常提示条控制器（init 时创建；storage 监听里可能先于创建触发，故用可选链） */
@@ -529,24 +527,11 @@ function getModalManager() {
         getActiveGroup,
       }),
       onModalClose: async () => {
-        if (settingsSaveTimer) {
-          clearTimeout(settingsSaveTimer);
-          settingsSaveTimer = null;
-        }
-        const pendingSave = settingsCtl?.saveNow;
-        if (settingsOpen && typeof pendingSave === "function" && !settingsSaving) {
-          try {
-            await pendingSave();
-          } catch (e) {
-            console.warn("flush settings on closeModal failed", e);
-          }
-        }
-        appEventsBinder?.resetModalPointerOrigin?.();
-        settingsOpen = false;
-        settingsSaving = false;
-        settingsSaveQueued = false;
-        // 设置弹窗打开期间挂起的外部存储变更，关闭后补一次重载
-        storageListener?.flushPendingReload();
+        await settingsStateCoordinator.flushPendingSettingsSave({
+          getSettingsCtl: () => settingsCtl,
+          storageListener,
+          appEventsBinder,
+        });
       },
     });
   }
@@ -571,19 +556,7 @@ function openEditModal(node) {
 
 /** 离开设置主表单进入子面板前：刷掉 debounce 中的保存，避免改动丢失 */
 async function leaveSettingsForSubpanel() {
-  if (settingsSaveTimer) {
-    clearTimeout(settingsSaveTimer);
-    settingsSaveTimer = null;
-  }
-  const pending = settingsCtl?.saveNow;
-  if (typeof pending === "function" && !settingsSaving) {
-    try {
-      await pending();
-    } catch (e) {
-      console.warn("leaveSettingsForSubpanel flush failed", e);
-    }
-  }
-  settingsOpen = false;
+  await settingsStateCoordinator.leaveSettingsForSubpanel(() => settingsCtl);
 }
 
 /**
@@ -729,7 +702,7 @@ function createStorageListenerInstance() {
     getData: () => data,
     isPersistInFlight: () => persistenceCoordinator?.isPersistInFlight() || false,
     isSuppressed: () => persistenceCoordinator?.isStorageSuppressed() || false,
-    isSettingsOpen: () => settingsOpen,
+    isSettingsOpen: () => settingsStateCoordinator.isSettingsOpen(),
     reload: () => reloadFromStorage(),
     onSyncKeysChanged: () => void syncBanner?.refresh?.(),
     reloadDelayMs: STORAGE_RELOAD_DELAY_MS,
@@ -960,33 +933,7 @@ async function init() {
     setActiveGroupId: (id) => {
       activeGroupId = id;
     },
-    state: {
-      get settingsOpen() {
-        return settingsOpen;
-      },
-      set settingsOpen(value) {
-        settingsOpen = value;
-      },
-      get settingsSaving() {
-        return settingsSaving;
-      },
-      set settingsSaving(value) {
-        settingsSaving = value;
-      },
-      get settingsSaveTimer() {
-        return settingsSaveTimer;
-      },
-      set settingsSaveTimer(value) {
-        settingsSaveTimer = value;
-      },
-      get settingsSaveQueued() {
-        return settingsSaveQueued;
-      },
-      set settingsSaveQueued(value) {
-        settingsSaveQueued = value;
-      },
-      settingsSaveNow: null,
-    },
+    state: settingsStateCoordinator.state,
     consumeSkipAutoBackup: () => {
       const value = skipAutoBackupOnce;
       skipAutoBackupOnce = false;
@@ -1243,7 +1190,7 @@ function bindEvents() {
   appEventsBinder = bindAppDomEvents({
     elements,
     getData: () => data,
-    getState: () => ({ activeGroupId, openFolderId, settingsOpen }),
+    getState: () => ({ activeGroupId, openFolderId, settingsOpen: settingsStateCoordinator.isSettingsOpen() }),
     setState: (patch) => {
       if (patch.activeGroupId) activeGroupId = patch.activeGroupId;
       if (patch.openFolderId !== undefined) openFolderId = patch.openFolderId;

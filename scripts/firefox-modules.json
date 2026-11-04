@@ -47,6 +47,7 @@
     "context-menu.js",
     "modal-manager.js",
     "settings-controller.js",
+    "settings-state-coordinator.js",
     "app-reload-coordinator.js",
     "app-events-binder.js",
     "app.js"

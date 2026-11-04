@@ -1,4 +1,3 @@
-import { APP_SUPPORTED_LANGUAGES, translateAppText } from "./app-i18n.js";
 import { getBingWallpaper } from "./bing-wallpaper.js";
 import { bookmarksToHomepageData, exportNetscapeBookmarksHtml, parseNetscapeBookmarksHtml } from "./bookmark-html.js";
 import { createContextMenuManager } from "./context-menu.js";
@@ -24,6 +23,7 @@ import { createDragManager } from "./drag-manager.js";
 import { createFolderManager } from "./folder-manager.js";
 import { createGridRenderer } from "./grid-renderer.js";
 import { createHistoryManager } from "./history-manager.js";
+import { createI18nManager } from "./i18n-manager.js";
 import { createIconManager } from "./icon-manager.js";
 import { clearIconCacheForUrl, compressImageFileToDataUrl, getSiteKey, retryFailedIconsIfDue } from "./icons.js";
 import { createModalManager } from "./modal-manager.js";
@@ -180,6 +180,8 @@ let gridRenderer = null;
 let persistenceCoordinator = null;
 /** 节点与分组操作管理器（node-ops-manager.js），init 时创建 */
 let nodeOpsManager = null;
+/** 国际化与多语言管理器（i18n-manager.js），init 时创建 */
+let i18nManager = null;
 
 // Toast 管理器立即创建：模块内任何时点的 toast() 调用都必须可用
 toastMgr = createToastManager({
@@ -226,78 +228,25 @@ const SETTINGS_SAVE_DELAY_MS = 120;
 const TOAST_CONSUME_TIMEOUT_MS = 15000;
 const MAX_DEBUG_LOG_ENTRIES = 200;
 
+// ---- 国际化：全部代理到 i18nManager（下游管理器沿用旧函数名） ----
 function currentLang() {
-  const stored = normalizeLanguage(data?.settings?.language || "");
-  if (stored) return stored;
-  return detectPreferredLanguage();
+  return i18nManager.currentLang();
 }
 
 function t(key, vars = null) {
-  return translateAppText(currentLang(), key, vars);
+  return i18nManager.t(key, vars);
 }
 
 function ensureLanguageSetting() {
-  if (!data?.settings) return false;
-  const normalized = normalizeLanguage(data.settings.language || "");
-  if (normalized) {
-    data.settings.language = normalized;
-    return false;
-  }
-  data.settings.language = detectPreferredLanguage();
-  return true;
+  return i18nManager.ensureLanguageSetting();
 }
 
 function buildLanguageOptions(selectedLanguage) {
-  const normalized = normalizeLanguage(selectedLanguage || "") || currentLang();
-  return APP_SUPPORTED_LANGUAGES.map(
-    (item) => html`<option value="${item.code}" ${item.code === normalized ? "selected" : ""}>${item.label}</option>`,
-  ).join("");
+  return i18nManager.buildLanguageOptions(selectedLanguage);
 }
 
 function applyStaticI18n() {
-  const lang = currentLang();
-  document.documentElement.lang = lang;
-  document.title = t("app.title");
-  if (elements.topSearch) elements.topSearch.placeholder = t("search.placeholder");
-  if (elements.btnSearch) {
-    elements.btnSearch.textContent = t("search.button");
-    elements.btnSearch.setAttribute("data-tooltip", t("search.button"));
-  }
-  if (elements.btnAdd) {
-    elements.btnAdd.textContent = t("toolbar.add");
-    elements.btnAdd.setAttribute("data-tooltip", t("toolbar.add"));
-  }
-  if (elements.btnBatchDelete) elements.btnBatchDelete.setAttribute("data-tooltip", t("toolbar.batchDelete"));
-  if (elements.btnSelectAll) {
-    elements.btnSelectAll.textContent = t("toolbar.selectAll");
-    elements.btnSelectAll.setAttribute("data-tooltip", t("toolbar.selectAll"));
-  }
-  if (elements.btnOpenMode) elements.btnOpenMode.setAttribute("data-tooltip", t("toolbar.openMode"));
-  if (elements.btnSettings) {
-    elements.btnSettings.textContent = t("toolbar.settings");
-    elements.btnSettings.setAttribute("data-tooltip", t("toolbar.settings"));
-  }
-  if (elements.recentTab) elements.recentTab.dataset.label = t("sidebar.history");
-  if (elements.btnAddGroup) {
-    elements.btnAddGroup.textContent = t("sidebar.addGroup");
-    elements.btnAddGroup.setAttribute("data-tooltip", t("sidebar.addGroup"));
-  }
-  if (elements.btnCloseFolder) elements.btnCloseFolder.textContent = t("folder.back");
-  if (elements.btnFolderAdd) elements.btnFolderAdd.textContent = t("folder.add");
-  if (elements.btnFolderBatchDelete) elements.btnFolderBatchDelete.textContent = t("folder.batchDelete");
-  if (elements.btnFolderDissolve) elements.btnFolderDissolve.textContent = t("folder.dissolve");
-  const emptyTitle = qs(".empty-title", elements.emptyState);
-  const emptyDesc = qs(".empty-desc", elements.emptyState);
-  // 历史分组的空态文案由 updateEmptyState 负责，避免这里盖掉
-  if (activeGroupId !== RECENT_GROUP_ID) {
-    if (emptyTitle) emptyTitle.textContent = t("empty.title");
-    if (emptyDesc) emptyDesc.textContent = t("empty.desc");
-  }
-  const emptyCheckLabel = qs(".empty-check", elements.emptyState);
-  if (emptyCheckLabel) {
-    const textNode = Array.from(emptyCheckLabel.childNodes).find((node) => node.nodeType === Node.TEXT_NODE);
-    if (textNode) textNode.nodeValue = ` ${t("empty.hideHint")}`;
-  }
+  return i18nManager.applyStaticI18n();
 }
 
 function debugLog(event, payload = {}) {
@@ -958,6 +907,18 @@ function createGridRendererInstance() {
 /**
  * 创建持久化与时钟协调器实例（串行保存链 / 自动备份 / 时钟基线 / 抑制窗）。
  */
+/**
+ * 创建国际化管理器实例（语言规范化 / 翻译 / 静态文案注入）。
+ */
+function createI18nManagerInstance() {
+  return createI18nManager({
+    getData: () => data,
+    getElements: () => elements,
+    getActiveGroupId: () => activeGroupId,
+    isRecentGroup: (groupId) => groupId === RECENT_GROUP_ID,
+  });
+}
+
 function createPersistenceCoordinatorInstance() {
   return createPersistenceCoordinator({
     getData: () => data,
@@ -1104,7 +1065,9 @@ function createThemeManagerInstance() {
 
 async function init() {
   debugLog("init_start", getRuntimeInfo());
-  // 持久化协调器最先创建：后续任何 persist / 重载 / 监听都会用到它的状态
+  // 国际化管理器最先创建：后续所有 manager 的文案与渲染都依赖 t()
+  i18nManager = createI18nManagerInstance();
+  // 持久化协调器：后续任何 persist / 重载 / 监听都会用到它的状态
   persistenceCoordinator = createPersistenceCoordinatorInstance();
   nodeOpsManager = createNodeOpsManagerInstance();
   // 图标管线与拖拽管理器先建好（renderGrid / 弹窗 / 存储监听都会用到）

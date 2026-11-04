@@ -39,6 +39,7 @@
     "sync-banner.js",
     "app-i18n.js",
     "ui-utils.js",
+    "i18n-manager.js",
     "context-menu.js",
     "modal-manager.js",
     "settings-controller.js",

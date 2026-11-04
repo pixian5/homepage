@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import { defaultData } from "../src/js/storage.js";
 import { httpPullState, httpPushState } from "../src/js/sync_http_transport.js";
 import { toSyncDocument } from "../src/js/sync_projection.js";
-import { stopBrowser } from "../tests/helpers/browser-process.js";
+import { stopBrowser, trackChildShutdown } from "../tests/helpers/browser-process.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 // 冲突弹窗有三个分支，各跑一次独立 profile，避免上一轮的 docId 影响下一轮。
@@ -51,6 +51,8 @@ async function startSyncServer(port) {
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
   });
+  // 终止信号守护：父进程被强停时同步服务也要一并收尾，避免孤儿泄漏。
+  trackChildShutdown(child);
   let output = "";
   child.stdout.on("data", (chunk) => {
     output += chunk;
@@ -191,6 +193,8 @@ try {
     env: { ...process.env, MOZ_HEADLESS: "1", MOZ_NO_REMOTE: "1" },
     detached: process.platform !== "win32",
   });
+  // 终止信号守护：父进程被强停时整组浏览器进程也要收尾，避免孤儿泄漏。
+  trackChildShutdown(browser);
   let output = "";
   const capture = (chunk) => {
     output = (output + chunk).slice(-8000);

@@ -2,6 +2,51 @@ import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { stopSyncServer } from "./sync-server.js";
 
+/** 已登记待守护的子进程：收到终止信号时逐个强制收尾，防止孤儿泄漏。 */
+const guardedChildren = new Set();
+let signalGuardInstalled = false;
+let signalCleanupInProgress = false;
+
+/**
+ * 收到终止信号（Ctrl+C / CI 超时强停等）时，finally 不会执行，
+ * detached 启动的浏览器会变成孤儿进程常驻——
+ * 2026-11-04 事故：7 个无头 Chromium 孤儿在 macOS 菜单栏堆积放大镜图标。
+ * 这里保证：先结束所有已登记的子进程组，再按原信号退出进程。
+ */
+async function cleanupOnSignal(signal) {
+  if (signalCleanupInProgress) {
+    // 已在清理中又收到信号：不再等待，立即恢复默认终止行为。
+    process.kill(process.pid, signal);
+    return;
+  }
+  signalCleanupInProgress = true;
+  const children = [...guardedChildren];
+  guardedChildren.clear();
+  // stopBrowser 内部自带超时兜底；这里再兜一层，保证信号清理不会永久挂死。
+  await Promise.all(children.map((child) => stopBrowser(child).catch(() => {})));
+  // 重放信号恢复默认终止（once 处理器已消费，不会再进入本函数），保留 CI 对退出码的判断。
+  process.kill(process.pid, signal);
+}
+
+/**
+ * 登记子进程并安装进程级终止信号守护（幂等，可重复调用）。
+ * 子进程正常退出后自动注销；Windows 上信号语义不同，保持 no-op。
+ */
+export function trackChildShutdown(child) {
+  if (!child || process.platform === "win32") return child;
+  guardedChildren.add(child);
+  child.once("exit", () => guardedChildren.delete(child));
+  if (!signalGuardInstalled) {
+    signalGuardInstalled = true;
+    for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+      process.once(signal, () => {
+        cleanupOnSignal(signal);
+      });
+    }
+  }
+  return child;
+}
+
 /**
  * 列出属于指定进程组的 PID。
  * 对整组发信号偶尔返回 EPERM（组里混入不可信号的进程），

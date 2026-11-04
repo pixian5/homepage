@@ -12,6 +12,7 @@ import { httpPullState, httpPushState } from "../src/js/sync_http_transport.js";
 import { toSyncDocument } from "../src/js/sync_projection.js";
 import { startCoordinator } from "../tests/browser-sync-e2e/coordinator.mjs";
 import { wrapFirefoxE2ERunner } from "../tests/browser-sync-e2e/firefox-runner.mjs";
+import { trackChildShutdown } from "../tests/helpers/browser-process.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const baseUrl = process.env.HOMEPAGE_E2E_BASE_URL || "https://sf.sbbz.tech:58444";
@@ -198,6 +199,8 @@ function spawnBrowser(binary, args, logName) {
     env: { ...process.env },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  // 终止信号守护：父进程被强停时浏览器也要一并收尾，避免孤儿泄漏。
+  trackChildShutdown(child);
   const chunks = [];
   const collect = (chunk) => {
     if (chunks.reduce((sum, value) => sum + value.length, 0) < 2 * 1024 * 1024) chunks.push(Buffer.from(chunk));

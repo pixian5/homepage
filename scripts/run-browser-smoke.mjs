@@ -9,7 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { defaultData, getStorageKey } from "../src/js/storage.js";
-import { stopBrowser } from "../tests/helpers/browser-process.js";
+import { stopBrowser, trackChildShutdown } from "../tests/helpers/browser-process.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const execFileAsync = promisify(execFile);
@@ -213,6 +213,9 @@ async function runBrowser(browser) {
       env: { ...process.env, ...(browser === "firefox" ? { MOZ_HEADLESS: "1", MOZ_NO_REMOTE: "1" } : {}) },
       detached: process.platform !== "win32",
     });
+    // 登记进程级终止信号守护：测试进程被 Ctrl+C/超时强停时 finally 不会执行，
+    // detached 浏览器会变孤儿泄漏（2026-11-04 菜单栏堆积放大镜图标事故）。
+    trackChildShutdown(child);
     const capture = (chunk) => {
       output = (output + chunk).slice(-6000);
     };

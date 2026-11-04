@@ -29,6 +29,7 @@
     "sync_ids.js",
     "sync_projection.js",
     "persistence-coordinator.js",
+    "node-ops-manager.js",
     "sync_merge.js",
     "sync_bundle.js",
     "sync_pack.js",

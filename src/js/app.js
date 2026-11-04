@@ -6,11 +6,9 @@ import {
   ALL_BOOKMARKS_GROUP_ID,
   canMoveNodeToFolder,
   cloneDataSnapshot,
-  collectNodeSubtreeIds,
   createItemNode,
   dedupeData,
   ensureAllBookmarksGroup,
-  getRootFolderNodeIds,
   isAllBookmarksGroup,
   isSafeCssColor,
   markNodeDeleted,
@@ -29,6 +27,7 @@ import { createHistoryManager } from "./history-manager.js";
 import { createIconManager } from "./icon-manager.js";
 import { clearIconCacheForUrl, compressImageFileToDataUrl, getSiteKey, retryFailedIconsIfDue } from "./icons.js";
 import { createModalManager } from "./modal-manager.js";
+import { createNodeOpsManager } from "./node-ops-manager.js";
 import { createOpenModeManager } from "./open-mode-manager.js";
 import { createPersistenceCoordinator } from "./persistence-coordinator.js";
 import { createSearchManager } from "./search-manager.js";
@@ -82,7 +81,6 @@ import { httpGetDevices, httpHealth, httpPullState, httpRetireDevice } from "./s
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
 import { mergeHomepage } from "./sync_merge.js";
 import {
-  nextSyncTimestamp,
   normalizeSyncInterval,
   SYNC_INTERVAL_OPTIONS,
   SYNC_OUTBOX_KEY,
@@ -156,7 +154,6 @@ let data = null;
  */
 let activeGroupId = null;
 let openFolderId = null;
-let pendingDeletion = null;
 /** 拖拽与重排管理器（drag-manager.js），init 时创建 */
 let dragManager = null;
 /** 触摸拖拽状态机（touch-drag-manager.js），init 时创建 */
@@ -181,6 +178,8 @@ let tooltipMgr = null;
 let gridRenderer = null;
 /** 数据持久化与时钟协调器（persistence-coordinator.js），init 时创建 */
 let persistenceCoordinator = null;
+/** 节点与分组操作管理器（node-ops-manager.js），init 时创建 */
+let nodeOpsManager = null;
 
 // Toast 管理器立即创建：模块内任何时点的 toast() 调用都必须可用
 toastMgr = createToastManager({
@@ -219,7 +218,6 @@ function getToastDurationMs() {
   const normalized = Number.isFinite(seconds) ? Math.min(60, Math.max(1, seconds)) : DEFAULT_TOAST_DURATION_SECONDS;
   return normalized * 1000;
 }
-const UNDO_TIMEOUT_MS = 10000;
 const STORAGE_RELOAD_DELAY_MS = 120;
 const STORAGE_SUPPRESS_MS = 350;
 /** 备份指纹忽略的设置键：这些字段变化不构成“值得备份的变更” */
@@ -541,52 +539,6 @@ function persistData() {
   return persistenceCoordinator.persistData();
 }
 
-function getActiveGroup() {
-  const root = getRootGroup();
-  if (activeGroupId === root?.id) return root;
-  const folder = data.nodes[activeGroupId];
-  return folder?.type === "folder" && root?.nodes?.includes(folder.id) ? folder : root;
-}
-
-function getRootGroup() {
-  return data.groups.find((group) => isAllBookmarksGroup(group)) || data.groups[0];
-}
-
-function getRootFolderIds() {
-  return getRootFolderNodeIds(data);
-}
-
-function getRootContainers() {
-  const root = getRootGroup();
-  return [root, ...getRootFolderIds().map((id) => data.nodes[id])].filter(Boolean);
-}
-
-function getRootContainerById(id) {
-  return getRootContainers().find((container) => container.id === id) || null;
-}
-
-function getFolderPlacementContainer(folderId) {
-  return data.nodes[folderId] || null;
-}
-
-function getPlacementList(container) {
-  if (!container) return [];
-  return Array.isArray(container.nodes) ? container.nodes : Array.isArray(container.children) ? container.children : [];
-}
-
-function setPlacementList(container, list) {
-  if (!container) return;
-  if (Array.isArray(container.nodes)) container.nodes = list;
-  else container.children = list;
-}
-
-function getCurrentNodes() {
-  if (activeGroupId === RECENT_GROUP_ID) return recentItems;
-  const group = getActiveGroup();
-  const nodeIds = openFolderId ? getPlacementList(getFolderPlacementContainer(openFolderId)) : getPlacementList(group);
-  return nodeIds.map((id) => data.nodes[id]).filter(Boolean);
-}
-
 let contextMenuManager = null;
 function getContextMenuManager() {
   if (!contextMenuManager) {
@@ -625,157 +577,65 @@ function getCurrentGridElement() {
   return openFolderId ? elements.folderGrid : elements.grid;
 }
 
+// ---- 节点与分组操作：全部代理到 nodeOpsManager（下游 drag/grid/context-menu 等沿用旧函数名） ----
+function getActiveGroup() {
+  return nodeOpsManager.getActiveGroup();
+}
+
+function getRootGroup() {
+  return nodeOpsManager.getRootGroup();
+}
+
+function getRootFolderIds() {
+  return nodeOpsManager.getRootFolderIds();
+}
+
+function getRootContainers() {
+  return nodeOpsManager.getRootContainers();
+}
+
+function getRootContainerById(id) {
+  return nodeOpsManager.getRootContainerById(id);
+}
+
+function getFolderPlacementContainer(folderId) {
+  return nodeOpsManager.getFolderPlacementContainer(folderId);
+}
+
+function getPlacementList(container) {
+  return nodeOpsManager.getPlacementList(container);
+}
+
+function setPlacementList(container, list) {
+  return nodeOpsManager.setPlacementList(container, list);
+}
+
+function getCurrentNodes() {
+  return nodeOpsManager.getCurrentNodes();
+}
+
 function removeNodeFromLocation(id) {
-  for (const group of data.groups) {
-    const next = group.nodes.filter((nid) => nid !== id);
-    if (next.length !== group.nodes.length) {
-      group.nodes = next;
-      touchPlacementContainer(group);
-    }
-  }
-  for (const node of Object.values(data.nodes)) {
-    if (node.type === "folder" && Array.isArray(node.children)) {
-      const next = node.children.filter((nid) => nid !== id);
-      if (next.length !== node.children.length) {
-        node.children = next;
-        touchPlacementContainer(node);
-      }
-    }
-  }
+  return nodeOpsManager.removeNodeFromLocation(id);
 }
 
 function touchPlacementContainer(container) {
-  if (!container || typeof container !== "object") return;
-  container.updatedAt = nextSyncTimestamp(
-    Date.now(),
-    container.updatedAt,
-    container.titleUpdatedAt,
-    container.nameUpdatedAt,
-    container.orderUpdatedAt,
-  );
-  // 投影时为空会自动写入当前设备 ID，保证同一时间的并发变更可确定裁决。
-  container.updatedBy = "";
+  return nodeOpsManager.touchPlacementContainer(container);
 }
 
 function moveGroupToIndex(sourceId, index) {
-  if (isAllBookmarksGroup(sourceId)) return;
-  const root = getRootGroup();
-  if (!root?.nodes?.includes(sourceId) || data.nodes[sourceId]?.type !== "folder") return;
-  const visible = getRootFolderIds().filter((id) => id !== sourceId);
-  const safeIndex = Math.max(0, Math.min(index, visible.length));
-  const next = root.nodes.filter((id) => id !== sourceId);
-  const targetId = visible[safeIndex];
-  let insertAt = targetId ? next.indexOf(targetId) : next.length;
-  if (!targetId && visible.length) insertAt = next.indexOf(visible[visible.length - 1]) + 1;
-  next.splice(Math.max(0, insertAt), 0, sourceId);
-  root.nodes = next;
-  touchPlacementContainer(root);
-  queuePersist();
-  render();
+  return nodeOpsManager.moveGroupToIndex(sourceId, index);
 }
 
 function renameGroup(group) {
-  if (isAllBookmarksGroup(group)) return;
-  const name = prompt(t("group.promptName"), group.title);
-  if (!name) return;
-  folderMgr?.renameFolder(group.id, name);
+  return nodeOpsManager.renameGroup(group);
 }
 
 function deleteGroup(group) {
-  if (isAllBookmarksGroup(group)) return;
-  if (!confirm(t("group.deleteConfirm", { name: group.title }))) return;
-  if (activeGroupId === group.id) {
-    activeGroupId = ALL_BOOKMARKS_GROUP_ID;
-    data.settings.lastActiveGroupId = ALL_BOOKMARKS_GROUP_ID;
-  }
-  deleteNodes([group.id]);
+  return nodeOpsManager.deleteGroup(group);
 }
 
 function deleteNodes(ids) {
-  if (!ids.length) return;
-  if (activeGroupId === RECENT_GROUP_ID) return;
-  pushBackup();
-  // 撤销只恢复本次删除的节点，避免整库快照抹掉后续编辑
-  const deletedNodes = {};
-  const expanded = new Set();
-  for (const id of ids) {
-    for (const nid of collectNodeSubtreeIds(data, id)) expanded.add(nid);
-  }
-  for (const id of expanded) {
-    if (data.nodes[id]) deletedNodes[id] = deepClone(data.nodes[id]);
-  }
-  // 记录删除前各容器中的位置，便于精确回插
-  const placements = [];
-  for (const group of data.groups || []) {
-    for (let i = 0; i < (group.nodes || []).length; i++) {
-      const id = group.nodes[i];
-      if (expanded.has(id)) placements.push({ kind: "group", groupId: group.id, index: i, id });
-    }
-  }
-  for (const [folderId, node] of Object.entries(data.nodes || {})) {
-    if (node?.type !== "folder" || !Array.isArray(node.children)) continue;
-    for (let i = 0; i < node.children.length; i++) {
-      const id = node.children[i];
-      if (expanded.has(id)) placements.push({ kind: "folder", folderId, index: i, id });
-    }
-  }
-
-  for (const id of expanded) {
-    removeNodeFromLocation(id);
-    markNodeDeleted(data, id);
-  }
-  dedupeData(data);
-
-  pendingDeletion = { deletedNodes, placements, ids: [...expanded], timer: null };
-  queuePersist();
-  render();
-
-  toast(t("delete.deletedCount", { count: expanded.size }), t("delete.undo"), () => undoDelete());
-  if (pendingDeletion.timer) clearTimeout(pendingDeletion.timer);
-  pendingDeletion.timer = setTimeout(() => {
-    pendingDeletion = null;
-  }, UNDO_TIMEOUT_MS);
-}
-
-function undoDelete() {
-  if (!pendingDeletion) return;
-  if (pendingDeletion.timer) clearTimeout(pendingDeletion.timer);
-  const { deletedNodes, placements } = pendingDeletion;
-  pendingDeletion = null;
-  // 先恢复节点实体
-  for (const [id, node] of Object.entries(deletedNodes || {})) {
-    data.nodes[id] = { ...node, updatedAt: Date.now(), updatedBy: "" };
-    delete data.nodes[id].deletedAt;
-    delete data.nodes[id].purgedAt;
-    if (data._syncMeta?.nodeTombstones) delete data._syncMeta.nodeTombstones[id];
-  }
-  // 再按原位置回插引用（倒序插入以尽量保持相对顺序）
-  const sorted = [...(placements || [])].sort((a, b) => b.index - a.index);
-  for (const p of sorted) {
-    if (p.kind === "group") {
-      const group = data.groups.find((g) => g.id === p.groupId);
-      if (!group) continue;
-      if (!Array.isArray(group.nodes)) group.nodes = [];
-      if (!group.nodes.includes(p.id)) {
-        const idx = Math.max(0, Math.min(p.index, group.nodes.length));
-        group.nodes.splice(idx, 0, p.id);
-        touchPlacementContainer(group);
-      }
-    } else if (p.kind === "folder") {
-      const folder = data.nodes[p.folderId];
-      if (folder?.type !== "folder") continue;
-      if (!Array.isArray(folder.children)) folder.children = [];
-      if (!folder.children.includes(p.id)) {
-        const idx = Math.max(0, Math.min(p.index, folder.children.length));
-        folder.children.splice(idx, 0, p.id);
-        touchPlacementContainer(folder);
-      }
-    }
-  }
-  dedupeData(data);
-  queuePersist();
-  render();
-  toast(t("delete.restored"));
+  return nodeOpsManager.deleteNodes(ids);
 }
 
 /**
@@ -1112,6 +972,28 @@ function createPersistenceCoordinatorInstance() {
   });
 }
 
+/**
+ * 创建节点与分组操作管理器实例（删除/撤销/分组操作/容器导航）。
+ */
+function createNodeOpsManagerInstance() {
+  return createNodeOpsManager({
+    getData: () => data,
+    getState: () => ({ activeGroupId, openFolderId }),
+    setActiveGroupId: (id) => {
+      activeGroupId = id;
+    },
+    getRecentItems: () => recentItems,
+    pushBackup,
+    queuePersist,
+    render,
+    toast,
+    t,
+    getFolderManager: () => folderMgr,
+    undoTimeoutMs: 10000,
+    isRecentGroup: (groupId) => groupId === RECENT_GROUP_ID,
+  });
+}
+
 function openFolder(folderId) {
   folderMgr.openFolder(folderId);
 }
@@ -1224,6 +1106,7 @@ async function init() {
   debugLog("init_start", getRuntimeInfo());
   // 持久化协调器最先创建：后续任何 persist / 重载 / 监听都会用到它的状态
   persistenceCoordinator = createPersistenceCoordinatorInstance();
+  nodeOpsManager = createNodeOpsManagerInstance();
   // 图标管线与拖拽管理器先建好（renderGrid / 弹窗 / 存储监听都会用到）
   iconManager = createIconManagerInstance();
   themeMgr = createThemeManagerInstance();

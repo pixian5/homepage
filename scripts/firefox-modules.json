@@ -21,6 +21,7 @@
     "safari_native_storage.js",
     "storage.js",
     "runtime-diagnostics.js",
+    "notification-hub.js",
     "icons.js",
     "icon-manager.js",
     "bing-wallpaper.js",

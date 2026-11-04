@@ -840,3 +840,12 @@ export async function compressImageFileToDataUrl(file, maxDimension = 128, quali
     reader.readAsDataURL(file);
   });
 }
+
+/**
+ * 读取图片文件并压缩为适合图标大小的 DataURL
+ * @param {Blob|File} file
+ * @returns {Promise<string>}
+ */
+export async function readIconAsDataUrl(file) {
+  return compressImageFileToDataUrl(file, 128, 0.85);
+}

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
-import { normalizeUrl, normalizeUrlWithScheme } from "../src/js/shared-utils.js";
+import {
+  detectExtensionPlatform,
+  isSafariBrowser,
+  normalizeUrl,
+  normalizeUrlWithScheme,
+} from "../src/js/shared-utils.js";
 
 describe("url utils in shared-utils", () => {
   describe("normalizeUrl", () => {
@@ -59,6 +64,28 @@ describe("url utils in shared-utils", () => {
       assert.equal(normalizeUrlWithScheme(""), "");
       assert.equal(normalizeUrlWithScheme("   "), "");
       assert.equal(normalizeUrlWithScheme(null), "");
+    });
+  });
+
+  describe("platform detection", () => {
+    const SAFARI_UA =
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
+    const CHROME_UA =
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    const FIREFOX_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0";
+
+    test("isSafariBrowser correctly identifies Safari vs Chrome vs Firefox", () => {
+      assert.equal(isSafariBrowser(SAFARI_UA), true);
+      assert.equal(isSafariBrowser(CHROME_UA), false);
+      assert.equal(isSafariBrowser(FIREFOX_UA), false);
+      assert.equal(isSafariBrowser(""), false);
+    });
+
+    test("detectExtensionPlatform maps correctly across browsers", () => {
+      assert.equal(detectExtensionPlatform(FIREFOX_UA), "firefox");
+      assert.equal(detectExtensionPlatform(SAFARI_UA), "safari");
+      assert.equal(detectExtensionPlatform(CHROME_UA), "chrome");
+      assert.equal(detectExtensionPlatform(""), "chrome");
     });
   });
 });

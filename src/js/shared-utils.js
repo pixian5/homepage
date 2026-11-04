@@ -368,3 +368,43 @@ export function normalizeUrlWithScheme(input, scheme = "https") {
     return "";
   }
 }
+
+/**
+ * 检测当前是否为 Safari 浏览器
+ * @param {string} [customUa] 可选注入 userAgent，方便测试
+ * @returns {boolean}
+ */
+export function isSafariBrowser(customUa) {
+  const ua =
+    typeof customUa === "string" ? customUa : (typeof navigator !== "undefined" ? navigator.userAgent : "") || "";
+  return /safari/i.test(ua) && !/chrome|crios|chromium|android/i.test(ua);
+}
+
+/**
+ * 检测扩展运行平台（firefox | safari | chrome）
+ * @param {string} [customUa] 可选注入 userAgent
+ * @returns {"firefox" | "safari" | "chrome"}
+ */
+export function detectExtensionPlatform(customUa) {
+  const ua =
+    typeof customUa === "string" ? customUa : (typeof navigator !== "undefined" ? navigator.userAgent : "") || "";
+  if (/firefox/i.test(ua)) return "firefox";
+  if (isSafariBrowser(ua)) return "safari";
+  return "chrome";
+}
+
+/**
+ * 将 File/Blob 读取为 DataURL
+ * @param {Blob|File} file
+ * @returns {Promise<string>}
+ */
+export function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) return resolve("");
+    if (typeof FileReader === "undefined") return resolve("");
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}

@@ -25,9 +25,10 @@ import { createGridRenderer } from "./grid-renderer.js";
 import { createHistoryManager } from "./history-manager.js";
 import { createI18nManager } from "./i18n-manager.js";
 import { createIconManager } from "./icon-manager.js";
-import { clearIconCacheForUrl, compressImageFileToDataUrl, getSiteKey, retryFailedIconsIfDue } from "./icons.js";
+import { clearIconCacheForUrl, getSiteKey, readIconAsDataUrl, retryFailedIconsIfDue } from "./icons.js";
 import { createModalManager } from "./modal-manager.js";
 import { createNodeOpsManager } from "./node-ops-manager.js";
+import { createNotificationHub } from "./notification-hub.js";
 import { createOpenModeManager } from "./open-mode-manager.js";
 import { createPersistenceCoordinator } from "./persistence-coordinator.js";
 import { createRuntimeDiagnostics } from "./runtime-diagnostics.js";
@@ -35,10 +36,12 @@ import { createSearchManager } from "./search-manager.js";
 import { createSelectionManager } from "./selection-manager.js";
 import { createSettingsController } from "./settings-controller.js";
 import {
+  detectExtensionPlatform,
   getStorageMode,
   normalizeUrl,
   normalizeUrlWithScheme,
   RECENT_GROUP_ID,
+  readFileAsDataUrl,
   registerServiceWorkerIfNeeded,
 } from "./shared-utils.js";
 import { createSidebarManager } from "./sidebar-manager.js";
@@ -225,7 +228,6 @@ const STORAGE_SUPPRESS_MS = 350;
 /** 备份指纹忽略的设置键：这些字段变化不构成“值得备份的变更” */
 const BACKUP_IGNORED_SETTINGS_KEYS = new Set(["lastActiveGroupId", "lastSaveUrl", "lastSaveTs", "lastSaveToast"]);
 const SETTINGS_SAVE_DELAY_MS = 120;
-const TOAST_CONSUME_TIMEOUT_MS = 15000;
 
 // ---- 运行时诊断与调试：代理到 runtimeDiagnostics ----
 const runtimeDiagnostics = createRuntimeDiagnostics({
@@ -332,26 +334,24 @@ if (typeof DEBUG !== "undefined" && DEBUG) {
   };
 }
 
-/**
- * 「另一台设备有较新数据」的提示做了频率限制。
- *
- * 多设备场景下每个设备打开页面都会推进一次 revision，另一台下次加载必然看到
- * 「远端更新」，于是每次刷新都弹一次，提示失去意义。真正需要知道的是「有没有东西被改」，
- * 而合并结果里 applied=false 时本来就不会走到这里。
- * 这里再做一层：30 分钟内只提示一次，时间戳写 localStorage，跨页面刷新也生效。
- */
-const SYNC_MERGE_TOAST_INTERVAL_MS = 30 * 60 * 1000;
-const SYNC_MERGE_TOAST_KEY = "homepage_sync_merge_toast_at";
+// ---- 通知中枢：外部消息、跨端覆盖提示与保存提示消费 ----
+let notificationHub = null;
+function getNotificationHub() {
+  if (!notificationHub) {
+    notificationHub = createNotificationHub({
+      getData: () => data,
+      toast,
+      t,
+      persistData,
+      storage: typeof localStorage !== "undefined" ? localStorage : null,
+      getApi: getChromeApi,
+    });
+  }
+  return notificationHub;
+}
 
 function toastSyncMergedOnce() {
-  try {
-    const last = Number(localStorage.getItem(SYNC_MERGE_TOAST_KEY)) || 0;
-    if (Date.now() - last < SYNC_MERGE_TOAST_INTERVAL_MS) return;
-    localStorage.setItem(SYNC_MERGE_TOAST_KEY, String(Date.now()));
-  } catch {
-    // localStorage 不可用（隐私模式等）时退化为每次都提示
-  }
-  toast(t("toast.syncOverwritten"), "warning");
+  return getNotificationHub().toastSyncMergedOnce();
 }
 
 /**
@@ -363,31 +363,11 @@ function toast(message, actionLabelOrType, actionOrType, type) {
 }
 
 function listenForExternalToast() {
-  const api = getChromeApi();
-  if (!api?.runtime?.onMessage) return;
-  api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === "homepage_show_toast" && message?.text) {
-      toast(message.text);
-      sendResponse?.({ ok: true });
-      return true;
-    }
-    return false;
-  });
+  return getNotificationHub().listenForExternalToast();
 }
 
 async function consumeSaveToast() {
-  const toastInfo = data?.settings?.lastSaveToast;
-  if (!toastInfo) return;
-  const ts = Number(toastInfo.ts || 0);
-  if (!ts || Date.now() - ts > TOAST_CONSUME_TIMEOUT_MS) {
-    data.settings.lastSaveToast = null;
-    await persistData();
-    return;
-  }
-  const groupName = toastInfo.groupName || t("common.unnamed");
-  toast(t("toast.savedToGroup", { name: groupName }));
-  data.settings.lastSaveToast = null;
-  await persistData();
+  return getNotificationHub().consumeSaveToast();
 }
 
 function openUrl(url, mode) {
@@ -628,30 +608,6 @@ async function leaveSettingsForSubpanel() {
     }
   }
   settingsOpen = false;
-}
-
-function isSafariBrowser() {
-  const ua = navigator.userAgent || "";
-  return /safari/i.test(ua) && !/chrome|crios|chromium|android/i.test(ua);
-}
-
-function detectExtensionPlatform() {
-  if (/firefox/i.test(navigator.userAgent || "")) return "firefox";
-  if (isSafariBrowser()) return "safari";
-  return "chrome";
-}
-
-function readFileAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-async function readIconAsDataUrl(file) {
-  return compressImageFileToDataUrl(file, 128, 0.85);
 }
 
 /**

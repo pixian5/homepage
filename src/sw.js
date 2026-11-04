@@ -33,6 +33,7 @@ const PRECACHE_URLS = [
   "js/touch-drag-manager.js",
   "js/safari_native_storage.js",
   "js/storage.js",
+  "js/runtime-diagnostics.js",
   "js/icons.js",
   "js/icon-manager.js",
   "js/bing-wallpaper.js",

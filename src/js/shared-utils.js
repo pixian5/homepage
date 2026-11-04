@@ -346,3 +346,25 @@ export function normalizeUrl(input) {
     }
   }
 }
+
+/**
+ * 标准化 URL 并支持指定回退协议（默认 https）
+ * @param {string} input
+ * @param {string} [scheme="https"]
+ * @returns {string}
+ */
+export function normalizeUrlWithScheme(input, scheme = "https") {
+  if (!input) return "";
+  const raw = String(input).trim();
+  if (!raw) return "";
+  const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw);
+  const fallback = scheme || "https";
+  const candidate = hasScheme ? raw : `${fallback}://${raw.replace(/^\/+/, "")}`;
+  try {
+    const url = new URL(candidate);
+    if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
+    return url.href;
+  } catch (_e) {
+    return "";
+  }
+}

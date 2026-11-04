@@ -30,15 +30,16 @@ import { createModalManager } from "./modal-manager.js";
 import { createNodeOpsManager } from "./node-ops-manager.js";
 import { createOpenModeManager } from "./open-mode-manager.js";
 import { createPersistenceCoordinator } from "./persistence-coordinator.js";
+import { createRuntimeDiagnostics } from "./runtime-diagnostics.js";
 import { createSearchManager } from "./search-manager.js";
 import { createSelectionManager } from "./selection-manager.js";
 import { createSettingsController } from "./settings-controller.js";
 import {
   getStorageMode,
   normalizeUrl,
+  normalizeUrlWithScheme,
   RECENT_GROUP_ID,
   registerServiceWorkerIfNeeded,
-  SAFE_URL_PROTOCOLS,
 } from "./shared-utils.js";
 import { createSidebarManager } from "./sidebar-manager.js";
 import {
@@ -210,7 +211,6 @@ let settingsCtl = null;
 /** 同步异常提示条控制器（init 时创建；storage 监听里可能先于创建触发，故用可选链） */
 let syncBanner = null;
 let modalPointerDownInsideDialog = false;
-const DEBUG_LOG_KEY = "homepage_debug_log";
 
 // ==================== 常量定义 ====================
 const DEFAULT_TOAST_DURATION_SECONDS = 5;
@@ -226,7 +226,11 @@ const STORAGE_SUPPRESS_MS = 350;
 const BACKUP_IGNORED_SETTINGS_KEYS = new Set(["lastActiveGroupId", "lastSaveUrl", "lastSaveTs", "lastSaveToast"]);
 const SETTINGS_SAVE_DELAY_MS = 120;
 const TOAST_CONSUME_TIMEOUT_MS = 15000;
-const MAX_DEBUG_LOG_ENTRIES = 200;
+
+// ---- 运行时诊断与调试：代理到 runtimeDiagnostics ----
+const runtimeDiagnostics = createRuntimeDiagnostics({
+  getApi: getChromeApi,
+});
 
 // ---- 国际化：全部代理到 i18nManager（下游管理器沿用旧函数名） ----
 function currentLang() {
@@ -250,47 +254,19 @@ function applyStaticI18n() {
 }
 
 function debugLog(event, payload = {}) {
-  const entry = { ts: Date.now(), event, payload };
-  try {
-    const raw = localStorage.getItem(DEBUG_LOG_KEY);
-    const list = raw ? JSON.parse(raw) : [];
-    list.unshift(entry);
-    localStorage.setItem(DEBUG_LOG_KEY, JSON.stringify(list.slice(0, MAX_DEBUG_LOG_ENTRIES)));
-  } catch (_err) {
-    // localStorage 写入失败是预期行为，不需要警告
-  }
-  if (shouldDebugPersist()) {
-    console.log("[debug]", entry);
-  }
+  return runtimeDiagnostics.debugLog(event, payload);
 }
 
 function getRuntimeInfo() {
-  const api = getChromeApi();
-  return {
-    runtimeId: api?.runtime?.id || "",
-    href: window.location.href,
-    origin: window.location.origin,
-  };
+  return runtimeDiagnostics.getRuntimeInfo();
 }
 
 function getAppVersion() {
-  const api = getChromeApi();
-  try {
-    const version = api?.runtime?.getManifest?.()?.version;
-    return version ? String(version) : "";
-  } catch (e) {
-    console.warn("getAppVersion failed", e);
-    return "";
-  }
+  return runtimeDiagnostics.getAppVersion();
 }
 
 function shouldDebugPersist() {
-  try {
-    return localStorage.getItem("homepage_debug_persist") === "1";
-  } catch (e) {
-    console.warn("shouldDebugPersist failed", e);
-    return false;
-  }
+  return runtimeDiagnostics.shouldDebugPersist();
 }
 
 async function reloadFromStorage() {
@@ -341,12 +317,7 @@ async function reloadFromStorage() {
 // 调试接口仅在开发构建中暴露，避免生产环境泄露运行时信息
 if (typeof DEBUG !== "undefined" && DEBUG) {
   window.homepageDebugLog = () => {
-    try {
-      return JSON.parse(localStorage.getItem(DEBUG_LOG_KEY) || "[]");
-    } catch (e) {
-      console.warn("homepageDebugLog parse failed", e);
-      return [];
-    }
+    return runtimeDiagnostics.getDebugLogs();
   };
 
   window.homepageDebugEnv = async () => {
@@ -417,24 +388,6 @@ async function consumeSaveToast() {
   toast(t("toast.savedToGroup", { name: groupName }));
   data.settings.lastSaveToast = null;
   await persistData();
-}
-
-// normalizeUrl 直接从 shared-utils 导入（Firefox bundle 不可使用 import alias）
-
-function normalizeUrlWithScheme(input, scheme) {
-  if (!input) return "";
-  const raw = input.trim();
-  if (!raw) return "";
-  const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw);
-  const candidate = hasScheme ? raw : `${scheme}://${raw.replace(/^\/+/, "")}`;
-  try {
-    const url = new URL(candidate);
-    if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
-    return url.href;
-  } catch (_e) {
-    // URL 解析失败是预期行为，不需要警告
-    return "";
-  }
 }
 
 function openUrl(url, mode) {
@@ -585,31 +538,6 @@ function deleteGroup(group) {
 
 function deleteNodes(ids) {
   return nodeOpsManager.deleteNodes(ids);
-}
-
-/**
- * 安全地设置元素的文本内容，防止 XSS
- * @param {HTMLElement} el
- * @param {string} text
- */
-function _safeSetText(el, text) {
-  el.textContent = text;
-}
-
-/**
- * 创建带标签和输入框的表单项
- * @param {string} labelText
- * @param {HTMLElement} inputEl
- * @returns {HTMLElement}
- */
-function _createFormSection(labelText, inputEl) {
-  const section = document.createElement("div");
-  section.className = "section";
-  const label = document.createElement("label");
-  label.textContent = labelText;
-  section.appendChild(label);
-  section.appendChild(inputEl);
-  return section;
 }
 
 let modalManager = null;

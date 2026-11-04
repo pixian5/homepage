@@ -36,6 +36,7 @@ const PRECACHE_URLS = [
   "js/runtime-diagnostics.js",
   "js/notification-hub.js",
   "js/icons.js",
+  "js/cache-cleaner.js",
   "js/icon-manager.js",
   "js/bing-wallpaper.js",
   "js/visit-history.js",

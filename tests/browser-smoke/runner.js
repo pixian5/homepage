@@ -97,7 +97,7 @@
     }
     if (errors.length) throw new Error(errors.join("；"));
   } catch (error) {
-    failure = error.stack || String(error);
+    failure = `${error?.message || error}\n${error?.stack || ""}`;
   }
   await fetch(config.reportUrl, {
     method: "POST",

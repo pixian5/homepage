@@ -1,5 +1,6 @@
 import { getBingWallpaper } from "./bing-wallpaper.js";
 import { bookmarksToHomepageData, exportNetscapeBookmarksHtml, parseNetscapeBookmarksHtml } from "./bookmark-html.js";
+import { pruneUnusedCachesQuietly } from "./cache-cleaner.js";
 import { createContextMenuManager } from "./context-menu.js";
 import {
   ALL_BOOKMARKS_GROUP_ID,
@@ -25,7 +26,7 @@ import { createGridRenderer } from "./grid-renderer.js";
 import { createHistoryManager } from "./history-manager.js";
 import { createI18nManager } from "./i18n-manager.js";
 import { createIconManager } from "./icon-manager.js";
-import { clearIconCacheForUrl, getSiteKey, readIconAsDataUrl, retryFailedIconsIfDue } from "./icons.js";
+import { clearIconCacheForUrl, readIconAsDataUrl, retryFailedIconsIfDue } from "./icons.js";
 import { createModalManager } from "./modal-manager.js";
 import { createNodeOpsManager } from "./node-ops-manager.js";
 import { createNotificationHub } from "./notification-hub.js";
@@ -53,15 +54,11 @@ import {
   detectPreferredLanguage,
   getChromeApi,
   getStorageKey,
-  loadBgCache,
   loadData,
   loadDataFromArea,
   loadIconCache,
   normalizeLanguage,
-  pruneUnusedCaches,
-  saveBgCache,
   saveData,
-  saveIconCache,
 } from "./storage.js";
 import { createStorageListener } from "./storage-listener.js";
 import { exportSyncBundle, importSyncBundle } from "./sync_bundle.js";
@@ -372,28 +369,6 @@ async function consumeSaveToast() {
 
 function openUrl(url, mode) {
   return openModeMgr.openUrlWithMode(url, mode);
-}
-
-async function pruneCachesQuietly() {
-  try {
-    const bookmarkUrls = Object.values(data?.nodes || {})
-      .filter((n) => n?.type === "item" && typeof n.url === "string" && n.url)
-      .map((n) => n.url);
-    const res = await pruneUnusedCaches({
-      bookmarkUrls,
-      backgroundType: data?.settings?.backgroundType || "",
-      siteKeyOf: getSiteKey,
-      loadIcon: loadIconCache,
-      saveIcon: saveIconCache,
-      loadBg: loadBgCache,
-      saveBg: saveBgCache,
-    });
-    if (res.iconRemoved > 0 || res.bgCleared) {
-      console.info(`[homepage] 缓存清理：图标 ${res.iconRemoved} 条，背景缓存${res.bgCleared ? "已清空" : "保留"}`);
-    }
-  } catch (e) {
-    console.warn("pruneCachesQuietly failed", e);
-  }
 }
 
 // ---- 持久化协调器透传：上百处调用点沿用这些旧函数名 ----
@@ -1191,7 +1166,7 @@ async function init() {
   void consumeSaveToast();
   // 缓存瘦身：首屏渲染后异步执行，不阻塞加载。
   // 清理已删书签残留的图标缓存，以及背景非 bing 时无用的壁纸缓存（实测单张 442KB）。
-  void pruneCachesQuietly();
+  void pruneUnusedCachesQuietly({ getData: () => data });
   if (data.settings.syncEnabled) {
     refreshSyncInterval();
     // 同步异常提示条：让失败可见（此前断链两个月无人察觉）。

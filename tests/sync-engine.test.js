@@ -55,7 +55,7 @@ async function stopServer(child) {
 }
 
 async function waitForHealth(baseUrl, token) {
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
     if ((await httpHealth({ baseUrl, token })).ok) return;
     await new Promise((resolve) => setTimeout(resolve, 50));

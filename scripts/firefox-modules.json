@@ -23,6 +23,7 @@
     "runtime-diagnostics.js",
     "notification-hub.js",
     "icons.js",
+    "cache-cleaner.js",
     "icon-manager.js",
     "bing-wallpaper.js",
     "visit-history.js",

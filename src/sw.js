@@ -29,6 +29,7 @@ const PRECACHE_URLS = [
   "js/data-utils.js",
   "js/bookmark-html.js",
   "js/drag-geometry.js",
+  "js/keyboard-navigator.js",
   "js/drag-manager.js",
   "js/touch-drag-manager.js",
   "js/safari_native_storage.js",

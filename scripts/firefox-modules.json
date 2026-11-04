@@ -16,6 +16,7 @@
     "data-utils.js",
     "bookmark-html.js",
     "drag-geometry.js",
+    "keyboard-navigator.js",
     "drag-manager.js",
     "touch-drag-manager.js",
     "safari_native_storage.js",

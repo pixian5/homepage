@@ -19,7 +19,6 @@ import {
   repairHomepageData,
   stampNodeFieldChanges,
 } from "./data-utils.js";
-import { nextGridFocusIndex } from "./drag-geometry.js";
 import { createDragManager } from "./drag-manager.js";
 import { createFolderManager } from "./folder-manager.js";
 import { createGridRenderer } from "./grid-renderer.js";
@@ -27,6 +26,7 @@ import { createHistoryManager } from "./history-manager.js";
 import { createI18nManager } from "./i18n-manager.js";
 import { createIconManager } from "./icon-manager.js";
 import { clearIconCacheForUrl, readIconAsDataUrl, retryFailedIconsIfDue } from "./icons.js";
+import { createKeyboardNavigator } from "./keyboard-navigator.js";
 import { createModalManager } from "./modal-manager.js";
 import { createNodeOpsManager } from "./node-ops-manager.js";
 import { createNotificationHub } from "./notification-hub.js";
@@ -183,6 +183,8 @@ let persistenceCoordinator = null;
 let nodeOpsManager = null;
 /** 国际化与多语言管理器（i18n-manager.js），init 时创建 */
 let i18nManager = null;
+/** 键盘无障碍漫游导航器（keyboard-navigator.js），init 时创建 */
+let keyboardNav = null;
 
 // Toast 管理器立即创建：模块内任何时点的 toast() 调用都必须可用
 toastMgr = createToastManager({
@@ -1153,6 +1155,14 @@ async function init() {
     data.settings.lastActiveGroupId = activeGroupId;
   }
   recentItems = await recentPromise;
+  keyboardNav = createKeyboardNavigator({
+    getData: () => data,
+    getState: () => ({ activeGroupId, openFolderId }),
+    getElements: () => elements,
+    closeFolder,
+    deleteNodes,
+    qsa,
+  });
   themeMgr.applyDensity();
   themeMgr.applyTheme();
   sidebarMgr?.applySidebarState();
@@ -1340,66 +1350,8 @@ function bindEvents() {
     hideTooltip();
   });
 
-  document.addEventListener("keydown", (e) => {
-    // 弹窗打开时：Enter 交给 modal 内逻辑；不跑网格键盘导航
-    const modalOpen = elements.modalOverlay && !elements.modalOverlay.classList.contains("hidden");
-    if (modalOpen && e.key === "Enter") {
-      // 搜索仍允许（不在 modal 内）
-      return;
-    }
-
-    if (!data?.settings?.keyboardNav) return;
-    // 输入框内不劫持方向键
-    const tag = (e.target?.tagName || "").toLowerCase();
-    if (tag === "input" || tag === "textarea" || e.target?.isContentEditable) {
-      if (e.key === "Escape" && openFolderId) closeFolder();
-      return;
-    }
-    if (e.key === "Escape" && openFolderId) {
-      closeFolder();
-      return;
-    }
-    if (e.key === "/") {
-      // 弹窗打开时不要抢焦点到搜索
-      if (modalOpen) return;
-      elements.topSearch.focus();
-      e.preventDefault();
-      return;
-    }
-    // 方向键 / Home / End 在可见卡片间漫游焦点；Delete 删除聚焦卡片
-    if (
-      ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key) ||
-      e.key === "Delete" ||
-      e.key === "Backspace"
-    ) {
-      if (modalOpen) return;
-      const grid = openFolderId ? elements.folderGrid : elements.grid;
-      // 只在可见卡片间漫游：被搜索过滤隐藏的卡片不参与
-      const tiles = qsa(".tile", grid).filter(
-        (tile) => tile.style.display !== "none" && tile.getClientRects().length > 0,
-      );
-      if (e.key === "Delete" || e.key === "Backspace") {
-        const active = document.activeElement;
-        const idx = tiles.indexOf(active);
-        if (idx < 0) return;
-        const nodeId = active.dataset?.id;
-        if (!nodeId || activeGroupId === RECENT_GROUP_ID) return;
-        e.preventDefault();
-        deleteNodes([nodeId]);
-        // 删除后把焦点移到同位置的下一个卡片，漫游不中断
-        tiles[Math.min(idx, tiles.length - 1)]?.focus?.();
-        return;
-      }
-      if (!tiles.length) return;
-      const cols = Math.max(1, Number.parseInt(getComputedStyle(grid).gridTemplateColumns.split(" ").length, 10) || 1);
-      const idx = tiles.indexOf(document.activeElement);
-      const next = nextGridFocusIndex({ index: idx, columns: cols, count: tiles.length, key: e.key });
-      if (next >= 0) {
-        tiles[next]?.focus?.();
-        e.preventDefault();
-      }
-    }
-  });
+  // 全局键盘无障碍导航（方向键漫游、/ 聚焦搜索、Esc 文件夹返回、Delete 删除）
+  keyboardNav.bind();
 
   // 触摸拖拽全局监听（状态机见 touch-drag-manager.js）
   touchDrag.bindDocumentTouchEvents();

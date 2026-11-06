@@ -15,6 +15,7 @@ import {
   upsertSyncOutbox,
 } from "./sync_outbox.js";
 import {
+  HOMEPAGE_SCHEMA_VERSION,
   normalizeSyncInterval,
   SYNC_OUTBOX_MAX_ATTEMPTS,
   SYNC_PUSH_DEBOUNCE_MS,
@@ -1055,7 +1056,7 @@ export async function resolveDocConflict(choice) {
       // 临时清空 local doc 绑定后 apply
       const merged = mergeHomepage(
         {
-          schemaVersion: 1,
+          schemaVersion: HOMEPAGE_SCHEMA_VERSION,
           settings: { ...(local.settings || {}) },
           groups: [],
           nodes: {},
@@ -1070,8 +1071,13 @@ export async function resolveDocConflict(choice) {
         // fallback: project remote only
         const shape = syncDocumentToHomepageShape(forceDoc);
         const state = {
-          schemaVersion: 1,
-          settings: { ...(local.settings || {}), ...(shape.settings || {}), syncEnabled: true },
+          schemaVersion: HOMEPAGE_SCHEMA_VERSION,
+          settings: {
+            ...(local.settings || {}),
+            ...(shape.settings || {}),
+            backgroundCustom: local.settings?.backgroundCustom || shape.settings?.backgroundCustom || "",
+            syncEnabled: true,
+          },
           groups: shape.groups,
           nodes: shape.nodes,
           backups: local.backups || [],
@@ -1085,7 +1091,11 @@ export async function resolveDocConflict(choice) {
         if (err) return { ok: false, reason: err };
         await _onMerged(state, { applied: true, choice: "remote" });
       } else {
-        merged.state.settings = { ...merged.state.settings, syncEnabled: true };
+        merged.state.settings = {
+          ...merged.state.settings,
+          backgroundCustom: local.settings?.backgroundCustom || merged.state.settings?.backgroundCustom || "",
+          syncEnabled: true,
+        };
         try {
           await _createSafety();
         } catch (_e) {}

@@ -118,6 +118,7 @@ var HomepageThemeManager = (() => {
       const safe = deps.isSafeCssColor(color) ? String(color).trim() : "#0b0f14";
       const el = deps.getBackgroundEl();
       el.style.backgroundImage = "none";
+      el.style.backgroundColor = safe;
       el.style.background = safe;
     }
 
@@ -125,6 +126,9 @@ var HomepageThemeManager = (() => {
     function setBackground(style) {
       if (!style) return;
       const el = deps.getBackgroundEl();
+      el.style.backgroundSize = "cover";
+      el.style.backgroundPosition = "center";
+      el.style.backgroundRepeat = "no-repeat";
       if (style.startsWith("data:") || style.startsWith("http")) {
         // JSON.stringify 给 URL 加引号并转义，比 CSS.escape(标识符) 更适合 url() 值
         el.style.backgroundImage = `url(${JSON.stringify(style)})`;

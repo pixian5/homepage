@@ -5,6 +5,7 @@
 
 import { dedupeData, ensureAllBookmarksGroup } from "./data-utils.js";
 import { deepClone } from "./storage.js";
+import { HOMEPAGE_SCHEMA_VERSION } from "./sync_policy.js";
 import { syncDocumentToHomepageShape, toSyncDocument } from "./sync_projection.js";
 import { mergeSettingsByClock, normalizeSettingsClock } from "./sync_settings.js";
 
@@ -362,7 +363,7 @@ export function mergeHomepage(localData, remoteDoc, ctx = {}) {
   }
 
   const state = {
-    schemaVersion: 1,
+    schemaVersion: HOMEPAGE_SCHEMA_VERSION,
     settings: mergedSettings,
     groups: activeGroups.sort((a, b) => mergeAsNum(a.order) - mergeAsNum(b.order)),
     // 保留墓碑到下一轮投影，防止删除在另一台设备上被旧存活节点复活。

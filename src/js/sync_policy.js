@@ -3,6 +3,9 @@
  * 供 projection / pack / outbox / UI 共用，避免 magic number 散落。
  */
 
+/** 主页数据核心数据模型版本号 */
+export const HOMEPAGE_SCHEMA_VERSION = 2;
+
 /** 保留旧分片编解码的单片上限；服务器同步运行路径不使用分片。 */
 export const SYNC_SHARD_MAX_BYTES = 7000;
 

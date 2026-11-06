@@ -22,6 +22,7 @@ import {
   sanitizeForSync,
   storageArea,
 } from "./shared-utils.js";
+import { HOMEPAGE_SCHEMA_VERSION } from "./sync_policy.js";
 
 // 供 app/popup 等从 storage 入口复用（避免各处直接依赖 shared-utils 路径不一致）
 export { detectPreferredLanguage, getChromeApi, normalizeLanguage };
@@ -217,7 +218,7 @@ async function storageRemoveLocal(area, key) {
   });
 }
 
-const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = HOMEPAGE_SCHEMA_VERSION;
 
 /**
  * 已注册的迁移函数：键为起始版本号，值为将该版本数据升级到下一版本的函数。

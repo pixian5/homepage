@@ -425,7 +425,7 @@ describe("data-utils", () => {
 
     it("coerces missing top-level fields to expected types", () => {
       const repaired = repairHomepageData({}, defaults);
-      assert.strictEqual(repaired.schemaVersion, 1); // 没版本号的损坏数据补成最低版本
+      assert.strictEqual(repaired.schemaVersion, 2); // 没版本号的损坏数据补成当前有效最新版本 (schema 2)
       assert.deepStrictEqual(
         repaired.groups.map((group) => group.id),
         [ALL_BOOKMARKS_GROUP_ID],

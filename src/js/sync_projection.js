@@ -4,6 +4,7 @@
 
 import { estimateBytes } from "./shared-utils.js";
 import {
+  HOMEPAGE_SCHEMA_VERSION,
   SYNC_DOC_SCHEMA,
   SYNC_ICON_DATA_MAX_CHARS,
   SYNC_SETTINGS_WHITELIST,
@@ -375,7 +376,7 @@ export function syncDocumentToHomepageShape(doc) {
   }
 
   return {
-    schemaVersion: 1,
+    schemaVersion: HOMEPAGE_SCHEMA_VERSION,
     settings: { ...(doc?.settings || {}) },
     groups: groups.filter((g) => !g.deletedAt && !g.purgedAt),
     nodes: Object.fromEntries(Object.entries(nodes).filter(([, n]) => !n.deletedAt && !n.purgedAt)),

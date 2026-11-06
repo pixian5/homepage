@@ -8,7 +8,7 @@
  * @typedef {import('./types.js').Settings} Settings
  */
 
-import { nextSyncTimestamp, SYNC_TOMBSTONE_TTL_MS } from "./sync_policy.js";
+import { HOMEPAGE_SCHEMA_VERSION, nextSyncTimestamp, SYNC_TOMBSTONE_TTL_MS } from "./sync_policy.js";
 
 let _itemSeq = 0;
 const cloneValue = (value) =>
@@ -604,7 +604,7 @@ export function pickLatestData(localData, syncData) {
 export function repairHomepageData(input, defaultSettings = {}) {
   const data = input && typeof input === "object" ? input : {};
   if (typeof data.schemaVersion !== "number" || !Number.isFinite(data.schemaVersion)) {
-    data.schemaVersion = 1;
+    data.schemaVersion = HOMEPAGE_SCHEMA_VERSION;
   }
   if (!Array.isArray(data.groups)) data.groups = [];
   if (!data.nodes || typeof data.nodes !== "object" || Array.isArray(data.nodes)) {

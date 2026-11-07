@@ -74,23 +74,7 @@ function fetchViaBackground(language) {
   });
 }
 
-export async function getBingWallpaper(language = "") {
-  const cache = await loadBgCache();
-  const key = todayKey();
-
-  if (cache?.dataUrl) {
-    const ts = Number(cache.ts || 0);
-    const freshByDate = cache.date === key;
-    const freshByTtl = ts > 0 && Date.now() - ts < CACHE_TTL_MS;
-    if (freshByDate || freshByTtl) {
-      if (!cache.ts) {
-        cache.ts = Date.now();
-        await saveBgCache(cache);
-      }
-      return { ...cache, fromCache: true };
-    }
-  }
-
+async function fetchAndSaveBingWallpaper(language, key, fallbackCache = null) {
   try {
     let fullUrl = "";
     let dataUrl = "";
@@ -114,11 +98,50 @@ export async function getBingWallpaper(language = "") {
       dataUrl = background.dataUrl;
     }
 
-    const payload = { date: key, url: fullUrl, dataUrl, ts: Date.now() };
+    const payload = { date: key, language, url: fullUrl, dataUrl, ts: Date.now() };
     await saveBgCache(payload);
     return { ...payload, fromCache: false };
   } catch (_err) {
-    if (cache?.dataUrl) return { ...cache, fromCache: true, failed: true };
-    return { date: key, url: "", dataUrl: "", failed: true };
+    if (fallbackCache?.dataUrl) return { ...fallbackCache, fromCache: true, failed: true };
+    return { date: key, language, url: "", dataUrl: "", failed: true };
   }
+}
+
+export async function getBingWallpaper(language = "", options = {}) {
+  const cache = await loadBgCache();
+  const key = todayKey();
+  const normalizedLang = String(language || "zh-CN");
+
+  if (cache?.dataUrl) {
+    const ts = Number(cache.ts || 0);
+    const sameLang = !cache.language || cache.language === normalizedLang;
+    const freshByDate = cache.date === key && sameLang;
+    const freshByTtl = ts > 0 && Date.now() - ts < CACHE_TTL_MS && sameLang;
+    if (freshByDate || freshByTtl) {
+      if (!cache.ts || !cache.language) {
+        cache.ts = cache.ts || Date.now();
+        cache.language = normalizedLang;
+        await saveBgCache(cache);
+      }
+      return { ...cache, fromCache: true };
+    }
+
+    // Stale-While-Revalidate（SWR）：若外部注入了 onUpdated 回调，且本地已有一份旧壁纸，
+    // 则先瞬时（0ms）返回旧壁纸供首屏快速呈现，彻底消灭纯色与白屏等待；
+    // 后台异步静默拉取今日新壁纸，拉取成功且内容更新后触发 onUpdated 平滑替换。
+    if (typeof options?.onUpdated === "function" && !options?.forceRefresh) {
+      void fetchAndSaveBingWallpaper(normalizedLang, key, cache)
+        .then((fresh) => {
+          if (fresh?.dataUrl && fresh.dataUrl !== cache.dataUrl) {
+            options.onUpdated(fresh);
+          }
+        })
+        .catch((err) => {
+          console.warn("background bing wallpaper revalidation failed", err);
+        });
+      return { ...cache, fromCache: true, stale: true };
+    }
+  }
+
+  return await fetchAndSaveBingWallpaper(normalizedLang, key, cache);
 }

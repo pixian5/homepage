@@ -122,6 +122,14 @@ var HomepageThemeManager = (() => {
       el.style.background = safe;
     }
 
+    function isSafeCssGradient(style) {
+      if (typeof style !== "string") return false;
+      const s = style.trim();
+      if (!/^(?:(?:repeating-)?(?:linear|radial|conic)-gradient)\(.*\)$/s.test(s)) return false;
+      if (/[;{}<>]|url\s*\(|javascript\s*:/i.test(s)) return false;
+      return true;
+    }
+
     /** 写入背景样式：data:/http 走 url()，仅放行 CSS 函数与关键字，防注入 */
     function setBackground(style) {
       if (!style) return;
@@ -132,8 +140,8 @@ var HomepageThemeManager = (() => {
       if (style.startsWith("data:") || style.startsWith("http")) {
         // JSON.stringify 给 URL 加引号并转义，比 CSS.escape(标识符) 更适合 url() 值
         el.style.backgroundImage = `url(${JSON.stringify(style)})`;
-      } else if (/^[a-zA-Z-]+\([^)]*\)$/.test(style)) {
-        // 仅允许形如 linear-gradient(...) / radial-gradient(...) 的 CSS 函数
+      } else if (isSafeCssGradient(style) || /^[a-zA-Z-]+\([^)]*\)$/.test(style)) {
+        // 仅允许形如 linear-gradient(...) / radial-gradient(...) 的合法 CSS 渐变函数（含嵌套 rgba）
         el.style.backgroundImage = style;
       } else if (/^[a-zA-Z-]+$/.test(style)) {
         // 仅允许纯关键字（如 none）
@@ -162,7 +170,14 @@ var HomepageThemeManager = (() => {
       deps.getBackgroundEl().classList.add("is-loading");
 
       if (settings.backgroundType === "bing") {
-        const info = await deps.getBingWallpaper(settings.language);
+        const info = await deps.getBingWallpaper(settings.language, {
+          onUpdated: (fresh) => {
+            if (deps.getData()?.settings?.backgroundType === "bing" && fresh?.dataUrl) {
+              setBackground(fresh.dataUrl);
+              appliedBackgroundSignature = backgroundSignature(deps.getData()?.settings);
+            }
+          },
+        });
         if (info.dataUrl) {
           setBackground(info.dataUrl);
           if (!silent) {

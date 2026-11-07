@@ -1338,6 +1338,9 @@ var HomepageSettingsController = (() => {
           });
           const merged = mergeHomepage(getData(), incomingDoc, { deviceId, now: Date.now() });
           if (!merged.ok) throw new Error(merged.reason || "合并失败");
+          if (repairedIncoming?.settings?.backgroundCustom && !merged.state.settings?.backgroundCustom) {
+            merged.state.settings.backgroundCustom = repairedIncoming.settings.backgroundCustom;
+          }
           setData(merged.state);
           resetSettingsClockBaseline(getData());
           resetPlacementClockBaseline(getData());

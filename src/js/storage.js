@@ -129,6 +129,7 @@ function trimLocalUploadIcons(data) {
 function trimLocalBackground(data) {
   if (data.settings?.backgroundType === "custom" && data.settings.backgroundCustom) {
     data.settings.backgroundCustom = "";
+    data.settings.backgroundType = "color";
     return true;
   }
   return false;

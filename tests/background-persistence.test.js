@@ -159,5 +159,72 @@ describe("background persistence and schema stability", () => {
     assert.strictEqual(el.style.backgroundPosition, "center");
     assert.strictEqual(el.style.backgroundRepeat, "no-repeat");
     assert.strictEqual(el.style.backgroundImage, 'url("data:image/png;base64,TEST")');
+
+    // 允许嵌套 rgba 的现代 CSS 渐变
+    manager.setBackground("linear-gradient(120deg, rgba(29, 42, 59, 0.8), #0b0f14)");
+    assert.strictEqual(el.style.backgroundImage, "linear-gradient(120deg, rgba(29, 42, 59, 0.8), #0b0f14)");
+
+    // 拦截注入型样式
+    manager.setBackground("linear-gradient(120deg, #000, #111); background-color: red");
+    assert.strictEqual(
+      el.style.backgroundImage,
+      "linear-gradient(120deg, rgba(29, 42, 59, 0.8), #0b0f14)",
+      "非法样式被丢弃，保持原有样式",
+    );
+  });
+
+  it("getBingWallpaper supports language-isolated caching and SWR background revalidation", async () => {
+    const { getBingWallpaper } = await import("../src/js/bing-wallpaper.js");
+
+    // 预置旧语言与过期壁纸缓存
+    stored.homepage_bg_cache = {
+      date: "20000101",
+      language: "zh-CN",
+      dataUrl: "data:image/jpeg;base64,OLD_ZH_BG",
+      ts: 1000,
+    };
+
+    let updatedCalled = false;
+    global.fetch = async (url) => {
+      if (url.includes("HPImageArchive")) {
+        return {
+          ok: true,
+          json: async () => ({ images: [{ url: "/fresh.jpg" }] }),
+        };
+      }
+      return {
+        ok: true,
+        blob: async () => ({ type: "image/jpeg", size: 200 }),
+      };
+    };
+
+    global.FileReader = class {
+      readAsDataURL() {
+        this.result = "data:image/jpeg;base64,FRESH_EN_BG";
+        setTimeout(() => this.onloadend(), 0);
+      }
+    };
+    global.Blob = class {
+      constructor(_parts, opts) {
+        this.type = opts?.type || "";
+      }
+    };
+
+    // 切换为 en 语言请求，SWR 会立即返回旧缓存（不阻塞首屏渲染），并在后台拉取 en 专属新壁纸
+    const immediate = await getBingWallpaper("en", {
+      onUpdated: (fresh) => {
+        updatedCalled = true;
+        assert.strictEqual(fresh.dataUrl, "data:image/jpeg;base64,FRESH_EN_BG");
+      },
+    });
+
+    assert.strictEqual(immediate.dataUrl, "data:image/jpeg;base64,OLD_ZH_BG");
+    assert.strictEqual(immediate.stale, true);
+
+    // 等待后台异步 SWR 刷新完成
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.strictEqual(updatedCalled, true);
+    assert.strictEqual(stored.homepage_bg_cache.dataUrl, "data:image/jpeg;base64,FRESH_EN_BG");
+    assert.strictEqual(stored.homepage_bg_cache.language, "en");
   });
 });

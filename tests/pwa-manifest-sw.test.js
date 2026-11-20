@@ -78,7 +78,7 @@ describe("sw.js cache manifest & strategy", () => {
         match: async () => null,
         put: async () => {},
       }),
-      keys: async () => ["homepage-pwa-v0", "homepage-pwa-v1", "unrelated-cache"],
+      keys: async () => ["homepage-pwa-v0", "homepage-pwa-v1", "homepage-pwa-v2", "unrelated-cache"],
       delete: async (name) => {
         handlers.deletedCaches = handlers.deletedCaches || [];
         handlers.deletedCaches.push(name);
@@ -129,7 +129,7 @@ describe("sw.js cache manifest & strategy", () => {
     let activateDone;
     handlers.activate({ waitUntil: (p) => (activateDone = p) });
     await activateDone;
-    assert.deepEqual(handlers.deletedCaches, ["homepage-pwa-v0"], "只清旧版本缓存，不碰无关缓存");
+    assert.deepEqual(handlers.deletedCaches, ["homepage-pwa-v0", "homepage-pwa-v1"], "只清旧版本缓存，不碰无关缓存");
 
     // fetch：非 GET 与跨源请求不接管
     let responded = null;

@@ -47,6 +47,7 @@
     "i18n-manager.js",
     "context-menu.js",
     "modal-manager.js",
+    "import-export.js",
     "settings-controller.js",
     "settings-state-coordinator.js",
     "app-reload-coordinator.js",

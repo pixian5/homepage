@@ -935,11 +935,7 @@ async function init() {
       activeGroupId = id;
     },
     state: settingsStateCoordinator.state,
-    consumeSkipAutoBackup: () => {
-      const value = skipAutoBackupOnce;
-      skipAutoBackupOnce = false;
-      return value;
-    },
+    syncBackupBaseline,
     ui: {
       $,
       qsa,

@@ -11,7 +11,7 @@
  * 扩展环境自带打包资源，Service Worker 无意义且会干扰调试。
  */
 
-const CACHE_VERSION = "homepage-pwa-v1";
+const CACHE_VERSION = "homepage-pwa-v2";
 
 /** 预缓存清单：页面外壳 + 样式 + 前端模块（与 scripts/firefox-modules.json 的 app 链路对应） */
 const PRECACHE_URLS = [
@@ -56,6 +56,7 @@ const PRECACHE_URLS = [
   "js/ui-utils.js",
   "js/context-menu.js",
   "js/modal-manager.js",
+  "js/import-export.js",
   "js/settings-controller.js",
   "js/settings-state-coordinator.js",
   "js/app-reload-coordinator.js",

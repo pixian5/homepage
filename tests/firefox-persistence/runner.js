@@ -106,17 +106,18 @@
       await waitFor(() => document.getElementById("btnBackupManage"), "设置面板");
       click("#btnBackupManage");
       await waitFor(() => document.querySelector("[data-backup]"), "备份列表");
-      const first = document.querySelector("[data-backup] .backup-restore");
-      if (!first) throw new Error("备份恢复按钮缺失");
-      first.click();
-      await new Promise((resolve) => setTimeout(resolve, 1200));
+      // 选择与当前字号不同的已知快照，并检查持久化结果，而不是只检查按钮存在。
+      const target = state.data.backups.find((entry) => entry.data.settings.fontSize === 22);
+      if (!target || state.fontSize !== 13) throw new Error("缺少用于验证字号回滚的快照或基线");
+      click(`[data-backup="${target.id}"] .backup-restore`);
+      await waitFor(async () => (await load()).fontSize === 22, "恢复备份后字号落盘");
       const restored = await load();
       Object.assign(report, {
         nodeCount: state.nodes,
         backupCount: state.backups,
         keptTestNode: state.hasTest,
         fontSizeAfterRestore: restored.fontSize,
-        checks: ["重启后书签保留", "重启后字号保留", "备份恢复可执行"],
+        checks: ["重启后书签保留", "重启后字号保留", "备份恢复后字号由 13 回到 22"],
       });
     } else if (config.phase === "reinstall") {
       const state = await load();

@@ -4,11 +4,12 @@
 
 ## 当前开发进度
 
-当前版本 **27.1.6**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
+当前版本 **27.1.7**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
 
 项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。
 
-- **27.1.6（当前版本，提交轮次 29.3）**：完成壁纸全链路隐患排查与加固：落地 Bing 壁纸语言隔离缓存与 Stale-While-Revalidate（SWR）后台静默刷新机制（解决隔日首开新标签页 15s 长时间纯色卡顿与等待，实现 0ms 瞬间显示旧壁纸并在后台无缝拉取替换）；安全放行嵌套 `rgba(...)`/`rgb(...)` 的现代 CSS 渐变函数（解决原正则遇到嵌套括号提前截断误判回退纯色缺陷）；加固设置面板“合并导入”自定义大图保全；修复存储配额超限 `trimLocalBackground` 清理后的裂脑态；单测增至 551 项，双端无头浏览器真实冒烟 100% 通过，详见[壁纸全链路隐患排查与SWR渐变加固](docs/20261107-0850-壁纸全链路隐患排查与SWR渐变加固-Claude-Opus-5.md)。
+- **27.1.7**：设置面板导入导出与备份操作移入独立模块，补齐离线缓存，修复备份恢复未落盘及空列表提示。见[当前开发进度](docs/20261120-2023-当前开发进度-Opus-5.md)。
+- **27.1.6（提交轮次 29.3）**：完成壁纸全链路隐患排查与加固：落地 Bing 壁纸语言隔离缓存与 Stale-While-Revalidate（SWR）后台静默刷新机制（解决隔日首开新标签页 15s 长时间纯色卡顿与等待，实现 0ms 瞬间显示旧壁纸并在后台无缝拉取替换）；安全放行嵌套 `rgba(...)`/`rgb(...)` 的现代 CSS 渐变函数（解决原正则遇到嵌套括号提前截断误判回退纯色缺陷）；加固设置面板“合并导入”自定义大图保全；修复存储配额超限 `trimLocalBackground` 清理后的裂脑态；单测增至 551 项，双端无头浏览器真实冒烟 100% 通过，详见[壁纸全链路隐患排查与SWR渐变加固](docs/20261107-0850-壁纸全链路隐患排查与SWR渐变加固-Claude-Opus-5.md)。
 - **27.1.5（提交轮次 29.2）**：全链路排查并根治 Chrome 每次打开新标签页背景回退纯色（solid color）的问题：根除了 sync_projection、sync_merge、sync_engine、data-utils 中残留的硬编码 `schemaVersion: 1` 导致 `migrateData` 在新标签页启动时反复触发 `MIGRATIONS[1]` 覆写 Bing 壁纸为纯色的严重缺陷；加固自定义背景大图在同步拉取与回退合并时的本地持久化隔离；修复 theme-manager 中 CSS 简写属性导致的 `background-size: cover` 覆盖问题；新增 `tests/background-persistence.test.js`，详见[Chrome新标签页背景回退纯色排查与根治](docs/20261107-0155-Chrome新标签页背景回退纯色排查与根治-Claude-Opus-5.md)。
 - **27.1.4（提交轮次 29.1）**：完成端到端测试泄漏防护落地：browser-process 新增 trackChildShutdown 终止信号守护（测试进程被 Ctrl+C/超时强停时先结束整组子进程再按原信号退出），6 个端到端脚本 10 处接入；新增 scripts/cleanup-e2e-leftovers.sh 残留清扫（只杀 PPID=1 孤儿测试进程+删临时目录遗留，幂等、bash 3.2 兼容）并挂入 run-all-smoke 第 0 步；新增 2 项回归测试，545/545 通过，双端冒烟后实测零泄漏——根治 2026-11-04 无头 Chromium 孤儿进程在菜单栏堆积放大镜图标的事故，详见[端到端测试泄漏防护落地](docs/20261104-1248-端到端测试泄漏防护落地-GLM-5.3.md)与[事故排查](docs/20261104-1237-菜单栏放大镜图标堆积排查-GLM-5.3.md)。
 - **27.1.3（提交轮次 29.0）**：完成持续研发第 22 轮：核心视图渲染协调器（view-renderer）解耦，底包递增至 27.1.3；同版本另含菜单栏放大镜图标堆积排查（PWA 端到端测试泄漏 7 个无头 Chromium 孤儿进程，已清理并记录，详见[菜单栏放大镜图标堆积排查](docs/20261104-1237-菜单栏放大镜图标堆积排查-GLM-5.3.md)，无代码变更）。细节缺失：第 22 轮无对应文档，按提交标题概括。
@@ -52,6 +53,8 @@
 当前单测 551 项（本机 549 通过，2 项语言检测用例受系统区域设置影响），Biome 检查 0 告警，三端构建与浏览器冒烟均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
 
 ## 下一步待实现
+
+- 检查导入和恢复在保存失败时的提示与数据回滚，见[下一步待实现](docs/20261120-2023-下一步待实现-Opus-5.md)。
 
 - **P3 生态开放**：✅ 已完成——localStorage 回退（26.8.3）+ PWA Manifest 与 Service Worker 离线闭环（26.9.0）。
 - **app.js 瘦身**：✅ 编辑弹窗与 openMode 菜单已分别抽离为 modal-manager.js（26.7.4）与 open-mode-manager.js（26.9.0），app.js 现为 1233 行；后续可按实际热点继续拆分。
@@ -495,14 +498,14 @@ HOST=127.0.0.1 PORT=8787 npm run sync-server
 
 ## 9.1 导出设置
 
-实现位置：`openManualExportModal()`（[src/js/app.js](src/js/app.js)）
+实现位置：`openManualExportModal()`（[src/js/import-export.js](src/js/import-export.js)）
 
 - 优先写剪贴板（`navigator.clipboard.writeText()`）。
 - 失败时弹文本框手工复制（`showToast` 提示）。
 
 ## 9.2 导入设置
 
-实现位置：`openImportModal()` + `importData()`（[src/js/app.js](src/js/app.js)）
+实现位置：`openImportModal()`（[src/js/import-export.js](src/js/import-export.js)）
 
 支持三种策略：
 
@@ -516,7 +519,7 @@ HOST=127.0.0.1 PORT=8787 npm run sync-server
 
 ## 9.3 批量导入网址
 
-实现位置：`openImportUrlModal()`（[src/js/app.js](src/js/app.js)）
+实现位置：`openImportUrlModal()`（[src/js/import-export.js](src/js/import-export.js)）
 
 - 每行一个网址（取每行首 token，自动跳过空行和注释）。
 - 可选择按 `http://` 或 `https://` 规范化导入。
@@ -527,12 +530,12 @@ HOST=127.0.0.1 PORT=8787 npm run sync-server
 
 | 功能 | 实现位置 |
 |------|---------|
-| 打开备份面板 | `openBackupModal()`（[src/js/app.js](src/js/app.js)） |
+| 打开备份面板 | `openBackupModal()`（[src/js/import-export.js](src/js/import-export.js)） |
 | 创建备份快照 | `createBackupSnapshot()`（[src/js/storage.js](src/js/storage.js)） |
 | 推入备份队列 | `pushBackup()`（[src/js/app.js](src/js/app.js)） |
 | 自动备份触发 | `persistData()` 内的指纹比较（[src/js/app.js](src/js/app.js)） |
-| 恢复备份 | `openBackupModal()` 内的 `.backup-restore` 点击处理（[src/js/app.js](src/js/app.js)） |
-| 删除备份 | `openBackupModal()` 内的 `.backup-delete` 点击处理（[src/js/app.js](src/js/app.js)） |
+| 恢复备份 | `openBackupModal()` 内的 `.backup-restore` 点击处理（[src/js/import-export.js](src/js/import-export.js)） |
+| 删除备份 | `openBackupModal()` 内的 `.backup-delete` 点击处理（[src/js/import-export.js](src/js/import-export.js)） |
 | 最大备份数 | `maxBackups` 设置（0 = 不自动备份） |
 
 ## 10. 权限与外部请求
@@ -750,9 +753,9 @@ Firefox 使用 Manifest V3。由于 Firefox 扩展 CSP 对 ESM 模块加载有�
 | 模态框模板 | [src/js/app.js](src/js/app.js) | `openModal()` + `document.createElement` 安全渲染 |
 | 添加/编辑卡片 | [src/js/app.js](src/js/app.js) | `openAddModal()` / `openEditModal(node)` |
 | 设置面板 | [src/js/app.js](src/js/app.js) | `openSettingsModal()` + `renderSettingsContent()` |
-| 导入导出 | [src/js/app.js](src/js/app.js) | `openManualExportModal()` / `openImportModal()` + `importData()` 三种策略 |
-| 批量导入网址 | [src/js/app.js](src/js/app.js) | `openImportUrlModal()` |
-| 备份管理 | [src/js/app.js](src/js/app.js) | `openBackupModal()` |
+| 导入导出 | [src/js/import-export.js](src/js/import-export.js) | `openManualExportModal()` / `openImportModal()` 三种策略 |
+| 批量导入网址 | [src/js/import-export.js](src/js/import-export.js) | `openImportUrlModal()` |
+| 备份管理 | [src/js/import-export.js](src/js/import-export.js) | `openBackupModal()` |
 | 删除与撤销 | [src/js/app.js](src/js/app.js) | `deleteNodes()` / `undoDelete()` + `UNDO_TIMEOUT_MS`（10秒） |
 | 批量删除 | [src/js/app.js](src/js/app.js) | `btnBatchDelete` 点击事件 |
 

@@ -7,12 +7,12 @@
 #
 # 本脚本现在的职责只剩两件：
 #   1. 体检：签名是否有效、是否仍是 adhoc、是否还残留旧描述文件；
-#   2. 需要时调用完整构建重建（会退出 Safari、替换 /Applications）。
+#   2. 需要重建时报告原因，由用户决定是否安装。
 #
 # 用法：
-#   bash scripts/safari-refresh-signing.sh              # 只体检，必要时重建
+#   bash scripts/safari-refresh-signing.sh              # 体检，需要重建则提示
 #   bash scripts/safari-refresh-signing.sh --dry-run    # 只体检，不重建
-#   bash scripts/safari-refresh-signing.sh --force      # 无条件重建
+#   bash scripts/safari-refresh-signing.sh --force      # 强制报告需要重建
 #
 # 退出码：0 正常；1 需要人工处理；2 环境/参数错误；3 Safari 运行中跳过。
 
@@ -43,14 +43,7 @@ if [[ ! -d "${APPS_DIR_APP}" ]]; then
   exit 2
 fi
 
-# 扩展注册自愈：App 包完好但系统注册表里没有扩展时（Safari 设置里看不到「我的首页」），
-# 这里自动补回注册。失败不影响后续签名体检，所以吞掉错误。
-if [[ "${DRY_RUN}" == "1" ]]; then
-  bash "${SCRIPT_DIR}/safari-repair-registration.sh" --quiet --dry-run || true
-else
-  bash "${SCRIPT_DIR}/safari-repair-registration.sh" --quiet || true
-fi
-
+# 体检不变更现有注册；登记自愈由独立任务负责。
 STATUS_JSON="$(python3 "${SCRIPT_DIR}/safari-signing-status.py" --app-path "${APPS_DIR_APP}" --json 2>/dev/null || true)"
 if [[ -z "${STATUS_JSON}" ]]; then
   echo "[refresh] ERROR: unable to read signing status for ${APPS_DIR_APP}" >&2
@@ -104,8 +97,6 @@ if pgrep -x Safari >/dev/null 2>&1; then
   exit 3
 fi
 
-echo "[refresh] Rebuilding and reinstalling app (no version bump)..."
-SKIP_BUMP=1 NO_PAUSE=1 SAFARI_LAUNCH_AFTER_BUILD=0 bash "${ROOT_DIR}/scripts/build-macos.command"
-
-echo "[refresh] Verifying installed app..."
-python3 "${SCRIPT_DIR}/safari-signing-status.py" --app-path "${APPS_DIR_APP}"
+# 定时任务和 --force 均不授予替换已安装应用的许可。
+echo "[refresh] 需要重建。请在自行退出 Safari 后显式运行：bash dist/build-macos.command --install" >&2
+exit 1

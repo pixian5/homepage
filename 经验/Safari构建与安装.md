@@ -2,8 +2,8 @@
 
 ## 正确入口
 
-- `dist/build.sh` 负责生成 Chrome、Firefox、Safari 扩展包和 Safari Xcode 工程。
-- `scripts/build-macos.command` 才是完整 Safari 流程：Xcode 编译、手工签名、安装、注册、存储校验和新标签页选择校验。
+- `dist/build.sh` 负责生成 Chrome、Firefox、Safari 扩展包（默认不生成原生工程、不安装）。
+- `bash dist/build-macos.command --install` 才是完整 Safari 流程：Xcode 编译、手工签名、安装、注册、存储校验和新标签页选择校验。
 - 不要把扩展包构建成功当成 Safari 宿主 App 安装成功。
 
 ## Xcode 工程格式
@@ -24,7 +24,7 @@
 
 ```bash
 SKIP_BUMP=1 bash dist/build.sh
-SKIP_BUMP=1 NO_PAUSE=1 SAFARI_LAUNCH_AFTER_BUILD=0 bash scripts/build-macos.command
+# 原生安装需另行同意，且由用户自行退出 Safari；日常打包无需这一步。
 ```
 
 完整流程至少检查：三端 zip、Safari App 签名、appex 注册、共享数据哈希和新标签页/新窗口接管。

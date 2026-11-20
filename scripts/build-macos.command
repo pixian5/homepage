@@ -11,20 +11,27 @@ SAFARI_APP_NAME="${SAFARI_APP_NAME:-我的首页 Safari}"
 SAFARI_XCODE_CONFIGURATION="${SAFARI_XCODE_CONFIGURATION:-Release}"
 SAFARI_STORAGE_BACKUP_ROOT="${ROOT_DIR}/.test-backups/safari-storage"
 
-quit_safari_for_storage_update() {
-  if pgrep -x Safari >/dev/null 2>&1; then
-    echo "[build] Quitting Safari before storage snapshot..."
-    osascript -e 'tell application "Safari" to quit' 2>/dev/null || true
-    for _ in {1..20}; do
-      if ! pgrep -x Safari >/dev/null 2>&1; then
-        break
-      fi
-      sleep 0.5
-    done
-  fi
-  if pgrep -x Safari >/dev/null 2>&1; then
-    echo "[build] ERROR: Safari is still running; refusing to update without a safe snapshot" >&2
-    exit 1
+# 不发退出命令，即使是显式安装也不替用户决定丢弃窗口。只认本次命令的参数。
+if [[ $# == 0 ]]; then
+  echo "[build] 仅打包扩展；不安装、不启动、不退出任何浏览器。"
+  exec bash "${SCRIPT_DIR}/build.sh"
+fi
+if [[ $# != 1 || "$1" != "--install" ]]; then
+  echo "用法：$0 [--install]（仅在自行退出 Safari 后显式安装）" >&2
+  exit 2
+fi
+
+require_safari_stopped() {
+  local rc
+  if pgrep -x Safari >/dev/null; then
+    echo "[install] Safari 正在运行，已停止安装；所有窗口保持原样。" >&2
+    return 3
+  else
+    rc=$?
+    if [[ $rc != 1 ]]; then
+      echo "[install] 无法确认 Safari 是否已退出，不继续安装。" >&2
+      return 3
+    fi
   fi
 }
 
@@ -34,8 +41,8 @@ source "${SCRIPT_DIR}/lib/safari-signing.sh"
 
 echo "[build] ROOT_DIR=${ROOT_DIR}"
 
-# 必须在 converter/xcodebuild 注册新扩展、替换 App 之前停止 Safari 并保存一致性快照。
-quit_safari_for_storage_update
+# 仅当 Safari 已由用户退出时，才读取快照、生成工程并安装。
+require_safari_stopped
 SAFARI_STORAGE_SNAPSHOT="$({
   python3 "${ROOT_DIR}/scripts/safari-storage-guard.py" snapshot \
     --output-root "${SAFARI_STORAGE_BACKUP_ROOT}"
@@ -50,9 +57,9 @@ if [[ -f "${ROOT_DIR}/logo.png" ]]; then
 fi
 
 # 版本号自增与三端 zip 打包统一交给 build.sh：避免本脚本再 bump 一次导致版本连升两档。
-# SAFARI_SKIP_APP_BUILD=1 让 build.sh 只生成 Safari Xcode 工程与 safari.zip，
+# --safari-project-only 让 build.sh 只生成 Safari Xcode 工程与扩展包，
 # 宿主 App 的 Release 构建 / 开发签名 / 安装由本脚本接管，避免 Safari 被构建两次。
-SAFARI_SKIP_APP_BUILD=1 bash "${ROOT_DIR}/scripts/build.sh"
+bash "${ROOT_DIR}/scripts/build.sh" --safari-project-only
 
 PROJECT_FILE="$(find "${SAFARI_PROJECT_DIR}" -maxdepth 3 -name '*.xcodeproj' -print -quit)"
 PROJECT_ROOT="$(dirname "${PROJECT_FILE}")"
@@ -69,9 +76,6 @@ if [[ -n "${PROJECT_FILE}" ]]; then
     SCHEME_NAME="${SAFARI_APP_NAME}"
   fi
 
-  APP_PROCESS_NAME="${SAFARI_APP_NAME}"
-  pkill -x "${APP_PROCESS_NAME}" >/dev/null 2>&1 || true
-  pkill -f "${APP_PROCESS_NAME}.app" >/dev/null 2>&1 || true
   rm -rf "${SAFARI_BUILD_DIR}"
 
   # 方案 B：工程签名与描述文件全部关闭，只编译出未签名产物，随后用脚本手工签名。
@@ -98,14 +102,17 @@ if [[ -n "${PROJECT_FILE}" ]]; then
     verify_shared_storage_entitlements "${APP_PATH}"
 
     # 首次切换存储路径：把旧 App Group 文件复制到共享目录（不覆盖、不删除）
+    require_safari_stopped
     migrate_safari_app_group_storage
 
     # 复制到应用程序目录
     APPS_DIR_APP="/Applications/${SAFARI_APP_NAME}.app"
     echo "[build] Copying to ${APPS_DIR_APP}..."
+    require_safari_stopped
     rm -rf "${APPS_DIR_APP}"
     cp -R "${APP_PATH}" "${APPS_DIR_APP}"
 
+    require_safari_stopped
     node "${ROOT_DIR}/scripts/clean-safari-homepage-registrations.mjs"
 
     python3 "${ROOT_DIR}/scripts/safari-storage-guard.py" verify \
@@ -152,22 +159,6 @@ echo "[build] done: ${DIST_DIR}/firefox.zip"
 echo "[build] done: ${DIST_DIR}/safari.zip"
 if [[ -d "${SAFARI_PROJECT_DIR}" ]]; then
   echo "[build] done: ${SAFARI_PROJECT_DIR}"
-fi
-
-# 同步构建入口与其依赖的 lib 到 dist：dist/run-build.command 需要能独立运行。
-# 26.1.8 曾只同步 .command 而漏掉 lib/，导致 dist 入口 source lib/safari-signing.sh 失败、构建直接退出。
-# 从 dist 入口启动时 SCRIPT_DIR 就是 dist，cp 源与目标为同一文件会报错退出，用 -ef 跳过。
-if [[ -d "${DIST_DIR}" && -f "${SCRIPT_DIR}/lib/safari-signing.sh" ]]; then
-  mkdir -p "${DIST_DIR}/lib"
-  for src in "${SCRIPT_DIR}/build-macos.command" "${SCRIPT_DIR}/run-build.command" "${SCRIPT_DIR}/lib/"*.sh; do
-    rel="${src#"${SCRIPT_DIR}/"}"
-    dst="${DIST_DIR}/${rel}"
-    if [[ "${src}" -ef "${dst}" ]]; then
-      continue
-    fi
-    cp "${src}" "${dst}"
-  done
-  echo "[build] synced build entry + lib to ${DIST_DIR}"
 fi
 
 if [[ "${NO_PAUSE:-0}" != "1" ]]; then

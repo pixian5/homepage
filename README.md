@@ -4,10 +4,11 @@
 
 ## 当前开发进度
 
-当前版本 **27.1.7**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
+当前版本 **27.1.8**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
 
 项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。
 
+- **27.1.8**：默认构建只生成扩展包，不退出浏览器、不替换应用。见[当前开发进度](docs/20261120-2055-当前开发进度-Opus-5.md)。
 - **27.1.7**：设置面板导入导出与备份操作移入独立模块，补齐离线缓存，修复备份恢复未落盘及空列表提示。见[当前开发进度](docs/20261120-2023-当前开发进度-Opus-5.md)。
 - **27.1.6（提交轮次 29.3）**：完成壁纸全链路隐患排查与加固：落地 Bing 壁纸语言隔离缓存与 Stale-While-Revalidate（SWR）后台静默刷新机制（解决隔日首开新标签页 15s 长时间纯色卡顿与等待，实现 0ms 瞬间显示旧壁纸并在后台无缝拉取替换）；安全放行嵌套 `rgba(...)`/`rgb(...)` 的现代 CSS 渐变函数（解决原正则遇到嵌套括号提前截断误判回退纯色缺陷）；加固设置面板“合并导入”自定义大图保全；修复存储配额超限 `trimLocalBackground` 清理后的裂脑态；单测增至 551 项，双端无头浏览器真实冒烟 100% 通过，详见[壁纸全链路隐患排查与SWR渐变加固](docs/20261107-0850-壁纸全链路隐患排查与SWR渐变加固-Claude-Opus-5.md)。
 - **27.1.5（提交轮次 29.2）**：全链路排查并根治 Chrome 每次打开新标签页背景回退纯色（solid color）的问题：根除了 sync_projection、sync_merge、sync_engine、data-utils 中残留的硬编码 `schemaVersion: 1` 导致 `migrateData` 在新标签页启动时反复触发 `MIGRATIONS[1]` 覆写 Bing 壁纸为纯色的严重缺陷；加固自定义背景大图在同步拉取与回退合并时的本地持久化隔离；修复 theme-manager 中 CSS 简写属性导致的 `background-size: cover` 覆盖问题；新增 `tests/background-persistence.test.js`，详见[Chrome新标签页背景回退纯色排查与根治](docs/20261107-0155-Chrome新标签页背景回退纯色排查与根治-Claude-Opus-5.md)。
@@ -53,6 +54,8 @@
 当前单测 551 项（本机 549 通过，2 项语言检测用例受系统区域设置影响），Biome 检查 0 告警，三端构建与浏览器冒烟均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
 
 ## 下一步待实现
+
+- [原生安装的验收条件](docs/20261120-2055-下一步待实现-Opus-5.md)：单独同意安装且自行退出 Safari 后才验收。
 
 - 检查导入和恢复在保存失败时的提示与数据回滚，见[下一步待实现](docs/20261120-2023-下一步待实现-Opus-5.md)。
 
@@ -177,7 +180,7 @@
 | 主构建脚本 | [scripts/build.sh](scripts/build.sh) | 三端资源复制、manifest 写入、zip/xpi 打包、Safari 转换与签名、版本号自增调用 |
 | Firefox ESM 打包 | [scripts/bundle-firefox.mjs](scripts/bundle-firefox.mjs) | `stripImports()` / `stripExports()` / `bundle()` / `patchHtml()`，合并多 ESM 为单文件外部脚本 |
 | 版本号自增 | [scripts/bump-version.mjs](scripts/bump-version.mjs) | `bumpVersion()` / `run()`，+0.0.1 满十进一，同步版本文件、包、锁文件和三端清单 |
-| macOS 一键构建 | [scripts/build-macos.command](scripts/build-macos.command) | 调用 build.sh + Xcode Release 构建 + 开发签名 + 安装到 /Applications + lsregister 去重 |
+| macOS 一键构建 | [scripts/build-macos.command](scripts/build-macos.command) | 默认仅打包；显式 `--install` 才编译、签名和安装 |
 
 ## 4. 目录说明
 
@@ -587,37 +590,9 @@ CSP 配置：`connect-src * https: http:`（允许任意 favicon 源和 Bing API
 npm run build
 ```
 
-或在 macOS 直接运行项目内构建入口：
+或使用 `bash dist/build-macos.command`。两者默认只打包：生成 `dist/chrome.zip`、`dist/firefox.zip`、`dist/firefox.xpi`、`dist/safari.zip` 及对应扩展目录，不安装、不注册、不打开或退出浏览器。构建时版本递增，`SKIP_BUMP=1` 可重建同一版本。
 
-```bash
-NO_PAUSE=1 ./scripts/build-macos.command
-```
-
-说明：
-
-- `scripts/build-macos.command` 默认使用 Xcode `Release` 配置构建 Safari 宿主 App，避免 `Debug` 产物注入 `__preview.dylib` / `*.debug.dylib` 导致 Safari 扩展新标签页空白。
-- 若本机钥匙串存在 `Apple Development` 证书，`scripts/build-macos.command` 会在 Xcode 构建后自动对 Safari 宿主 App 与 `.appex` 进行二次开发签名，避免 Safari 启动后清空新标签页接管设置。
-- 如需临时切回其他配置，可在命令前覆盖环境变量：`SAFARI_XCODE_CONFIGURATION=Debug NO_PAUSE=1 ./scripts/build-macos.command`
-
-执行链：
-
-1. `npm run build` → `bash scripts/build.sh`
-2. build.sh 开头调用 `scripts/bump-version.mjs` 自增版本号（可用 `SKIP_BUMP=1` 跳过，如 CI 场景）
-3. 按顺序构建三端：
-
-   | 阶段 | 函数 | 做什么 |
-   |------|------|--------|
-   | Chrome 构建 | `build_chrome` | 复制 `src/` → `dist/chrome/`，写入 `manifest.chrome.json`，打包 `chrome.zip` |
-   | Firefox 构建 | `build_firefox` | 复制 `src/` → `dist/firefox/`，调 `bundle-firefox.mjs` 打包 ESM，写入 manifest，打包 `firefox.zip` + `firefox.xpi` |
-   | Safari 构建 | `build_safari` | 复制 `src/` → `dist/safari/`，写入 `manifest.safari.json`，打包 `safari.zip` |
-   | Safari App（仅 macOS） | `build_safari_app` | 调 `safari-web-extension-converter` 生成 Xcode 工程 → `xcodebuild` 构建 |
-   | Safari 安装（仅 macOS） | `install_safari_app` | 复制到 `/Applications/`、`lsregister -u` 去重、启动 App 注册扩展 |
-
-4. 产物输出：
-   - `dist/chrome` / `dist/chrome.zip`
-   - `dist/firefox` / `dist/firefox.zip` / `dist/firefox.xpi`
-   - `dist/safari` / `dist/safari.zip`
-   - `dist/safari-app`（仅 macOS，Safari 宿主 App Xcode 工程）
+**原生安装是独立操作**：只有明确要安装、且已自行退出 Safari 时，才运行 `NO_PAUSE=1 bash dist/build-macos.command --install`。Safari 仍在运行时脚本拒绝安装。普通窗口和无痕窗口一视同仁，不需要也不会读取窗口内容。扩展数据备份不能恢复浏览器会话。
 
 ## 11.3 Firefox 特别说明
 
@@ -656,9 +631,9 @@ Firefox 使用 Manifest V3。由于 Firefox 扩展 CSP 对 ESM 模块加载有�
 
 ## 12.3 Safari
 
-1. 运行 `NO_PAUSE=1 ./scripts/build-macos.command`
-2. 脚本会生成并构建 `dist/safari-app`
-3. 自动启动生成出的 `我的首页 Safari.app`
+1. 默认构建无需退出浏览器，也不会更新已安装应用。
+2. 需要安装新版时，请先保存需要保留的内容，再自行决定何时退出 Safari。
+3. 明确安装后运行 `NO_PAUSE=1 bash dist/build-macos.command --install`。
 4. 在 Safari 的“设置 -> 高级”开启开发菜单后，到“开发 -> 扩展”里启用对应扩展
 5. Safari **无法**读取系统浏览历史（WebExtensions history API 不支持）。历史分组显示扩展自建的「最近访问」：请先在 Safari 正常浏览网页，再打开新标签页查看
 6. Safari 请到「设置 → 扩展」确认「我的首页」已启用，且「网站」权限里「对于其他网站」为允许（用于图标与内容脚本）
@@ -815,13 +790,13 @@ Firefox 使用 Manifest V3。由于 Firefox 扩展 CSP 对 ESM 模块加载有�
 | 主构建脚本 | [scripts/build.sh](scripts/build.sh) | 复制资源 + 写 manifest + 打包 + Safari 转换 + 签名 |
 | 版本号自增 | [scripts/bump-version.mjs](scripts/bump-version.mjs) | `bumpVersion()`（满十进一） |
 | 构建入口 | [package.json](package.json) | `npm run build` → `bash scripts/build.sh` |
-| macOS 一键入口 | [scripts/build-macos.command](scripts/build-macos.command) | 含 Xcode 构建 + 开发签名 + 安装到 /Applications + lsregister 去重 |
+| macOS 一键入口 | [scripts/build-macos.command](scripts/build-macos.command) | 默认仅打包；显式安装时才走原生构建链 |
 | Firefox ESM 打包 | [scripts/bundle-firefox.mjs](scripts/bundle-firefox.mjs) | `bundle()` 合并 + `patchHtml()` 替换脚本标签 |
 | Chrome 构建 | [scripts/build.sh](scripts/build.sh) | `build_chrome` 函数 |
 | Firefox 构建 | [scripts/build.sh](scripts/build.sh) | `build_firefox` 函数 + 调 bundle-firefox.mjs |
-| Safari 构建 | [scripts/build.sh](scripts/build.sh) | `build_safari` + `build_safari_app` + `install_safari_app` |
+| Safari 构建 | [scripts/build.sh](scripts/build.sh) | 扩展打包；显式安装入口另行调用 `build_safari_project` |
 | Safari Info.plist 补丁 | [scripts/build.sh](scripts/build.sh) | `fix_safari_extension_info_plist`（加 SFSafariWebsiteAccess） |
-| Safari 旧插件清理 | [scripts/build.sh](scripts/build.sh) | `cleanup_stale_safari_plugins`（旧 bundle id 注销） |
+| Safari 安装后登记 | [scripts/build-macos.command](scripts/build-macos.command) | 仅显式安装后执行 |
 
 ### 16.12 安全防护
 

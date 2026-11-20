@@ -10,22 +10,7 @@
 
 ## 2. 当前构建方式
 
-项目内统一使用：
-
-```bash
-cd /Users/x/code/homepage
-NO_PAUSE=1 ./scripts/build-macos.command
-```
-
-这条命令会自动完成以下动作：
-
-1. 版本号自动加 `0.1`
-2. 构建 `dist/chrome`、`dist/firefox`、`dist/safari`
-3. 复用并更新 `dist/safari-app` 下的 Safari Xcode 工程
-4. 默认使用 Xcode `Release` 配置构建 Safari 宿主 App
-5. 若本机钥匙串存在 `Apple Development` 证书，则自动对 Safari 宿主 App 和 `.appex` 进行二次开发签名
-6. 结束旧的 `我的首页 Safari` 进程
-7. 删除旧构建目录并启动新宿主 App
+日常使用 `bash dist/build-macos.command`：只输出扩展包，不安装原生应用，不改变任何浏览器窗口。若要替换 `/Applications` 下的宿主，必须另外明确选择安装并自行退出 Safari。脚本不会替你退出；扩展数据快照也不包含无痕会话。
 
 ## 3. 为什么 Safari 版之前会失败
 
@@ -73,11 +58,11 @@ Safari Web Extension 的 Debug 构建里会出现：
 
 ## 5. 安装与启用
 
-### 5.1 构建并启动宿主 App
+### 5.1 确认安装且已自行退出 Safari 后
 
 ```bash
 cd /Users/x/code/homepage
-NO_PAUSE=1 ./scripts/build-macos.command
+NO_PAUSE=1 bash dist/build-macos.command --install
 ```
 
 ### 5.2 在 Safari 中启用
@@ -98,15 +83,13 @@ NO_PAUSE=1 ./scripts/build-macos.command
 
 ```bash
 cd /Users/x/code/homepage
-NO_PAUSE=1 ./scripts/build-macos.command
+bash dist/build-macos.command
 ```
 
 原因：
 
-- 这条命令已经固定走 `Release`
-- 会自动重签 Safari 宿主 App
-- 会结束旧程序并启动新程序
-- 不需要手动把 App 拖到“应用程序”目录
+- 只打包，不改已安装版本。
+- 平时浏览时也可以构建；安装另选时间。
 
 ## 7. 出问题时先检查什么
 

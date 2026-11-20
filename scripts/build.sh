@@ -12,6 +12,13 @@ SAFARI_APP_NAME="${SAFARI_APP_NAME:-我的首页 Safari}"
 SAFARI_BUNDLE_ID="${SAFARI_BUNDLE_ID:-com.aeroluna.homepage.safari}"
 SAFARI_APP_GROUP_ID="${SAFARI_APP_GROUP_ID:-group.com.aeroluna.homepage.safari}"
 
+# 默认仅生成扩展包；工程生成只供原生构建入口使用。
+case "$#:${1:-}" in
+  0:) generate_project=0 ;;
+  1:--safari-project-only) generate_project=1 ;;
+  *) echo "用法：$0 [--safari-project-only]" >&2; exit 2 ;;
+esac
+
 # 统一版本号自增入口：允许 SKIP_BUMP=1 跳过（如 CI 或调试场景）
 if [[ "${SKIP_BUMP:-0}" != "1" ]]; then
   echo "[build] Bumping version..."
@@ -48,22 +55,6 @@ package_target_dir() {
       -x '__MACOSX/*' \
       -x '*/__MACOSX/*'
   )
-}
-
-cleanup_stale_safari_plugins() {
-  # 旧版 bundle id 可能残留为独立插件条目，导致 Safari 中出现重复扩展，覆盖页失效
-  local old_bundle_id="com.homepage.newtab.safari.extension"
-  local old_debug_app="$SAFARI_PROJECT_DIR/build-output/Debug/$SAFARI_APP_NAME.app"
-
-  if [[ -d "$old_debug_app" ]]; then
-    echo "[build] Removing stale Safari Debug build: $old_debug_app"
-    rm -rf "$old_debug_app" 2>/dev/null || true
-  fi
-
-  if pluginkit -m -p com.apple.Safari.web-extension 2>/dev/null | grep -qF "$old_bundle_id"; then
-    echo "[build] Disabling stale Safari plugin: $old_bundle_id"
-    pluginkit -e ignore -i "$old_bundle_id" 2>/dev/null || true
-  fi
 }
 
 detect_apple_development_team() {
@@ -628,51 +619,6 @@ build_safari_project() {
     return 0
   fi
 
-  # SAFARI_SKIP_APP_BUILD=1：仅生成工程与 safari.zip，跳过 Release 构建。
-  # 由 build-macos.command 接管宿主 App 的构建/签名/安装，避免重复 xcodebuild。
-  if [[ "${SAFARI_SKIP_APP_BUILD:-0}" == "1" ]]; then
-    echo "[build] SAFARI_SKIP_APP_BUILD=1, skip Safari app xcodebuild (deferred to caller)"
-    return 0
-  fi
-
-  local build_dir="${SAFARI_PROJECT_DIR}/build-output"
-  local dev_team safari_scheme
-  dev_team="$(detect_apple_development_team)"
-
-  safari_scheme="${SAFARI_APP_NAME} (macOS)"
-  if ! xcodebuild -list -project "$project_file" 2>/dev/null | grep -qF "$safari_scheme"; then
-    safari_scheme="${SAFARI_APP_NAME}"
-  fi
-
-  echo "[build] Building Safari app with xcodebuild (scheme: $safari_scheme)..."
-  if [[ -n "$dev_team" ]]; then
-    echo "[build] Using development team: $dev_team"
-    xcodebuild -project "$project_file" \
-      -scheme "$safari_scheme" \
-      -configuration Release \
-      -sdk macosx \
-      -destination 'platform=macOS' \
-      -derivedDataPath "${SAFARI_PROJECT_DIR}/build-derived" \
-      SYMROOT="${build_dir}" \
-      ONLY_ACTIVE_ARCH=YES \
-      DEVELOPMENT_TEAM="$dev_team" \
-      CODE_SIGN_STYLE=Automatic \
-      build
-  else
-    echo "[build] No development team found, building with adhoc signing..."
-    xcodebuild -project "$project_file" \
-      -scheme "$safari_scheme" \
-      -configuration Release \
-      -sdk macosx \
-      -destination 'platform=macOS' \
-      -derivedDataPath "${SAFARI_PROJECT_DIR}/build-derived" \
-      SYMROOT="${build_dir}" \
-      ONLY_ACTIVE_ARCH=YES \
-      CODE_SIGN_IDENTITY="-" \
-      build
-  fi
-
-  rm -rf "${SAFARI_PROJECT_DIR}/build-derived"
 }
 
 rm -f "$DIST_DIR/chrome.zip" "$DIST_DIR/firefox.zip" "$DIST_DIR/firefox.xpi" "$DIST_DIR/safari.zip"
@@ -688,67 +634,8 @@ package_target_dir "$FIREFOX_DIR" "$DIST_DIR/firefox.zip"
 cp "$DIST_DIR/firefox.zip" "$DIST_DIR/firefox.xpi"
 package_target_dir "$SAFARI_DIR" "$DIST_DIR/safari.zip"
 
-install_safari_app() {
-  local app_name="$SAFARI_APP_NAME"
-  local source_app
-  local dest_app="/Applications/${app_name}.app"
-
-  source_app="$(find "$SAFARI_PROJECT_DIR" -maxdepth 5 -name "${app_name}.app" -type d -print -quit 2>/dev/null || true)"
-  if [[ -z "$source_app" ]]; then
-    echo "[install] Safari app not found in build output"
-    return 0
-  fi
-
-  echo "[install] Found Safari app: $source_app"
-  echo "[install] Installing to: $dest_app"
-
-  pkill -f "${app_name}" 2>/dev/null || true
-  sleep 1
-
-  if [[ -d "$dest_app" ]]; then
-    echo "[install] Removing old app..."
-    rm -rf "$dest_app" 2>/dev/null || true
-    sleep 1
-  fi
-
-  echo "[install] Copying app..."
-  ditto "$source_app" "$dest_app"
-
-  if [[ ! -d "$dest_app" ]]; then
-    echo "[install] ERROR: ditto failed, trying sudo..."
-    sudo rm -rf "$dest_app" 2>/dev/null || true
-    sudo ditto "$source_app" "$dest_app"
-  fi
-
-  if [[ ! -d "$dest_app" ]]; then
-    echo "[install] ERROR: Failed to install to /Applications"
-    echo "[install] Please manually copy $source_app to /Applications"
-    return 1
-  fi
-
-  echo "[install] App copied successfully"
-  if [[ "${SAFARI_LAUNCH_AFTER_BUILD:-0}" == "1" ]]; then
-    echo "[install] Launching app to register extension..."
-    open "$dest_app"
-    sleep 3
-  else
-    echo "[install] Skip launching Safari app (set SAFARI_LAUNCH_AFTER_BUILD=1 to launch)"
-  fi
-
-  # Xcode 构建时会将 build-output 里的 .app 注册到 LaunchServices，
-  # 安装到 /Applications 后如果不注销源路径，Safari 扩展列表会出现重复条目。
-  echo "[install] Unregistering build-output app from LaunchServices..."
-  /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -u "$source_app" 2>/dev/null || true
-
-  echo "[install] Install completed"
-}
-
-cleanup_stale_safari_plugins
-build_safari_project
-# SAFARI_SKIP_APP_BUILD=1：宿主 App 构建与安装由调用方（build-macos.command）接管，
-# 跳过 install_safari_app，避免重复 xcodebuild 与 LaunchServices 重复注册。
-if [[ "${SAFARI_SKIP_APP_BUILD:-0}" != "1" ]]; then
-  install_safari_app
+if [[ "$generate_project" == 1 ]]; then
+  build_safari_project
 fi
 
-echo "Build done: chrome/firefox/safari"
+echo "[build] 已生成扩展包：$DIST_DIR/{chrome.zip,firefox.zip,firefox.xpi,safari.zip}；未安装。"

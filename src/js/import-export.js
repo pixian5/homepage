@@ -50,6 +50,29 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
     RECENT_GROUP_ID,
   } = { ...ctx.ui, ...ctx.deps };
 
+  let importInFlight = false;
+
+  /** 在隔离副本上修改，写盘失败恢复原对象；成功后的关闭/渲染由调用方负责。 */
+  async function commitImport(change) {
+    if (importInFlight) throw new Error("已有导入正在保存，请稍后重试");
+    importInFlight = true;
+    const previous = getData();
+    try {
+      setData(cloneDataSnapshot(previous));
+      await change();
+      const result = await persistData();
+      if (!result?.ok) throw new Error(result?.err || "写入失败");
+    } catch (error) {
+      setData(previous);
+      syncBackupBaseline?.(previous);
+      resetSettingsClockBaseline(previous);
+      resetPlacementClockBaseline(previous);
+      throw error;
+    } finally {
+      importInFlight = false;
+    }
+  }
+
   function downloadJsonFile(filename, obj) {
     const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -144,54 +167,55 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
         // 运行时 schema 校验：修复非法字段、清理悬空引用、合并默认 settings
         const repairedIncoming = repairHomepageData(incoming, defaultSettings());
         if (!repairedIncoming.schemaVersion) throw new Error("无 schemaVersion");
-        pushBackup();
-        if (mode === "replace") {
-          setData(repairedIncoming);
-          resetSettingsClockBaseline(getData());
-          resetPlacementClockBaseline(getData());
-        } else if (mode === "merge") {
-          const deviceId = await getOrCreateDeviceId();
-          const incomingDoc = toSyncDocument(repairedIncoming, {
-            deviceId: `import_${deviceId}`,
-            docId: repairedIncoming?._syncMeta?.docId || createDocId(),
-            revision: Number(repairedIncoming?._syncMeta?.revision || 1),
-            writtenAt: Number(repairedIncoming.lastUpdated || Date.now()),
-          });
-          const merged = mergeHomepage(getData(), incomingDoc, { deviceId, now: Date.now() });
-          if (!merged.ok) throw new Error(merged.reason || "合并失败");
-          if (repairedIncoming?.settings?.backgroundCustom && !merged.state.settings?.backgroundCustom) {
-            merged.state.settings.backgroundCustom = repairedIncoming.settings.backgroundCustom;
+        await commitImport(async () => {
+          pushBackup();
+          if (mode === "replace") {
+            setData(repairedIncoming);
+            resetSettingsClockBaseline(getData());
+            resetPlacementClockBaseline(getData());
+          } else if (mode === "merge") {
+            const deviceId = await getOrCreateDeviceId();
+            const incomingDoc = toSyncDocument(repairedIncoming, {
+              deviceId: `import_${deviceId}`,
+              docId: repairedIncoming?._syncMeta?.docId || createDocId(),
+              revision: Number(repairedIncoming?._syncMeta?.revision || 1),
+              writtenAt: Number(repairedIncoming.lastUpdated || Date.now()),
+            });
+            const merged = mergeHomepage(getData(), incomingDoc, { deviceId, now: Date.now() });
+            if (!merged.ok) throw new Error(merged.reason || "合并失败");
+            if (repairedIncoming?.settings?.backgroundCustom && !merged.state.settings?.backgroundCustom) {
+              merged.state.settings.backgroundCustom = repairedIncoming.settings.backgroundCustom;
+            }
+            setData(merged.state);
+            resetSettingsClockBaseline(getData());
+            resetPlacementClockBaseline(getData());
+          } else if (mode === "add") {
+            mergeRootBookmarkData(getData(), repairedIncoming);
           }
-          setData(merged.state);
-          resetSettingsClockBaseline(getData());
-          resetPlacementClockBaseline(getData());
-        } else if (mode === "add") {
-          mergeRootBookmarkData(getData(), repairedIncoming);
-        }
-        // 导入完成后对所有节点 URL 做协议白名单校验，丢弃危险协议
-        if (getData()?.nodes) {
-          for (const id of Object.keys(getData().nodes)) {
-            const node = getData().nodes[id];
-            if (!node || node.type === "folder") continue;
-            const safe = normalizeUrl(node.url);
-            if (!safe) {
-              markNodeDeleted(getData(), id);
-              for (const g of getData().groups || []) {
-                if (Array.isArray(g.nodes)) g.nodes = g.nodes.filter((nid) => nid !== id);
+          // 导入完成后对所有节点 URL 做协议白名单校验，丢弃危险协议
+          if (getData()?.nodes) {
+            for (const id of Object.keys(getData().nodes)) {
+              const node = getData().nodes[id];
+              if (!node || node.type === "folder") continue;
+              const safe = normalizeUrl(node.url);
+              if (!safe) {
+                markNodeDeleted(getData(), id);
+                for (const g of getData().groups || []) {
+                  if (Array.isArray(g.nodes)) g.nodes = g.nodes.filter((nid) => nid !== id);
+                }
+              } else {
+                if (node.url !== safe) stampNodeFieldChanges(node, { urlChanged: true });
+                node.url = safe;
               }
-            } else {
-              if (node.url !== safe) stampNodeFieldChanges(node, { urlChanged: true });
-              node.url = safe;
             }
           }
-        }
-        await persistData();
+        });
         closeModal();
         render();
         processPendingIconFetches();
         toast("导入设置成功", "success");
       } catch (err) {
-        toast(`导入设置失败，你检查一下你的设置对了嘛，先去你其它浏览器导出设置才能导入设置：${err.message}`, "error");
+        toast(`导入设置失败：${err.message || err}`, "error");
       }
     });
 
@@ -278,23 +302,30 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
         toast(t("import.noUrls"), "warning");
         return;
       }
-      const targetList = getPlacementList(group);
-      pushBackup();
-      for (const url of urls) {
-        let title = "";
-        try {
-          title = new URL(url).hostname;
-        } catch (_e) {
-          title = "";
-        }
-        const node = createItemNode({ url, title, iconType: "auto", iconPending: true });
-        getData().nodes[node.id] = node;
-        targetList.push(node.id);
+      try {
+        await commitImport(() => {
+          const targetGroup = getRootContainerById(groupId);
+          const targetList = getPlacementList(targetGroup);
+          pushBackup();
+          for (const url of urls) {
+            let title = "";
+            try {
+              title = new URL(url).hostname;
+            } catch (_e) {
+              title = "";
+            }
+            const node = createItemNode({ url, title, iconType: "auto", iconPending: true });
+            getData().nodes[node.id] = node;
+            targetList.push(node.id);
+          }
+          setPlacementList(targetGroup, targetList);
+          touchPlacementContainer(targetGroup);
+          getData().settings.lastActiveGroupId = targetGroup.id;
+        });
+      } catch (error) {
+        toast(`导入网址失败：${error.message || error}`, "error");
+        return;
       }
-      setPlacementList(group, targetList);
-      touchPlacementContainer(group);
-      getData().settings.lastActiveGroupId = group.id;
-      await persistData();
       closeWithCleanup();
       render();
       processPendingIconFetches();
@@ -417,13 +448,14 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
             toast(t("settings.sync.importFail", { reason: result.reason || "merge" }), "error");
             return;
           }
-          pushBackup();
-          setData(result.state);
-          if (!getData().settings) getData().settings = {};
-          resetSettingsClockBaseline(getData());
-          resetPlacementClockBaseline(getData());
-          // 保持用户当前同步开关
-          await persistData();
+          await commitImport(() => {
+            pushBackup();
+            setData(result.state);
+            if (!getData().settings) getData().settings = {};
+            resetSettingsClockBaseline(getData());
+            resetPlacementClockBaseline(getData());
+            // 保持用户当前同步开关
+          });
           render();
           processPendingIconFetches();
           toast(t("settings.sync.importOk"));
@@ -469,12 +501,13 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
             toast(t("settings.sync.importFail", { reason: result.reason || "merge" }), "error");
             return;
           }
-          pushBackup();
-          setData(result.state);
-          if (!getData().settings) getData().settings = {};
-          resetSettingsClockBaseline(getData());
-          resetPlacementClockBaseline(getData());
-          await persistData();
+          await commitImport(() => {
+            pushBackup();
+            setData(result.state);
+            if (!getData().settings) getData().settings = {};
+            resetSettingsClockBaseline(getData());
+            resetPlacementClockBaseline(getData());
+          });
           render();
           processPendingIconFetches();
           toast(t("settings.sync.importOk"));
@@ -550,10 +583,11 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
             toast(t("settings.bookmarks.importEmpty"), "warning");
             return;
           }
-          pushBackup();
-          // mergeRootBookmarkData：同 ID 以本机为准、只追加缺失引用，天然幂等可重复导入
-          mergeRootBookmarkData(getData(), incoming);
-          await persistData();
+          await commitImport(() => {
+            pushBackup();
+            // 在副本里追加，失败时不把书签或备份留在运行态。
+            mergeRootBookmarkData(getData(), incoming);
+          });
           render();
           processPendingIconFetches();
           toast(t("settings.bookmarks.importOk"));

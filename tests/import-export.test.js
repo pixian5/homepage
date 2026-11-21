@@ -34,11 +34,13 @@ function makePanel() {
       processPendingIconFetches() {},
       persistData: () => {
         saved = structuredClone(data);
+        return { ok: true };
       },
       qsa: () => [],
       elements: { modal: {} },
     },
     deps: {
+      cloneDataSnapshot: structuredClone,
       defaultSettings: () => ({}),
       repairHomepageData: (incoming) => incoming,
       resetSettingsClockBaseline() {},

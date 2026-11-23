@@ -284,7 +284,7 @@ it("清空卡片与清空数据写盘失败时恢复原数据、分组与基线�
         html,
         rawHtml,
         escapeHtml: (s) => String(s),
-        t: (k) => k,
+        t: (k, vars) => (vars?.reason ? `${k}: ${vars.reason}` : k),
         currentLang: () => "zh-CN",
         toast: (text, type = "success") => notices.push({ text, type }),
         elements: { modal: {} },
@@ -380,5 +380,67 @@ it("清空卡片与清空数据写盘失败时恢复原数据、分组与基线�
     globalThis.confirm = oldConfirm;
     if (oldDocument === undefined) delete globalThis.document;
     else globalThis.document = oldDocument;
+  }
+});
+
+it("导入导出与备份管理子弹窗遵循注入的多语言翻译，不泄露中文硬编码", async () => {
+  const { translateAppText } = await import("../src/js/app-i18n.js");
+  for (const lang of ["en", "ja"]) {
+    const fields = new Map();
+    const $ = (id) => {
+      if (!fields.has(id)) {
+        const field = { value: "", addEventListener() {} };
+        fields.set(id, field);
+      }
+      return fields.get(id);
+    };
+    const modals = [];
+    const data = {
+      settings: {},
+      nodes: {},
+      groups: [{ id: "grp_all", name: "All", order: -1, nodes: [], systemAllGroup: true }],
+      backups: [],
+    };
+    const ctl = createSettingsController({
+      getData: () => data,
+      setData: () => {},
+      getActiveGroupId: () => "grp_all",
+      ui: {
+        $,
+        qsa: () => [],
+        html,
+        rawHtml,
+        t: (key, vars) => translateAppText(lang, key, vars),
+        elements: { modal: {}, modalOverlay: { addEventListener() {}, removeEventListener() {} } },
+        openModal: (markup) => modals.push(markup),
+        closeModal() {},
+        leaveSettingsForSubpanel() {},
+        toast() {},
+        render() {},
+        pushBackup() {},
+        processPendingIconFetches() {},
+        persistData: async () => ({ ok: true }),
+      },
+      deps: {
+        getRootGroup: () => data.groups[0],
+        getRootContainers: () => data.groups,
+        isAllBookmarksGroup: () => true,
+        RECENT_GROUP_ID: "__recent__",
+      },
+    });
+    await ctl.openImportModal();
+    ctl.openImportUrlModal();
+    ctl.openBackupModal();
+    assert.equal(modals.length, 3);
+    for (const markup of modals) {
+      if (lang === "en") {
+        assert.equal(/[\u4e00-\u9fff]/.test(markup), false, `en 模式下不应出现中文硬编码: ${markup}`);
+      } else {
+        assert.match(markup, /[\u3040-\u30ff]/, `ja 模式下应渲染日文假名文案: ${markup}`);
+        for (const zhWord of ["导入设置", "导入网址", "备份管理", "暂无备份"]) {
+          assert.equal(markup.includes(zhWord), false, `ja 模式下不应残留中文 ${zhWord}`);
+        }
+      }
+    }
   }
 });

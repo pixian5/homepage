@@ -832,7 +832,7 @@ var HomepageSettingsController = (() => {
           getData().settings.syncEnabled = false;
           setActiveGroupId(getRootGroup().id);
           const res = await persistData();
-          if (!res?.ok) throw new Error(res?.err || "写入失败");
+          if (!res?.ok) throw new Error(res?.err || t("settings.import.writeFailed"));
           closeModal();
           render();
           toast(t("toast.cleared"));
@@ -842,7 +842,7 @@ var HomepageSettingsController = (() => {
           _ctx.syncBackupBaseline?.(previous);
           _ctx.deps?.resetSettingsClockBaseline?.(previous);
           _ctx.deps?.resetPlacementClockBaseline?.(previous);
-          toast(`清空数据失败：${error?.message || error}`, "error");
+          toast(t("settings.clearDataFail", { reason: error?.message || error }), "error");
         }
       });
     });
@@ -862,7 +862,7 @@ var HomepageSettingsController = (() => {
           getData().settings = preservedSettings;
           setActiveGroupId(ALL_BOOKMARKS_GROUP_ID);
           const res = await persistData();
-          if (!res?.ok) throw new Error(res?.err || "写入失败");
+          if (!res?.ok) throw new Error(res?.err || t("settings.import.writeFailed"));
           closeModal();
           render();
           toast(t("toast.cardsCleared"));
@@ -872,7 +872,7 @@ var HomepageSettingsController = (() => {
           _ctx.syncBackupBaseline?.(previous);
           _ctx.deps?.resetSettingsClockBaseline?.(previous);
           _ctx.deps?.resetPlacementClockBaseline?.(previous);
-          toast(`清空卡片失败：${error?.message || error}`, "error");
+          toast(t("settings.clearCardsFail", { reason: error?.message || error }), "error");
         }
       });
     });

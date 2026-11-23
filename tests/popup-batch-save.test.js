@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { ALL_BOOKMARKS_GROUP_ID } from "../src/js/data-utils.js";
-import { filterSavableTabs, saveTabsToContainer } from "../src/js/popup-batch-save.js";
+import { filterSavableTabs, saveSingleTabToContainer, saveTabsToContainer } from "../src/js/popup-batch-save.js";
 
 /** 模拟 chrome.tabs.query({ currentWindow: true }) 的返回 */
 function makeTabs() {
@@ -145,5 +145,82 @@ describe("saveTabsToContainer", () => {
     });
     // 目标是普通书签节点（非分组/文件夹）时同样拒绝
     assert.deepEqual(saveTabsToContainer(data, savable, { containerId: "itm_existing" }), { error: "no_group" });
+  });
+});
+
+describe("saveSingleTabToContainer", () => {
+  const NOW = 1700000000000;
+
+  it("writes a single tab into group or folder with placementClock and save metadata", () => {
+    const data = makeData();
+    const resGroup = saveSingleTabToContainer(
+      data,
+      { url: "https://docs.example.com/a", title: "Docs" },
+      { containerId: ALL_BOOKMARKS_GROUP_ID, deviceId: "dev_single", now: NOW },
+    );
+    assert.equal(resGroup.ok, true);
+    assert.equal(resGroup.groupId, ALL_BOOKMARKS_GROUP_ID);
+    const groupNode = data.nodes[resGroup.nodeId];
+    assert.equal(groupNode.title, "Docs");
+    assert.equal(groupNode.updatedBy, "dev_single");
+    const groupClock = data._syncMeta.placementClock[resGroup.nodeId];
+    assert.deepEqual(groupClock, {
+      parentKind: "group",
+      parentId: ALL_BOOKMARKS_GROUP_ID,
+      index: 1,
+      updatedAt: NOW,
+      updatedBy: "dev_single",
+    });
+    assert.equal(data.settings.lastSaveUrl, "https://docs.example.com/a");
+    assert.equal(data.settings.lastSaveTs, NOW);
+    assert.equal(data.settings.lastSaveToast, null);
+    assert.equal(data.settings.lastActiveGroupId, ALL_BOOKMARKS_GROUP_ID);
+
+    // 写入嵌套文件夹并验证自定义标题与时钟单调推进
+    const resFolder = saveSingleTabToContainer(
+      data,
+      { url: "https://app.example.com/page", title: "原标题" },
+      { containerId: "fld_work", customTitle: "自定义标题", deviceId: "dev_single", now: NOW + 10 },
+    );
+    assert.equal(resFolder.ok, true);
+    assert.equal(data.nodes[resFolder.nodeId].title, "自定义标题");
+    assert.deepEqual(data._syncMeta.placementClock[resFolder.nodeId], {
+      parentKind: "folder",
+      parentId: "fld_work",
+      index: 0,
+      updatedAt: NOW + 10,
+      updatedBy: "dev_single",
+    });
+  });
+
+  it("monotonically advances placementClock when container clock is ahead of wall clock", () => {
+    const data = makeData();
+    data.nodes.fld_work.updatedAt = NOW + 5000;
+    data.lastUpdated = NOW + 6000;
+    const res = saveSingleTabToContainer(
+      data,
+      { url: "https://skew.example.com/", title: "" },
+      { containerId: "fld_work", deviceId: "dev_skew", now: NOW },
+    );
+    assert.equal(res.ok, true);
+    assert.equal(data.nodes[res.nodeId].title, "skew.example.com");
+    assert.equal(data._syncMeta.placementClock[res.nodeId].updatedAt, NOW + 5001);
+    assert.equal(data.nodes.fld_work.updatedAt, NOW + 5001);
+    assert.equal(data.lastUpdated, NOW + 6001);
+  });
+
+  it("rejects invalid url, unknown container, or uninitialized data", () => {
+    const data = makeData();
+    assert.deepEqual(
+      saveSingleTabToContainer(data, { url: "javascript:alert(1)" }, { containerId: ALL_BOOKMARKS_GROUP_ID }),
+      { error: "invalid_url" },
+    );
+    assert.deepEqual(saveSingleTabToContainer(data, { url: "https://a.example/" }, { containerId: "missing" }), {
+      error: "no_group",
+    });
+    assert.deepEqual(
+      saveSingleTabToContainer({ groups: null, nodes: null }, { url: "https://a.example/" }, { containerId: "x" }),
+      { error: "no_data" },
+    );
   });
 });

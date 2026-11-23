@@ -7,8 +7,91 @@
   const ALL_GROUP_ID = "grp_all";
   const api = globalThis.browser || globalThis.chrome;
 
-  const label = (node) => String(node?.title || node?.url || "未命名").trim() || "未命名";
-  const walk = (data) => {
+  const SIDEBAR_I18N = {
+    "zh-CN": {
+      allBookmarks: "所有书签",
+      close: "关闭",
+      addBookmark: "添加书签",
+      noBookmarks: "暂无书签",
+      unnamed: "未命名",
+      defaultGroup: "默认",
+    },
+    "zh-TW": {
+      allBookmarks: "所有書籤",
+      close: "關閉",
+      addBookmark: "新增書籤",
+      noBookmarks: "暫無書籤",
+      unnamed: "未命名",
+      defaultGroup: "預設",
+    },
+    en: {
+      allBookmarks: "All Bookmarks",
+      close: "Close",
+      addBookmark: "Add Bookmark",
+      noBookmarks: "No bookmarks",
+      unnamed: "Unnamed",
+      defaultGroup: "Default",
+    },
+    ja: {
+      allBookmarks: "すべてのブックマーク",
+      close: "閉じる",
+      addBookmark: "ブックマークを追加",
+      noBookmarks: "ブックマークはありません",
+      unnamed: "名称未設定",
+      defaultGroup: "デフォルト",
+    },
+    ko: {
+      allBookmarks: "모든 북마크",
+      close: "닫기",
+      addBookmark: "북마크 추가",
+      noBookmarks: "북마크 없음",
+      unnamed: "이름 없음",
+      defaultGroup: "기본",
+    },
+    de: {
+      allBookmarks: "Alle Lesezeichen",
+      close: "Schliessen",
+      addBookmark: "Lesezeichen hinzufugen",
+      noBookmarks: "Keine Lesezeichen",
+      unnamed: "Unbenannt",
+      defaultGroup: "Standard",
+    },
+    fr: {
+      allBookmarks: "Tous les favoris",
+      close: "Fermer",
+      addBookmark: "Ajouter un favori",
+      noBookmarks: "Aucun favori",
+      unnamed: "Sans nom",
+      defaultGroup: "Par defaut",
+    },
+    es: {
+      allBookmarks: "Todos los marcadores",
+      close: "Cerrar",
+      addBookmark: "Agregar marcador",
+      noBookmarks: "Sin marcadores",
+      unnamed: "Sin nombre",
+      defaultGroup: "Predeterminado",
+    },
+  };
+  const resolveLang = (raw) => {
+    const code = String(raw || "")
+      .trim()
+      .replace(/_/g, "-")
+      .toLowerCase();
+    if (!code || code === "zh" || code.startsWith("zh-hans") || code.startsWith("zh-cn") || code.startsWith("zh-sg"))
+      return "zh-CN";
+    if (code.startsWith("zh-hant") || code.startsWith("zh-tw") || code.startsWith("zh-hk") || code.startsWith("zh-mo"))
+      return "zh-TW";
+    for (const prefix of ["ja", "ko", "de", "fr", "es", "en"]) {
+      if (code.startsWith(prefix)) return prefix;
+    }
+    return "en";
+  };
+  const sbText = (lang, key) => SIDEBAR_I18N[lang]?.[key] || SIDEBAR_I18N.en[key] || key;
+
+  const label = (node, lang) =>
+    String(node?.title || node?.url || sbText(lang, "unnamed")).trim() || sbText(lang, "unnamed");
+  const walk = (data, lang) => {
     const folders = [];
     const items = [];
     const groups = Array.isArray(data?.groups) ? data.groups : [];
@@ -21,7 +104,7 @@
       if (node.type === "item") {
         items.push({
           id: node.id || id,
-          title: label(node),
+          title: label(node, lang),
           url: String(node.url || ""),
           path,
           groupId,
@@ -32,14 +115,14 @@
         return;
       }
       if (node.type !== "folder") return;
-      const nextPath = [...path, label(node)];
-      folders.push({ id: node.id || id, title: label(node), path: nextPath, depth, groupId, parentId });
+      const nextPath = [...path, label(node, lang)];
+      folders.push({ id: node.id || id, title: label(node, lang), path: nextPath, depth, groupId, parentId });
       for (const child of Array.isArray(node.children) ? node.children : [])
         visit(child, groupId, nextPath, depth + 1, node.id || id);
     };
     const allGroup = groups.find((group) => group?.id === ALL_GROUP_ID);
     if (allGroup) {
-      const allName = String(allGroup.name || "全部");
+      const allName = String(allGroup.name || sbText(lang, "allBookmarks"));
       folders.push({
         id: allGroup.id,
         title: allName,
@@ -55,7 +138,7 @@
     } else {
       for (const group of groups) {
         if (!group?.id) continue;
-        const groupName = String(group.name || "默认");
+        const groupName = String(group.name || sbText(lang, "defaultGroup"));
         folders.push({
           id: group.id,
           title: groupName,
@@ -168,9 +251,10 @@
   function render(data, openSide = null, openAdd = false) {
     ensureStyle();
     document.getElementById(ROOT_ID)?.remove();
+    const lang = resolveLang(data?.settings?.language);
     const root = document.createElement("div");
     root.id = ROOT_ID;
-    const { folders, items } = walk(data);
+    const { folders, items } = walk(data, lang);
     const appendFolderTree = (host, parentId, onSelect) => {
       for (const folder of folders.filter((entry) => entry.parentId === parentId)) {
         const row = document.createElement("div");
@@ -199,12 +283,12 @@
       panel.className = `hp-side hp-${side}`;
       const head = document.createElement("div");
       head.className = "hp-head";
-      head.appendChild(Object.assign(document.createElement("span"), { textContent: "所有书签" }));
+      head.appendChild(Object.assign(document.createElement("span"), { textContent: sbText(lang, "allBookmarks") }));
       if (closable) {
         const close = document.createElement("button");
         close.className = "hp-close";
         close.textContent = "×";
-        close.title = "关闭";
+        close.title = sbText(lang, "close");
         close.addEventListener("click", () => panel.remove());
         head.appendChild(close);
       }
@@ -214,7 +298,7 @@
         addRow.className = `hp-menu-parent hp-has-children${openAdd ? " hp-force-open" : ""}`;
         const add = document.createElement("button");
         add.className = "hp-add";
-        add.textContent = "添加书签";
+        add.textContent = sbText(lang, "addBookmark");
         addRow.appendChild(add);
         const addFolders = document.createElement("div");
         addFolders.className = "hp-submenu";
@@ -232,7 +316,10 @@
         list.replaceChildren();
         if (!visibleItems.length) {
           list.appendChild(
-            Object.assign(document.createElement("div"), { className: "hp-empty", textContent: "暂无书签" }),
+            Object.assign(document.createElement("div"), {
+              className: "hp-empty",
+              textContent: sbText(lang, "noBookmarks"),
+            }),
           );
           return;
         }

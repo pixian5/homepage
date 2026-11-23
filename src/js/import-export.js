@@ -1,3 +1,5 @@
+import { translateAppText } from "./app-i18n.js";
+
 /** 设置数据导入导出与本地备份管理。依赖在实例内绑定，不复制主页数据。 */
 export function createImportExport(ctx, refreshSyncStatusLine) {
   const { getData, setData, getActiveGroupId, syncBackupBaseline } = ctx;
@@ -6,7 +8,7 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
     qsa,
     html,
     rawHtml,
-    t,
+    t: rawT,
     toast,
     elements,
     openModal,
@@ -48,6 +50,8 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
     isAllBookmarksGroup,
     RECENT_GROUP_ID,
   } = { ...ctx.ui, ...ctx.deps };
+
+  const t = typeof rawT === "function" ? rawT : (key, vars = null) => translateAppText("zh-CN", key, vars);
 
   let importInFlight = false;
 
@@ -118,7 +122,7 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
 
   /** 在隔离副本上修改，写盘失败恢复原对象；成功后的关闭/渲染由调用方负责。 */
   async function commitImport(change) {
-    if (importInFlight) throw new Error("已有导入正在保存，请稍后重试");
+    if (importInFlight) throw new Error(t("settings.import.inFlight"));
     importInFlight = true;
     const previous = getData();
     let workingData = null;
@@ -129,7 +133,7 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
       workingData = getData();
       postChangeSnapshot = cloneDataSnapshot(workingData);
       const result = await persistData();
-      if (!result?.ok) throw new Error(result?.err || "写入失败");
+      if (!result?.ok) throw new Error(result?.err || t("settings.import.writeFailed"));
     } catch (error) {
       const currentAfterFail = getData();
       if (workingData && currentAfterFail && currentAfterFail !== workingData) {
@@ -183,9 +187,9 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
     try {
       const payload = JSON.stringify(getData(), null, 2);
       await navigator.clipboard.writeText(payload);
-      toast("设置、卡片、分组数据都已复制到剪切板", "success");
+      toast(t("settings.export.clipboardOk"), "success");
     } catch (err) {
-      toast(`导出设置失败：${err.message || "无法写入剪切板"}`, "error");
+      toast(t("settings.export.fail", { reason: err.message || t("settings.export.clipboardDeny") }), "error");
       openManualExportModal();
     }
   }
@@ -194,22 +198,22 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
     void leaveSettingsForSubpanel();
     const payload = JSON.stringify(getData(), null, 2);
     const modalHtml = html`
-      <h2>导出设置</h2>
+      <h2>${t("settings.export.title")}</h2>
       <div class="section">
         <textarea readonly>${payload}</textarea>
       </div>
       <div class="actions">
-        <button id="btnCopy" class="icon-btn">复制</button>
-        <button id="btnClose" class="icon-btn">关闭</button>
+        <button id="btnCopy" class="icon-btn">${t("common.copy")}</button>
+        <button id="btnClose" class="icon-btn">${t("common.close")}</button>
       </div>
     `;
     openModal(modalHtml);
     $("btnCopy").addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(payload);
-        toast("已复制到剪切板", "success");
+        toast(t("settings.export.copied"), "success");
       } catch (err) {
-        toast(`复制失败：${err.message || "无法写入剪切板"}`, "error");
+        toast(t("settings.export.copyFail", { reason: err.message || t("settings.export.clipboardDeny") }), "error");
       }
     });
     $("btnClose").addEventListener("click", closeModal);
@@ -219,21 +223,21 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
     await leaveSettingsForSubpanel();
 
     const modalHtml = html`
-      <h2>导入设置</h2>
+      <h2>${t("settings.import.title")}</h2>
       <div class="section">
-        <label>导入策略</label>
+        <label>${t("settings.import.strategy")}</label>
         <select id="importMode">
-          <option value="replace">覆盖所有</option>
-          <option value="merge">合并现有</option>
-          <option value="add">仅新增不覆盖</option>
+          <option value="replace">${t("settings.import.modeReplace")}</option>
+          <option value="merge">${t("settings.import.modeMerge")}</option>
+          <option value="add">${t("settings.import.modeAdd")}</option>
         </select>
       </div>
       <div class="section">
-        <textarea id="importText" placeholder="正在读取剪切板内设置，如果没导出设置你得先从你其它浏览器导出设置才能导入设置..."></textarea>
+        <textarea id="importText" placeholder="${t("settings.import.placeholder")}"></textarea>
       </div>
       <div class="actions">
-        <button id="btnCancel" class="icon-btn">取消</button>
-        <button id="btnImportNow" class="icon-btn">导入</button>
+        <button id="btnCancel" class="icon-btn">${t("common.cancel")}</button>
+        <button id="btnImportNow" class="icon-btn">${t("settings.import.submit")}</button>
       </div>
     `;
     openModal(modalHtml);
@@ -242,10 +246,10 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
       try {
         const incoming = JSON.parse($("importText").value.trim());
         const mode = $("importMode").value;
-        if (!incoming || typeof incoming !== "object") throw new Error("数据格式不合法");
+        if (!incoming || typeof incoming !== "object") throw new Error(t("settings.import.invalidFormat"));
         // 运行时 schema 校验：修复非法字段、清理悬空引用、合并默认 settings
         const repairedIncoming = repairHomepageData(incoming, defaultSettings());
-        if (!repairedIncoming.schemaVersion) throw new Error("无 schemaVersion");
+        if (!repairedIncoming.schemaVersion) throw new Error(t("settings.import.missingSchema"));
         const deviceId = mode === "merge" ? await getOrCreateDeviceId() : "";
         await commitImport(() => {
           pushBackup();
@@ -261,7 +265,7 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
               writtenAt: Number(repairedIncoming.lastUpdated || Date.now()),
             });
             const merged = mergeHomepage(getData(), incomingDoc, { deviceId, now: Date.now() });
-            if (!merged.ok) throw new Error(merged.reason || "合并失败");
+            if (!merged.ok) throw new Error(merged.reason || t("settings.import.mergeFail"));
             if (repairedIncoming?.settings?.backgroundCustom && !merged.state.settings?.backgroundCustom) {
               merged.state.settings.backgroundCustom = repairedIncoming.settings.backgroundCustom;
             }
@@ -292,9 +296,9 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
         closeModal();
         render();
         processPendingIconFetches();
-        toast("导入设置成功", "success");
+        toast(t("settings.import.ok"), "success");
       } catch (err) {
-        toast(`导入设置失败：${err.message || err}`, "error");
+        toast(t("settings.import.fail", { reason: err.message || err }), "error");
       }
     });
 
@@ -302,12 +306,15 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
       const text = await navigator.clipboard.readText();
       if (text) {
         $("importText").value = text;
-        toast("已从剪切板读取", "success");
+        toast(t("settings.import.clipboardRead"), "success");
       } else {
-        toast("剪切板为空", "warning");
+        toast(t("settings.import.clipboardEmpty"), "warning");
       }
     } catch (err) {
-      toast(`读取剪切板失败：${err.message || "权限受限"}`, "error");
+      toast(
+        t("settings.import.clipboardFail", { reason: err.message || t("settings.import.clipboardNoPerm") }),
+        "error",
+      );
     }
   }
 
@@ -324,20 +331,20 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
         .join(""),
     );
     const modalHtml = html`
-      <h2>导入网址</h2>
+      <h2>${t("settings.importUrl.title")}</h2>
       <div class="section">
-        <label>选择分组</label>
+        <label>${t("common.selectGroup")}</label>
         <select id="importUrlGroup">${options}</select>
       </div>
       <div class="section">
         <div class="row-inline">
-          <button id="btnImportUrlHttp" class="icon-btn">导入为HTTP</button>
-          <button id="btnImportUrlHttps" class="icon-btn">导入为HTTPS</button>
-          <button id="btnImportUrlCancel" class="icon-btn">取消</button>
+          <button id="btnImportUrlHttp" class="icon-btn">${t("settings.importUrl.http")}</button>
+          <button id="btnImportUrlHttps" class="icon-btn">${t("settings.importUrl.https")}</button>
+          <button id="btnImportUrlCancel" class="icon-btn">${t("common.cancel")}</button>
         </div>
       </div>
       <div class="section">
-        <textarea id="importUrlText" placeholder="每行一个网址"></textarea>
+        <textarea id="importUrlText" placeholder="${t("settings.importUrl.placeholder")}"></textarea>
       </div>
     `;
     openModal(modalHtml);
@@ -402,14 +409,16 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
           getData().settings.lastActiveGroupId = targetGroup.id;
         });
       } catch (error) {
-        toast(`导入网址失败：${error.message || error}`, "error");
+        toast(t("settings.importUrl.fail", { reason: error.message || error }), "error");
         return;
       }
       closeWithCleanup();
       render();
       processPendingIconFetches();
       toast(
-        invalid ? `已导入 ${urls.length} 条，忽略 ${invalid} 条` : `已导入 ${urls.length} 条`,
+        invalid
+          ? t("settings.importUrl.partial", { count: urls.length, ignored: invalid })
+          : t("settings.importUrl.done", { count: urls.length }),
         invalid ? "warning" : "success",
       );
     };
@@ -425,14 +434,14 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
       getData()
         .backups.map(
           (b) =>
-            html`<div class="row" data-backup="${b.id}"><div>${new Date(b.ts).toLocaleString()}</div><div class="row-actions"><button class="icon-btn backup-restore">恢复</button><button class="icon-btn backup-delete">删除</button></div></div>`,
+            html`<div class="row" data-backup="${b.id}"><div>${new Date(b.ts).toLocaleString()}</div><div class="row-actions"><button class="icon-btn backup-restore">${t("settings.backup.restore")}</button><button class="icon-btn backup-delete">${t("common.delete")}</button></div></div>`,
         )
         .join(""),
     );
     const modalHtml = html`
-      <h2>备份管理</h2>
-      <div class="section">${getData().backups.length ? list : "暂无备份"}</div>
-      <div class="actions"><button id="btnClose" class="icon-btn">关闭</button></div>
+      <h2>${t("settings.backup.title")}</h2>
+      <div class="section">${getData().backups.length ? list : t("settings.backup.empty")}</div>
+      <div class="actions"><button id="btnClose" class="icon-btn">${t("common.close")}</button></div>
     `;
     openModal(modalHtml);
     qsa(".backup-restore", elements.modal).forEach((btn) => {
@@ -470,12 +479,12 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
             resetPlacementClockBaseline?.(restoredData);
           });
         } catch (error) {
-          toast(`恢复备份失败：${error.message || error}`, "error");
+          toast(t("settings.backup.restoreFail", { reason: error.message || error }), "error");
           return;
         }
         closeModal();
         render();
-        toast("已恢复备份", "success");
+        toast(t("settings.backup.restoreOk"), "success");
       });
     });
     qsa(".backup-delete", elements.modal).forEach((btn) => {
@@ -490,11 +499,11 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
             syncBackupBaseline?.(getData());
           });
         } catch (error) {
-          toast(`删除备份失败：${error.message || error}`, "error");
+          toast(t("settings.backup.deleteFail", { reason: error.message || error }), "error");
           return;
         }
         openBackupModal();
-        toast("已删除备份", "success");
+        toast(t("settings.backup.deleteOk"), "success");
       });
     });
     $("btnClose").addEventListener("click", closeModal);

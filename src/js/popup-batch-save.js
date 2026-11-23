@@ -5,6 +5,7 @@
 
 import { createItemNode } from "./data-utils.js";
 import { normalizeUrl } from "./shared-utils.js";
+import { nextSyncTimestamp } from "./sync_policy.js";
 
 /**
  * 过滤出可保存的标签页：
@@ -37,17 +38,15 @@ export function filterSavableTabs(tabs) {
 }
 
 /**
- * 把一批标签页批量写入目标分组/文件夹（修改传入的 data）：
- * - 每个标签生成独立 item 节点并按序追加；
- * - 为每个新节点登记结构时钟 placementClock（与后台保存路径一致，保证多端并发裁决准确）；
- * - 推进父容器 updatedAt。
+ * 将一组已规范化的 {url, title} 写入目标分组/文件夹（内部共享实现）：
+ * - 每个节点按序追加并登记结构时钟 placementClock；
+ * - 单调推进父容器 updatedAt 与数据 lastUpdated。
  *
  * @param {object} data 主数据
- * @param {Array<{url: string, title: string}>} savableTabs filterSavableTabs 的结果
+ * @param {Array<{url: string, title: string}>} savableTabs
  * @param {{containerId: string, deviceId?: string, now?: number}} options
- * @returns {{ok: true, count: number, groupId: string, groupName: string} | {error: string}}
  */
-export function saveTabsToContainer(data, savableTabs, { containerId, deviceId = "", now = Date.now() } = {}) {
+function appendTabsToContainer(data, savableTabs, { containerId, deviceId = "", now = Date.now() } = {}) {
   if (!data?.groups || !data.nodes) return { error: "no_data" };
   const group = data.groups.find((entry) => entry.id === containerId);
   const folder = !group ? data.nodes[containerId] : null;
@@ -62,11 +61,19 @@ export function saveTabsToContainer(data, savableTabs, { containerId, deviceId =
       ? container.children
       : (container.children = []);
   const parentKind = Array.isArray(container.nodes) ? "group" : "folder";
+  const clockNow = nextSyncTimestamp(
+    now,
+    container.updatedAt,
+    container.titleUpdatedAt,
+    container.nameUpdatedAt,
+    container.orderUpdatedAt,
+  );
 
   if (!data._syncMeta || typeof data._syncMeta !== "object") data._syncMeta = {};
   if (!data._syncMeta.placementClock || typeof data._syncMeta.placementClock !== "object") {
     data._syncMeta.placementClock = {};
   }
+  const nodeIds = [];
   for (const entry of savableTabs) {
     const node = createItemNode({
       url: entry.url,
@@ -74,26 +81,89 @@ export function saveTabsToContainer(data, savableTabs, { containerId, deviceId =
       iconType: "auto",
       iconPending: true,
     });
+    if (deviceId) node.updatedBy = deviceId;
     data.nodes[node.id] = node;
     list.push(node.id);
+    nodeIds.push(node.id);
     data._syncMeta.placementClock[node.id] = {
       parentKind,
       parentId: container.id,
       index: list.indexOf(node.id),
-      updatedAt: now,
+      updatedAt: clockNow,
       updatedBy: deviceId,
     };
   }
-  container.updatedAt = now;
+  container.updatedAt = clockNow;
   container.updatedBy = "";
   if (data.settings) {
     data.settings.lastActiveGroupId = container.id;
   }
-  data.lastUpdated = now;
+  data.lastUpdated = nextSyncTimestamp(clockNow, data.lastUpdated);
   return {
     ok: true,
     count: savableTabs.length,
     groupId: container.id,
     groupName: String(container.name || container.title || ""),
+    nodeIds,
+    updatedAt: clockNow,
+  };
+}
+
+/**
+ * 把一批标签页批量写入目标分组/文件夹（修改传入的 data）：
+ * - 每个标签生成独立 item 节点并按序追加；
+ * - 为每个新节点登记结构时钟 placementClock（与后台保存路径一致，保证多端并发裁决准确）；
+ * - 推进父容器 updatedAt。
+ *
+ * @param {object} data 主数据
+ * @param {Array<{url: string, title: string}>} savableTabs filterSavableTabs 的结果
+ * @param {{containerId: string, deviceId?: string, now?: number}} options
+ * @returns {{ok: true, count: number, groupId: string, groupName: string} | {error: string}}
+ */
+export function saveTabsToContainer(data, savableTabs, options = {}) {
+  const result = appendTabsToContainer(data, savableTabs, options);
+  if (result.error) return result;
+  return {
+    ok: true,
+    count: result.count,
+    groupId: result.groupId,
+    groupName: result.groupName,
+  };
+}
+
+/**
+ * 将单个标签页写入目标分组/文件夹（修改传入的 data），与批量保存共用 placementClock 写入路径。
+ *
+ * @param {object} data 主数据
+ * @param {{url?: string, title?: string}} tab
+ * @param {{containerId: string, customTitle?: string, deviceId?: string, now?: number}} [options]
+ * @returns {{ok: true, nodeId: string, groupId: string, groupName: string} | {error: string}}
+ */
+export function saveSingleTabToContainer(
+  data,
+  tab,
+  { containerId, customTitle = "", deviceId = "", now = Date.now() } = {},
+) {
+  const url = normalizeUrl(tab?.url);
+  if (!url) return { error: "invalid_url" };
+  let hostname = "";
+  try {
+    hostname = new URL(url).hostname;
+  } catch (_e) {
+    hostname = "";
+  }
+  const title = String(customTitle || "").trim() || String(tab?.title || "").trim() || hostname;
+  const result = appendTabsToContainer(data, [{ url, title }], { containerId, deviceId, now });
+  if (result.error) return result;
+  if (!data.settings || typeof data.settings !== "object") data.settings = {};
+  data.settings.lastSaveUrl = url;
+  data.settings.lastSaveTs = result.updatedAt;
+  // 弹窗保存仅在当前网页显示 toast，避免新标签页读取存储后重复提示
+  data.settings.lastSaveToast = null;
+  return {
+    ok: true,
+    nodeId: result.nodeIds[0],
+    groupId: result.groupId,
+    groupName: result.groupName,
   };
 }

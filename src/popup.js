@@ -187,6 +187,92 @@ function isExtensionPageUrl(url) {
 }
 
 /**
+ * 调用扩展异步 API，同时兼容回调形态（Chrome）与 Promise 形态（Firefox / Safari）。
+ * 优先传回调以读取 runtime.lastError；若同时返回 Promise 或因参数校验同步抛错，
+ * 则无缝回退单参数调用并接管 Promise，避免未捕获异常。
+ * @param {typeof chrome | null} api
+ * @param {object | null | undefined} target
+ * @param {string} methodName
+ * @param {Array<any>} args
+ * @returns {Promise<any>}
+ */
+function callExtensionApi(api, target, methodName, args) {
+  const method = target?.[methodName];
+  if (typeof method !== "function") {
+    return Promise.reject(new Error(`Missing extension API: ${methodName}`));
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finishResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const finishReject = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err instanceof Error ? err : new Error(err?.message || String(err)));
+    };
+    const callback = (result) => {
+      const lastErr = api?.runtime?.lastError;
+      if (lastErr) return finishReject(lastErr);
+      finishResolve(result);
+    };
+
+    try {
+      const maybePromise = method.apply(target, [...args, callback]);
+      if (typeof maybePromise?.then === "function") {
+        maybePromise.then(
+          (value) => {
+            const lastErr = api?.runtime?.lastError;
+            if (lastErr) return finishReject(lastErr);
+            finishResolve(value);
+          },
+          (err) => finishReject(err),
+        );
+      }
+    } catch (firstError) {
+      // Firefox / Safari 的 browser.* Promise-only 封装可能在传入额外 callback 时同步抛错
+      try {
+        const retryResult = method.apply(target, args);
+        if (typeof retryResult?.then === "function") {
+          retryResult.then(finishResolve, finishReject);
+        } else {
+          finishResolve(retryResult);
+        }
+      } catch (_retryError) {
+        finishReject(firstError);
+      }
+    }
+  });
+}
+
+/**
+ * MV3 按需注入脚本文件或函数（兼容 Chrome 回调与 Firefox/Safari Promise）
+ * @param {typeof chrome | null} api
+ * @param {object} injection
+ * @returns {Promise<boolean>}
+ */
+export async function executeScriptingFiles(api, injection) {
+  if (!api?.scripting?.executeScript) return false;
+  await callExtensionApi(api, api.scripting, "executeScript", [injection]);
+  return true;
+}
+
+/**
+ * MV2 / Safari 兜底按需注入脚本（兼容 Chrome 回调与 Firefox/Safari Promise）
+ * @param {typeof chrome | null} api
+ * @param {number} tabId
+ * @param {object} details
+ * @returns {Promise<boolean>}
+ */
+export async function executeTabsScript(api, tabId, details) {
+  if (!api?.tabs?.executeScript) return false;
+  await callExtensionApi(api, api.tabs, "executeScript", [tabId, details]);
+  return true;
+}
+
+/**
  * 发送运行时消息
  * @param {object} message
  * @returns {Promise<any>}
@@ -194,18 +280,9 @@ function isExtensionPageUrl(url) {
 function sendRuntimeMessage(message) {
   const api = getChromeApi();
   if (!api?.runtime?.sendMessage) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    try {
-      api.runtime.sendMessage(message, (res) => {
-        const err = api.runtime?.lastError;
-        if (err) return resolve(null);
-        resolve(res || null);
-      });
-    } catch (_e) {
-      // 消息发送失败是预期情况，静默处理
-      resolve(null);
-    }
-  });
+  return callExtensionApi(api, api.runtime, "sendMessage", [message])
+    .then((res) => res || null)
+    .catch(() => null);
 }
 
 /**
@@ -236,39 +313,31 @@ async function openBookmarkFromPopup(url, settings, tab) {
 function sendTabMessage(tabId, message) {
   const api = getChromeApi();
   if (!api?.tabs?.sendMessage) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    try {
-      api.tabs.sendMessage(tabId, message, (res) => {
-        const err = api.runtime?.lastError;
-        if (err) return resolve(null);
-        resolve(res || null);
-      });
-    } catch (_e) {
-      // 消息发送失败是预期情况，静默处理
-      resolve(null);
-    }
-  });
+  return callExtensionApi(api, api.tabs, "sendMessage", [tabId, message])
+    .then((res) => res || null)
+    .catch(() => null);
 }
 
-async function openBookmarkSidebar(tab, data, side) {
+export async function openBookmarkSidebar(tab, data, side) {
   if (!tab?.id) return false;
-  const response = await sendTabMessage(tab.id, { type: "homepage_open_bookmark_sidebar", data, side });
+  const payload = { type: "homepage_open_bookmark_sidebar", data, side };
+  const response = await sendTabMessage(tab.id, payload);
   if (response?.ok) return true;
   const api = getChromeApi();
-  const inject = api?.scripting?.executeScript
-    ? (done) => api.scripting.executeScript({ target: { tabId: tab.id }, files: ["js/bookmark-sidebar.js"] }, done)
-    : api?.tabs?.executeScript
-      ? (done) => api.tabs.executeScript(tab.id, { file: "js/bookmark-sidebar.js" }, done)
-      : null;
-  if (!inject) return false;
-  return new Promise((resolve) => {
-    inject(() => {
-      if (api.runtime?.lastError) return resolve(false);
-      void sendTabMessage(tab.id, { type: "homepage_open_bookmark_sidebar", data, side }).then((res) =>
-        resolve(!!res?.ok),
-      );
-    });
-  });
+  try {
+    if (api?.scripting?.executeScript) {
+      await executeScriptingFiles(api, { target: { tabId: tab.id }, files: ["js/bookmark-sidebar.js"] });
+    } else if (api?.tabs?.executeScript) {
+      await executeTabsScript(api, tab.id, { file: "js/bookmark-sidebar.js" });
+    } else {
+      return false;
+    }
+  } catch (e) {
+    console.warn("openBookmarkSidebar inject failed", e);
+    return false;
+  }
+  const res = await sendTabMessage(tab.id, payload);
+  return !!res?.ok;
 }
 
 /**
@@ -531,7 +600,7 @@ async function saveToContainer(tab, selectedContainerId, customTitle = "") {
  * @param {number} fontSize
  * @returns {Promise<boolean>}
  */
-async function showToastInTab(tab, message, fontSize) {
+export async function showToastInTab(tab, message, fontSize) {
   const api = getChromeApi();
   if (!tab?.id) return false;
   const payload = { type: "homepage_show_toast", text: message, fontSize };
@@ -544,53 +613,32 @@ async function showToastInTab(tab, message, fontSize) {
     if (direct?.ok) return true;
     if (api?.scripting?.executeScript) {
       try {
-        await new Promise((resolve, reject) => {
-          api.scripting.executeScript({ target: { tabId: tab.id }, files: ["js/content-toast.js"] }, () => {
-            const err = api.runtime?.lastError;
-            if (err) return reject(err);
-            resolve();
-          });
-        });
+        await executeScriptingFiles(api, { target: { tabId: tab.id }, files: ["js/content-toast.js"] });
         const res = await sendTabMessage(tab.id, payload);
         if (res?.ok) return true;
       } catch (e) {
         console.warn("scripting.executeScript content-toast failed", e);
       }
-      await new Promise((resolve, reject) => {
-        api.scripting.executeScript(
-          {
-            target: { tabId: tab.id },
-            func: (msg, size, duration, styleProps) => {
-              const toastId = "homepage-save-toast";
-              const existing = document.getElementById(toastId);
-              if (existing) existing.remove();
-              const el = document.createElement("div");
-              el.id = toastId;
-              el.textContent = msg;
-              Object.assign(el.style, styleProps, { fontSize: `${Number(size) || 14}px` });
-              document.body.appendChild(el);
-              setTimeout(() => el.remove(), duration);
-            },
-            args: [message, fontSize, TOAST_DURATION_MS, TOAST_STYLE_PROPS],
-          },
-          () => {
-            const err = api.runtime?.lastError;
-            if (err) return reject(err);
-            resolve();
-          },
-        );
+      await executeScriptingFiles(api, {
+        target: { tabId: tab.id },
+        func: (msg, size, duration, styleProps) => {
+          const toastId = "homepage-save-toast";
+          const existing = document.getElementById(toastId);
+          if (existing) existing.remove();
+          const el = document.createElement("div");
+          el.id = toastId;
+          el.textContent = msg;
+          Object.assign(el.style, styleProps, { fontSize: `${Number(size) || 14}px` });
+          document.body.appendChild(el);
+          setTimeout(() => el.remove(), duration);
+        },
+        args: [message, fontSize, TOAST_DURATION_MS, TOAST_STYLE_PROPS],
       });
       return true;
     }
     if (api?.tabs?.executeScript) {
       try {
-        await new Promise((resolve, reject) => {
-          api.tabs.executeScript(tab.id, { file: "js/content-toast.js" }, () => {
-            const err = api.runtime?.lastError;
-            if (err) return reject(err);
-            resolve();
-          });
-        });
+        await executeTabsScript(api, tab.id, { file: "js/content-toast.js" });
         const res = await sendTabMessage(tab.id, payload);
         if (res?.ok) return true;
       } catch (e) {
@@ -600,13 +648,7 @@ async function showToastInTab(tab, message, fontSize) {
       const size = Number(fontSize) || 14;
       const styleJson = JSON.stringify(TOAST_STYLE_PROPS);
       const code = `(function(){var toastId="homepage-save-toast";var existing=document.getElementById(toastId);if(existing){existing.remove();}var el=document.createElement("div");el.id=toastId;el.textContent=${msg};Object.assign(el.style,${styleJson},{fontSize:"${size}px"});document.body.appendChild(el);setTimeout(function(){el.remove();},${TOAST_DURATION_MS});})();`;
-      await new Promise((resolve, reject) => {
-        api.tabs.executeScript(tab.id, { code }, () => {
-          const err = api.runtime?.lastError;
-          if (err) return reject(err);
-          resolve();
-        });
-      });
+      await executeTabsScript(api, tab.id, { code });
       return true;
     }
     // 没有任何注入 API 时不能谎报成功
@@ -651,12 +693,14 @@ async function init() {
   });
 }
 
-init().catch((error) => {
-  console.error("popup init failed", error);
-  const empty = document.getElementById("empty");
-  if (empty) {
-    empty.textContent = tr("loadFailed", popupLanguage || detectPreferredLanguage(POPUP_SUPPORTED_LANGUAGES));
-    empty.classList.remove("hidden");
-  }
-  document.body.classList.remove("hidden");
-});
+if (typeof document !== "undefined") {
+  init().catch((error) => {
+    console.error("popup init failed", error);
+    const empty = document.getElementById("empty");
+    if (empty) {
+      empty.textContent = tr("loadFailed", popupLanguage || detectPreferredLanguage(POPUP_SUPPORTED_LANGUAGES));
+      empty.classList.remove("hidden");
+    }
+    document.body?.classList?.remove("hidden");
+  });
+}

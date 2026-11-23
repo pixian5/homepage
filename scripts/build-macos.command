@@ -112,6 +112,12 @@ if [[ -n "${PROJECT_FILE}" ]]; then
     rm -rf "${APPS_DIR_APP}"
     cp -R "${APP_PATH}" "${APPS_DIR_APP}"
 
+    # 先注销并清理 xcodebuild 产出的构建目录副本，避免 LaunchServices/pluginkit
+    # 误判旧构建副本“已在册”，导致正式 /Applications 扩展漏注册。
+    echo "[build] Unregistering build-output app from LaunchServices..."
+    /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -u "${APP_PATH}" 2>/dev/null || true
+    prune_safari_build_products "${SAFARI_XCODE_CONFIGURATION}"
+
     require_safari_stopped
     node "${ROOT_DIR}/scripts/clean-safari-homepage-registrations.mjs"
 
@@ -124,10 +130,7 @@ if [[ -n "${PROJECT_FILE}" ]]; then
     python3 "${ROOT_DIR}/scripts/safari-newtab-selection.py" configure \
       --app-path "${APPS_DIR_APP}"
 
-    # Safari 正在运行时重装 app，pluginkit 可能不会登记新扩展，
-    # 表现为“扩展突然没了、新标签页回落 favorites://”。
-    # 注册逻辑抽到 safari-extension-register.sh（幂等：在册直接成功）；
-    # 构建失败不影响产物——每小时 launchd 自愈任务（setup-safari-extension-register.sh）会兜底补注册。
+    # 清理构建产物后再登记正式 /Applications 扩展，确保 pluginkit 指向最终安装路径。
     echo "[build] Registering Safari extension with pluginkit..."
     if bash "${SCRIPT_DIR}/safari-extension-register.sh"; then
       echo "[build] Safari extension registered"
@@ -135,15 +138,6 @@ if [[ -n "${PROJECT_FILE}" ]]; then
       echo "[build] WARNING: 本次注册未确认，launchd 自愈任务将在一小时内自动重试" >&2
       echo "[build]           也可立即执行：bash ${SCRIPT_DIR}/safari-extension-register.sh" >&2
     fi
-
-    # Xcode 构建时会将 build-output 里的 .app 注册到 LaunchServices，
-    # 安装到 /Applications 后如果不注销源路径，Safari 扩展列表会出现重复条目。
-    echo "[build] Unregistering build-output app from LaunchServices..."
-    /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -u "${APP_PATH}" 2>/dev/null || true
-
-    # 实测：只注销不够，Safari 仍会从构建目录加载那份旧扩展，
-    # 结果是列表里两个「我的首页」且实际跑的不是正式版。直接删掉源产物。
-    prune_safari_build_products "${SAFARI_XCODE_CONFIGURATION}"
 
     if [[ "${SAFARI_LAUNCH_AFTER_BUILD:-0}" == "1" ]]; then
       open "${APPS_DIR_APP}"

@@ -70,3 +70,20 @@ it("默认构建只打包；显式安装发现 Safari 在运行或探测失败�
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+it("Safari 安装脚本必须先注销清理构建产物再注册扩展，且登记校验需匹配 /Applications 路径", async () => {
+  const buildMacos = await readFile(path.join(root, "scripts/build-macos.command"), "utf8");
+  const pruneIndex = buildMacos.indexOf("prune_safari_build_products");
+  const unregisterIndex = buildMacos.search(/lsregister\s+-u\b/);
+  const registerIndex = buildMacos.indexOf("safari-extension-register.sh");
+  assert.ok(pruneIndex > 0, "缺少 prune_safari_build_products 调用");
+  assert.ok(unregisterIndex > 0, "缺少 lsregister -u 注销调用");
+  assert.ok(registerIndex > 0, "缺少 safari-extension-register.sh 调用");
+  assert.ok(unregisterIndex < registerIndex, "必须先注销构建产物再注册正式扩展");
+  assert.ok(pruneIndex < registerIndex, "必须先清理构建产物再注册正式扩展");
+
+  const registerScript = await readFile(path.join(root, "scripts/safari-extension-register.sh"), "utf8");
+  assert.match(registerScript, /pluginkit\s+-m\s+-v\s+-p\s+com\.apple\.Safari\.web-extension/);
+  assert.match(registerScript, /grep\s+-F\s+"\$\{?APPEX_PATH\}?"/);
+  assert.match(registerScript, /lsregister\s+-f\s+"\$\{?APP_PATH\}?"/);
+});

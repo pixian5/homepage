@@ -19,7 +19,9 @@ EXT_ID="com.aeroluna.homepage.safari.extension"
 log() { printf '[ext-register] %s\n' "$*"; }
 
 is_registered() {
-  pluginkit -m -p com.apple.Safari.web-extension 2>/dev/null | grep -q "${EXT_ID}"
+  pluginkit -m -v -p com.apple.Safari.web-extension 2>/dev/null \
+    | grep -F "${EXT_ID}" \
+    | grep -F "${APPEX_PATH}" >/dev/null
 }
 
 case "${1:-}" in
@@ -43,7 +45,8 @@ if [[ ! -d "${APPEX_PATH}" ]]; then
   exit 1
 fi
 
-log "扩展未登记，执行注册：pluginkit -a"
+log "扩展未登记，刷新 LaunchServices 并执行注册：pluginkit -a"
+/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f "${APP_PATH}" 2>/dev/null || true
 pluginkit -a "${APPEX_PATH}" 2>/dev/null || true
 
 # Safari 运行中注册可能延迟生效，轮询最多 10 秒（构建场景里 5 秒偶有不够）

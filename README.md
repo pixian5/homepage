@@ -4,10 +4,11 @@
 
 ## 当前开发进度
 
-当前产品版本 **27.2.2**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
+当前产品版本 **27.2.3**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
 
 项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。
 
+- **27.2.3**：移除 Chrome/Firefox/Safari 三端静态 `<all_urls>` `content_scripts`，加固 `popup.js` 跨浏览器按需动态注入（兼容 Chrome 回调与 Firefox/Safari Promise-only 调用）；在 Safari `27.2.3` 原生安装正向验收中定位并修复 `build-macos.command` 先注册后删除构建产物及 `safari-extension-register.sh` 未校验证明路径导致的 `pluginkit` 漏登记缺陷；实测 `/Applications/我的首页 Safari.app` 版本、签名、共享存储与 `pluginkit` 注册路径全通，全量单测增至 596/596 与双端冒烟 100% 通过，见[当前开发进度](docs/20261123-2115-当前开发进度-Gemini.md)。
 - **27.2.2**：复核前两轮代码并落地触摸测试提速（`touch-drag-manager` 支持可配置长按阈值，单测耗时 20.3s→0.44s，并修复滑动取消用例未触发 `touchmove` 的问题）；拆分 `settings-controller.js`（1160→705 行）→ `sync-settings-panel.js` 及 `sync_engine.js` → `sync_device_auth.js`，同步 Firefox 拓扑与 SW 预缓存清单；全量测试增至 587/587（总耗时 24.0s→12.3s），双端冒烟 100% 通过，见[当前开发进度](docs/20261123-2101-当前开发进度-Gemini-4-Neon.md)。
 - **27.2.1**：统一 Popup 单页与批量保存至 `appendTabsToContainer()`，补齐单页保存 `placementClock` 与单调时钟推进；在 `app-i18n.js` 与新建 `popup-i18n.js` 补全 8 语言字典，彻底清理 `import-export.js`、`popup.js`、`settings-controller.js` 与 `bookmark-sidebar.js` 的中文硬编码；全量测试增至 580/580，双端无头浏览器真实冒烟 100% 通过，见[当前开发进度](docs/20261123-2035-当前开发进度-Gemini-4-Hydrogen.md)。
 - **27.2.0**：闭环持久化协调器写盘失败时的自动备份与双时钟基线原子回滚，补齐备份删除、备份恢复、清空数据/卡片的写盘失败回滚，并保护导入保存期间的并发编辑与跨标签页写入不被失败回滚抹除；新增 4 项回归测试，572/572 通过。本轮只打包未安装，见[当前开发进度](docs/20261123-1727-当前开发进度-Gemini-4-Argon.md)。
@@ -55,13 +56,11 @@
 - **26.6.1**：修复 Safari 扩展消失：新增注册自愈脚本并挂进每日体检，详见[Safari 扩展消失自愈](docs/20261103-1525-Safari扩展消失自愈-DeepSeek-V4.1-Flash.md)。
 - **26.6.0（基线）**：修复 Chrome 永久误报「同步已多次失败，自动重试已停止」：同步实际健康，根因是存储中残留一条指向已废弃浏览器 storage.sync 传输目标的僵尸队列项，它永远发不出去也清不掉；新增 filterCurrentOutbox 在读取与加载时剔除废弃目标，详见[Chrome 永久误报同步失败](docs/20261102-1725-Chrome永久误报同步失败-DeepSeek-V4.1-Flash.md)。
 
-当前单测 587 项全部通过（耗时约 12.3s），Biome 检查 0 告警，三端构建与双端无头浏览器冒烟均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
+当前单测 596 项全部通过（耗时约 12.9s），Biome 检查 0 告警，三端构建、Safari 27.2.3 原生安装验收与双端无头浏览器冒烟均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
 
 ## 下一步待实现
 
-- [原生安装的验收条件](docs/20261120-2055-下一步待实现-Opus-5.md)：单独同意安装且自行退出 Safari 后才验收。
-
-- 触摸测试提速与 `settings-controller` / `sync_engine` 核心拆分已落地；下一步评估 Manifest 内容脚本按需动态注入收敛及原生安装验收，见[下一步待实现](docs/20261123-2101-下一步待实现-Gemini-4-Neon.md)。
+- **按需注入与 Safari 原生安装验收**：✅ 已完成（27.2.3）——三端 Manifest 已移除静态 `<all_urls>` `content_scripts` 并完成 `popup.js` 动态注入兼容性加固；Safari 在未运行状态下完成 `27.2.3` 编译安装、签名校验、存储快照核验及 `pluginkit` 正式路径登记（[开发进度](docs/20261123-2115-当前开发进度-Gemini.md)、[前置条件规范](docs/20261120-2055-下一步待实现-Opus-5.md)）。
 
 - **P3 生态开放**：✅ 已完成——localStorage 回退（26.8.3）+ PWA Manifest 与 Service Worker 离线闭环（26.9.0）。
 - **app.js 瘦身**：✅ 编辑弹窗与 openMode 菜单已分别抽离为 modal-manager.js（26.7.4）与 open-mode-manager.js（26.9.0），app.js 现为 1233 行；后续可按实际热点继续拆分。

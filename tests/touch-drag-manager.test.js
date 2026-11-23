@@ -113,28 +113,42 @@ function setup({ activeGroupId = "grp_all", openFolderId = null } = {}) {
     },
     isRecentGroup: (groupId) => groupId === "__recent__",
     canStartTileTouch: () => true,
+    tileContextMenuMs: 15,
+    tileLongPressMs: 35,
+    groupLongPressMs: 15,
+    clickSuppressMs: 100,
   });
   return { manager, drag, calls, grid, groupTabs, data };
 }
 
-/** 用受控时钟等待长按计时器（不真实 sleep） */
+/** 用较短的可配置长按计时器等待（保持相同事件顺序与竞争语义） */
 function waitLongPress() {
-  return new Promise((resolve) => setTimeout(resolve, 3100));
+  return new Promise((resolve) => setTimeout(resolve, 55));
 }
 
 describe("touch-drag-manager long press", () => {
+  let docListeners;
+
   beforeEach(() => {
+    docListeners = new Map();
     globalThis.document = {
       body: fakeEl(),
       elementFromPoint: () => null,
-      addEventListener: () => {},
+      addEventListener: (type, fn) => {
+        if (!docListeners.has(type)) docListeners.set(type, []);
+        docListeners.get(type).push(fn);
+      },
     };
   });
   afterEach(() => {
     delete globalThis.document;
   });
 
-  it("activates tile drag after the 3s long press and links dragState", async () => {
+  const fireDoc = (type, event) => {
+    for (const fn of docListeners.get(type) || []) fn({ preventDefault: () => {}, ...event });
+  };
+
+  it("activates tile drag after the long press and links dragState", async () => {
     const { manager, drag } = setup();
     const tile = fakeEl({ dataset: { id: "a" } });
     manager.bindTileTouchEvents(tile, data_node("a"));
@@ -142,43 +156,44 @@ describe("touch-drag-manager long press", () => {
     tile.dispatch("touchstart", touchAt(10, 10));
     assert.equal(drag.calls.setDragState.length, 0, "长按未到不激活");
     await waitLongPress();
-    assert.equal(drag.calls.setDragState.length, 1, "3s 后激活拖拽");
+    assert.equal(drag.calls.setDragState.length, 1, "长按到位后激活拖拽");
     assert.equal(drag.calls.setDragState[0].id, "a");
     assert.equal(manager.isActive, true);
     assert.ok(tile.classes.has("touch-dragging"), "源卡片进入拖拽视觉");
     assert.equal(manager.mode, "tile");
   });
 
-  it("activates group drag after the shorter 260ms press", async () => {
+  it("activates group drag after the shorter group press", async () => {
     const { manager, drag } = setup();
     const btn = fakeEl({ dataset: { groupId: "grp_all" } });
     manager.bindGroupTouchEvents(btn, { groupId: "grp_all" });
     btn.dispatch("touchstart", touchAt(5, 5));
-    await new Promise((resolve) => setTimeout(resolve, 320));
+    await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(drag.calls.draggingGroupIds.length, 1);
     assert.equal(drag.calls.draggingGroupIds[0], "grp_all");
     assert.equal(manager.mode, "group");
   });
 
   it("cancels the long press when the finger moves beyond the threshold", async () => {
-    const { manager } = setup();
+    const { manager, calls } = setup();
     const tile = fakeEl({ dataset: { id: "a" } });
+    manager.bindDocumentTouchEvents();
     manager.bindTileTouchEvents(tile, data_node("a"));
     tile.dispatch("touchstart", touchAt(10, 10));
-    // 滑动超过 18px：document touchmove 由模块自身监听——这里直接等满时长后验证未激活
-    // （移动取消路径由下方 document 监听用例覆盖）
+    fireDoc("touchmove", touchAt(40, 10));
     await waitLongPress();
-    assert.equal(manager.isActive, true);
+    assert.equal(manager.isActive, false, "滑动超过阈值后必须取消长按拖拽");
+    assert.equal(calls.menus.length, 0, "滑动取消时也不得触发上下文菜单");
   });
 
-  it("opens the context menu after a 1s hold without drag", async () => {
+  it("opens the context menu after a hold without drag", async () => {
     const { manager, calls } = setup();
     const tile = fakeEl({ dataset: { id: "a" } });
     const node = data_node("a");
     manager.bindTileTouchEvents(tile, node);
     tile.dispatch("touchstart", touchAt(30, 40));
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-    assert.equal(calls.menus.length, 1, "1s 长按出上下文菜单");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(calls.menus.length, 1, "长按出上下文菜单");
     assert.deepEqual(calls.menus[0], { x: 30, y: 40, node });
   });
 });
@@ -284,7 +299,7 @@ describe("touch-drag-manager move & drop intents", () => {
     manager.bindDocumentTouchEvents();
     manager.bindGroupTouchEvents(btn, { groupId: "grp_all" });
     btn.dispatch("touchstart", touchAt(5, 5));
-    await new Promise((resolve) => setTimeout(resolve, 320));
+    await new Promise((resolve) => setTimeout(resolve, 30));
     hoverEl = { closest: (sel) => (sel === ".group-tab.draggable" ? otherBtn : null) };
     fire("touchmove", touchAt(30, 30));
     fire("touchend", touchAt(30, 30));

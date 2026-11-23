@@ -3,6 +3,7 @@
  */
 
 import { getLastError, storageArea } from "./shared-utils.js";
+import { createSyncDeviceAuth } from "./sync_device_auth.js";
 import { httpConfirmSyncState, httpPairDevice, httpPullState, httpPushState } from "./sync_http_transport.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
 import { mergeHomepage } from "./sync_merge.js";
@@ -34,127 +35,38 @@ import {
 function areaLocal() {
   return storageArea(false);
 }
+const deviceAuth = createSyncDeviceAuth({
+  getData: () => _getData(),
+  saveLocal: (next) => _saveLocal(next),
+  getOrCreateDeviceId,
+  httpPairDevice,
+  onDeviceRetired: async () => {
+    _status.status = "device_retired";
+    _status.lastError = "设备已被管理员注销 (403)";
+    stopSyncInterval();
+    cancelScheduledPush();
+    await saveState();
+  },
+});
+
 function getTransportConfig() {
-  const data = _getData();
-  const settings = data?.settings || {};
-  return {
-    // 同步只走自建 HTTP 服务；浏览器 storage.sync 不再作为数据源或写入目标。
-    mode: "http",
-    baseUrl: String(settings.syncServerUrl || "").trim(),
-    token: String(settings.syncServerToken || "").trim(),
-    // 设备独立凭据（P1 配对签发）：存在时 pull/push/confirm 优先使用 Device 头
-    deviceSecret: String(settings.syncDeviceSecret || "").trim(),
-    // 凭据签发时的服务器地址：换了服务器后旧凭据立即失效，需要重新配对
-    deviceSecretUrl: String(settings.syncDeviceSecretUrl || "").trim(),
-  };
+  return deviceAuth.getTransportConfig();
 }
 
-/**
- * 组装本次请求的传输凭据：
- * - 配对过且服务器地址未变 → Device <deviceId>:<deviceSecret>（独立凭据，可被单独注销）；
- * - 否则 → 回退全局 Bearer Token（未配对客户端的兼容行为）。
- */
 async function getTransportAuth() {
-  const transport = getTransportConfig();
-  if (transport.deviceSecret && transport.baseUrl && transport.deviceSecretUrl === transport.baseUrl) {
-    const deviceId = await getOrCreateDeviceId();
-    if (deviceId) {
-      return { ...transport, deviceId, deviceSecret: transport.deviceSecret };
-    }
-  }
-  return { baseUrl: transport.baseUrl, token: transport.token };
+  return deviceAuth.getTransportAuth();
 }
 
-/** 根据 UserAgent 生成友好设备名（配对时登记到服务端设备表，仪表盘可见） */
-function friendlyDeviceName() {
-  const ua = String(typeof navigator !== "undefined" ? navigator.userAgent || "" : "");
-  if (!ua) return "未命名设备";
-  if (/firefox\//i.test(ua)) return "Firefox 浏览器";
-  if (/edg\//i.test(ua)) return "Edge 浏览器";
-  if (/chrome|crios/i.test(ua)) return "Chrome 浏览器";
-  if (/safari/i.test(ua)) return "Safari 扩展";
-  return "浏览器设备";
-}
-
-/** 防止并发同步同时发起多次配对 */
-let _pairInFlight = null;
-
-/**
- * 自动配对设备独立凭据（P1 收尾）：
- * 同步开启 + 配置了服务器与 Master Token + 本地尚无凭据时，
- * 用 Master Token 为本机签发 Device 凭据并写入 settings 持久化；
- * 之后所有 pull / push / confirm 自动改用该凭据。
- * 配对失败静默降级（继续用 Bearer），不阻断同步本身。
- * @returns {Promise<boolean>} 是否完成配对（含已在飞行中）
- */
 export async function ensureDevicePairing() {
-  const data = _getData();
-  const settings = data?.settings || {};
-  if (!settings.syncEnabled) return false;
-  const baseUrl = String(settings.syncServerUrl || "").trim();
-  const token = String(settings.syncServerToken || "").trim();
-  // 开放模式（无 Master Token）没有配对意义：服务端不校验任何凭据
-  if (!baseUrl || !token) return false;
-  const existing = String(settings.syncDeviceSecret || "").trim();
-  if (existing && String(settings.syncDeviceSecretUrl || "").trim() === baseUrl) return false;
-  if (_pairInFlight) return _pairInFlight;
-  _pairInFlight = (async () => {
-    try {
-      const deviceId = await getOrCreateDeviceId();
-      if (!deviceId) return false;
-      const res = await httpPairDevice({ baseUrl, token }, { deviceId, deviceName: friendlyDeviceName() });
-      if (!res?.ok || !res.deviceSecret) return false;
-      const current = _getData();
-      if (!current?.settings) return false;
-      // 等待期间别的实例可能已配对成功
-      const raced = String(current.settings.syncDeviceSecret || "").trim();
-      if (raced && String(current.settings.syncDeviceSecretUrl || "").trim() === baseUrl) return true;
-      current.settings.syncDeviceSecret = res.deviceSecret;
-      current.settings.syncDeviceSecretUrl = baseUrl;
-      const err = await _saveLocal(current);
-      if (err) {
-        // 落盘失败必须回滚内存：否则本页一直用未持久化的凭据，重启后凭据丢失
-        delete current.settings.syncDeviceSecret;
-        delete current.settings.syncDeviceSecretUrl;
-        return false;
-      }
-      return true;
-    } catch (e) {
-      console.warn("pair device failed", e);
-      return false;
-    } finally {
-      _pairInFlight = null;
-    }
-  })();
-  return _pairInFlight;
+  return deviceAuth.ensureDevicePairing();
 }
 
-/**
- * 设备凭据被服务端判定未授权（401）：通常是服务器数据重建或换库后旧凭据失配。
- * 清掉本地凭据，下一轮同步会自动用 Master Token 重新配对自愈。
- */
 async function dropStaleDeviceCredentials() {
-  const current = _getData();
-  if (!current?.settings?.syncDeviceSecret) return;
-  delete current.settings.syncDeviceSecret;
-  delete current.settings.syncDeviceSecretUrl;
-  try {
-    await _saveLocal(current);
-  } catch (e) {
-    console.warn("drop stale device credentials failed", e);
-  }
+  return deviceAuth.dropStaleDeviceCredentials();
 }
 
-/**
- * 退役熔断：本设备已被管理员注销，服务端对一切读写返回 403 device_retired。
- * 立即停止周期轮询与防抖推送（防止无意义的高频空转），状态置为 device_retired。
- */
 async function markDeviceRetired() {
-  _status.status = "device_retired";
-  _status.lastError = "设备已被管理员注销 (403)";
-  stopSyncInterval();
-  cancelScheduledPush();
-  await saveState();
+  return deviceAuth.markDeviceRetired();
 }
 
 function storageGetKeys(area, keys) {

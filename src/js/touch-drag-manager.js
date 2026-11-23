@@ -49,10 +49,19 @@ var HomepageTouchDragManager = (() => {
    *   closeContextMenu: () => void,
    *   isRecentGroup: (groupId: string) => boolean,
    *   canStartTileTouch?: () => boolean,
+   *   tileContextMenuMs?: number,
+   *   tileLongPressMs?: number,
+   *   groupLongPressMs?: number,
+   *   clickSuppressMs?: number,
    * }} deps
    */
   function createTouchDragManager(deps) {
     const drag = deps.dragManager;
+    const tileContextMenuMs =
+      Number(deps.tileContextMenuMs) > 0 ? Number(deps.tileContextMenuMs) : TILE_CONTEXT_MENU_MS;
+    const tileLongPressMs = Number(deps.tileLongPressMs) > 0 ? Number(deps.tileLongPressMs) : TILE_LONG_PRESS_MS;
+    const groupLongPressMs = Number(deps.groupLongPressMs) > 0 ? Number(deps.groupLongPressMs) : GROUP_LONG_PRESS_MS;
+    const clickSuppressMs = Number(deps.clickSuppressMs) > 0 ? Number(deps.clickSuppressMs) : CLICK_SUPPRESS_MS;
 
     const touchDragState = {
       mode: "",
@@ -161,7 +170,7 @@ var HomepageTouchDragManager = (() => {
             touchMenuState.active = true;
             clearTouchMenuTimer();
             deps.openContextMenu(touchMenuState.x, touchMenuState.y, touchMenuState.node);
-          }, TILE_CONTEXT_MENU_MS);
+          }, tileContextMenuMs);
         },
         { passive: true },
       );
@@ -194,7 +203,7 @@ var HomepageTouchDragManager = (() => {
       touchDragState.startY = y;
       touchDragState.x = x;
       touchDragState.y = y;
-      const pressMs = mode === "tile" ? TILE_LONG_PRESS_MS : GROUP_LONG_PRESS_MS;
+      const pressMs = mode === "tile" ? tileLongPressMs : groupLongPressMs;
       touchDragState.timer = setTimeout(() => {
         activate();
       }, pressMs);
@@ -315,7 +324,7 @@ var HomepageTouchDragManager = (() => {
         }
       }
 
-      suppressClickUntil = Date.now() + CLICK_SUPPRESS_MS;
+      suppressClickUntil = Date.now() + clickSuppressMs;
       resetTouchDragState();
       return true;
     }
@@ -363,7 +372,7 @@ var HomepageTouchDragManager = (() => {
           }
           if (touchMenuState.active && !touchDragState.active) {
             e.preventDefault();
-            suppressClickUntil = Date.now() + CLICK_SUPPRESS_MS;
+            suppressClickUntil = Date.now() + clickSuppressMs;
             resetTouchMenuState();
             clearTouchDragTimer();
             return;

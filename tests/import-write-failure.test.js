@@ -188,3 +188,122 @@ for (const format of formats) {
     it(`${format} 导入写盘 ${failure} 失败保全原数据且可重试`, () => exercise(format, failure));
   }
 }
+
+it("导入写盘失败回滚时保留持久化等待期间的并发编辑与其它标签页写入", async () => {
+  // 场景 A：同一标签页在 persistData 等待期间并发新增了书签并修改了设置
+  const original = fixture();
+  let data = original;
+  const notices = [];
+  const fields = new Map();
+  const $ = (id) => {
+    if (!fields.has(id)) {
+      const field = {
+        value: "",
+        addEventListener: (name, fn) => {
+          field[name] = fn;
+        },
+      };
+      fields.set(id, field);
+    }
+    return fields.get(id);
+  };
+  let concurrentMode = "in-place";
+  const externalTabData = fixture();
+  externalTabData.nodes.remote_tab = {
+    id: "remote_tab",
+    type: "item",
+    title: "跨标签页写入",
+    url: "https://remote-tab.invalid/",
+    updatedAt: 99,
+  };
+  externalTabData.groups[0].nodes = ["old", "remote_tab"];
+
+  const ctl = createImportExport(
+    {
+      getData: () => data,
+      setData: (next) => {
+        data = next;
+      },
+      getActiveGroupId: () => "grp_all",
+      syncBackupBaseline() {},
+      ui: {
+        $,
+        html,
+        rawHtml,
+        runWithButtonState,
+        t: (key) => key,
+        elements: { modalOverlay: { addEventListener() {}, removeEventListener() {} } },
+        openModal() {},
+        leaveSettingsForSubpanel() {},
+        closeModal() {},
+        render() {},
+        processPendingIconFetches() {},
+        toast: (text, type = "success") => notices.push({ text, type }),
+        pushBackup: () => data.backups.unshift({ id: "before-import", data: structuredClone(data) }),
+        persistData: async () => {
+          if (concurrentMode === "in-place") {
+            // 模拟持久化异步等待期间，用户在当前页并发新增了一个书签并改了字号
+            data.nodes.concurrent_edit = {
+              id: "concurrent_edit",
+              type: "item",
+              title: "并发新增",
+              url: "https://concurrent.invalid/",
+              updatedAt: 50,
+            };
+            data.groups[0].nodes.push("concurrent_edit");
+            data.settings.fontSize = 18;
+          } else if (concurrentMode === "other-tab") {
+            // 模拟持久化异步等待期间，另一标签页触发 reloadFromStorage 替换了 data
+            data = externalTabData;
+          }
+          return { ok: false, err: "disk-full" };
+        },
+      },
+      deps: {
+        ...dataUtils,
+        ...bookmarkHtml,
+        cloneDataSnapshot: structuredClone,
+        defaultSettings,
+        normalizeUrl,
+        normalizeUrlWithScheme,
+        mergeHomepage,
+        toSyncDocument,
+        importSyncBundle,
+        getOrCreateDeviceId: async () => "fixture",
+        createDocId: () => "fixture-doc",
+        resetSettingsClockBaseline() {},
+        resetPlacementClockBaseline() {},
+        getRootGroup: () => data.groups[0],
+        getRootContainers: () => data.groups,
+        getRootContainerById: (id) => data.groups.find((group) => group.id === id),
+        getPlacementList: (group) => [...group.nodes],
+        setPlacementList: (group, nodes) => {
+          group.nodes = nodes;
+        },
+        touchPlacementContainer() {},
+      },
+    },
+    () => {},
+  );
+
+  ctl.openImportUrlModal();
+  $("importUrlText").value = "fresh.invalid";
+  await $("btnImportUrlHttps").click();
+
+  assert.equal(data, original, "回滚到原数据对象");
+  assert.equal(
+    Object.values(data.nodes).some((n) => n.url === "https://fresh.invalid/"),
+    false,
+    "失败的导入条目被回滚",
+  );
+  assert.equal(data.backups.length, 0, "失败导入产生的备份被回滚");
+  assert.ok(data.nodes.concurrent_edit, "导入期间并发新增的节点被保留");
+  assert.ok(data.groups[0].nodes.includes("concurrent_edit"), "并发新增节点的放置顺序被保留");
+  assert.equal(data.settings.fontSize, 18, "导入期间并发修改的设置被保留");
+
+  // 场景 B：持久化等待期间其它标签页写入并重载了 data，失败回滚不能用旧快照抹掉新标签页数据
+  concurrentMode = "other-tab";
+  await $("btnImportUrlHttps").click();
+  assert.equal(data, externalTabData, "其它标签页重载的新数据未被旧快照覆盖");
+  assert.ok(data.nodes.remote_tab);
+});

@@ -14,7 +14,6 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
     runWithButtonState,
     render,
     persistData,
-    queuePersist,
     pushBackup,
     processPendingIconFetches,
     normalizeUrl,
@@ -52,21 +51,101 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
 
   let importInFlight = false;
 
+  /**
+   * 将持久化等待期间发生的外部并发原地编辑（新增/修改/删除节点、分组、设置）合并回回滚基线，
+   * 避免导入写盘失败回滚时顺带抹掉用户在保存窗口期内的正常编辑。
+   * 若无并发编辑则不触碰 target，保持原对象引用与结构零改动。
+   */
+  function preserveConcurrentEdits(target, postChangeSnapshot, currentData) {
+    if (!target || !postChangeSnapshot || !currentData) return;
+
+    // 1. 设置项并发改动
+    if (currentData.settings && postChangeSnapshot.settings && target.settings) {
+      for (const [key, val] of Object.entries(currentData.settings)) {
+        if (JSON.stringify(val) !== JSON.stringify(postChangeSnapshot.settings[key])) {
+          target.settings[key] = cloneDataSnapshot(val);
+        }
+      }
+    }
+
+    // 2. 节点并发新增、编辑或删除
+    if (currentData.nodes && postChangeSnapshot.nodes && target.nodes) {
+      for (const [id, node] of Object.entries(currentData.nodes)) {
+        const snapNode = postChangeSnapshot.nodes[id];
+        if (!snapNode || JSON.stringify(node) !== JSON.stringify(snapNode)) {
+          target.nodes[id] = cloneDataSnapshot(node);
+        }
+      }
+      for (const id of Object.keys(postChangeSnapshot.nodes)) {
+        if (!(id in currentData.nodes) && id in target.nodes) {
+          delete target.nodes[id];
+        }
+      }
+    }
+
+    // 3. 分组与放置列表并发改动
+    if (Array.isArray(currentData.groups) && Array.isArray(postChangeSnapshot.groups) && Array.isArray(target.groups)) {
+      for (const group of currentData.groups) {
+        const snapGroup = postChangeSnapshot.groups.find((g) => g.id === group.id);
+        const targetGroup = target.groups.find((g) => g.id === group.id);
+        if (!snapGroup) {
+          if (!targetGroup) {
+            target.groups.push(cloneDataSnapshot(group));
+          }
+          continue;
+        }
+        if (!targetGroup) continue;
+        if (group.name !== snapGroup.name) targetGroup.name = group.name;
+        if (group.title !== snapGroup.title) targetGroup.title = group.title;
+        if (group.order !== snapGroup.order) targetGroup.order = group.order;
+        if (Array.isArray(group.nodes) && Array.isArray(snapGroup.nodes) && Array.isArray(targetGroup.nodes)) {
+          const snapSet = new Set(snapGroup.nodes);
+          const curSet = new Set(group.nodes);
+          for (const nid of group.nodes) {
+            if (!snapSet.has(nid) && !targetGroup.nodes.includes(nid)) {
+              targetGroup.nodes.push(nid);
+            }
+          }
+          for (const nid of snapGroup.nodes) {
+            if (!curSet.has(nid) && targetGroup.nodes.includes(nid)) {
+              targetGroup.nodes = targetGroup.nodes.filter((id) => id !== nid);
+            }
+          }
+        }
+      }
+    }
+  }
+
   /** 在隔离副本上修改，写盘失败恢复原对象；成功后的关闭/渲染由调用方负责。 */
   async function commitImport(change) {
     if (importInFlight) throw new Error("已有导入正在保存，请稍后重试");
     importInFlight = true;
     const previous = getData();
+    let workingData = null;
+    let postChangeSnapshot = null;
     try {
       setData(cloneDataSnapshot(previous));
       await change();
+      workingData = getData();
+      postChangeSnapshot = cloneDataSnapshot(workingData);
       const result = await persistData();
       if (!result?.ok) throw new Error(result?.err || "写入失败");
     } catch (error) {
-      setData(previous);
-      syncBackupBaseline?.(previous);
-      resetSettingsClockBaseline(previous);
-      resetPlacementClockBaseline(previous);
+      const currentAfterFail = getData();
+      if (workingData && currentAfterFail && currentAfterFail !== workingData) {
+        // 持久化等待期间其它标签页重载或外部调用了 setData：保留最新外部数据，不用旧快照覆盖
+        syncBackupBaseline?.(currentAfterFail);
+        resetSettingsClockBaseline?.(currentAfterFail);
+        resetPlacementClockBaseline?.(currentAfterFail);
+      } else {
+        if (postChangeSnapshot && currentAfterFail) {
+          preserveConcurrentEdits(previous, postChangeSnapshot, currentAfterFail);
+        }
+        setData(previous);
+        syncBackupBaseline?.(previous);
+        resetSettingsClockBaseline?.(previous);
+        resetPlacementClockBaseline?.(previous);
+      }
       throw error;
     } finally {
       importInFlight = false;
@@ -167,14 +246,14 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
         // 运行时 schema 校验：修复非法字段、清理悬空引用、合并默认 settings
         const repairedIncoming = repairHomepageData(incoming, defaultSettings());
         if (!repairedIncoming.schemaVersion) throw new Error("无 schemaVersion");
-        await commitImport(async () => {
+        const deviceId = mode === "merge" ? await getOrCreateDeviceId() : "";
+        await commitImport(() => {
           pushBackup();
           if (mode === "replace") {
             setData(repairedIncoming);
-            resetSettingsClockBaseline(getData());
-            resetPlacementClockBaseline(getData());
+            resetSettingsClockBaseline?.(getData());
+            resetPlacementClockBaseline?.(getData());
           } else if (mode === "merge") {
-            const deviceId = await getOrCreateDeviceId();
             const incomingDoc = toSyncDocument(repairedIncoming, {
               deviceId: `import_${deviceId}`,
               docId: repairedIncoming?._syncMeta?.docId || createDocId(),
@@ -187,8 +266,8 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
               merged.state.settings.backgroundCustom = repairedIncoming.settings.backgroundCustom;
             }
             setData(merged.state);
-            resetSettingsClockBaseline(getData());
-            resetPlacementClockBaseline(getData());
+            resetSettingsClockBaseline?.(getData());
+            resetPlacementClockBaseline?.(getData());
           } else if (mode === "add") {
             mergeRootBookmarkData(getData(), repairedIncoming);
           }
@@ -382,16 +461,15 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
             }
           }
         }
-        const previous = getData();
-        setData(restoredData);
-        // 恢复已有快照不应再生成一份内容重复的自动备份。
-        syncBackupBaseline(restoredData);
         try {
-          const result = await persistData();
-          if (!result.ok) throw new Error(result.err || "写入失败");
+          await commitImport(() => {
+            setData(restoredData);
+            // 恢复已有快照不应再生成一份内容重复的自动备份。
+            syncBackupBaseline?.(restoredData);
+            resetSettingsClockBaseline?.(restoredData);
+            resetPlacementClockBaseline?.(restoredData);
+          });
         } catch (error) {
-          setData(previous);
-          syncBackupBaseline(previous);
           toast(`恢复备份失败：${error.message || error}`, "error");
           return;
         }
@@ -401,13 +479,20 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
       });
     });
     qsa(".backup-delete", elements.modal).forEach((btn) => {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         const row = btn.closest("[data-backup]");
         if (!row) return;
         const id = row.dataset.backup;
         if (!id) return;
-        getData().backups = (getData().backups || []).filter((b) => b.id !== id);
-        queuePersist();
+        try {
+          await commitImport(() => {
+            getData().backups = (getData().backups || []).filter((b) => b.id !== id);
+            syncBackupBaseline?.(getData());
+          });
+        } catch (error) {
+          toast(`删除备份失败：${error.message || error}`, "error");
+          return;
+        }
         openBackupModal();
         toast("已删除备份", "success");
       });

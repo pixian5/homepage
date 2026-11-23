@@ -819,35 +819,61 @@ var HomepageSettingsController = (() => {
     $("btnClearData").addEventListener("click", async () => {
       if (!confirm(t("confirm.clearData"))) return;
       await runWithButtonState($("btnClearData"), t("settings.action.clearing"), async () => {
+        const previous = getData();
+        const prevActiveGroupId = _ctx.getActiveGroupId?.();
         const keepLanguage = currentLang();
         // 必须在重置前记下是否开过同步，否则 defaultData 会把 syncEnabled 置 false，云端清不掉
         const prevSync = !!getData()?.settings?.syncEnabled;
-        await clearData(false);
-        if (prevSync) await clearData(true);
-        setData(defaultData());
-        getData().settings.language = keepLanguage;
-        getData().settings.syncEnabled = false;
-        setActiveGroupId(getRootGroup().id);
-        await persistData();
-        closeModal();
-        render();
-        toast(t("toast.cleared"));
+        try {
+          await clearData(false);
+          if (prevSync) await clearData(true);
+          setData(defaultData());
+          getData().settings.language = keepLanguage;
+          getData().settings.syncEnabled = false;
+          setActiveGroupId(getRootGroup().id);
+          const res = await persistData();
+          if (!res?.ok) throw new Error(res?.err || "写入失败");
+          closeModal();
+          render();
+          toast(t("toast.cleared"));
+        } catch (error) {
+          setData(previous);
+          if (prevActiveGroupId !== undefined) setActiveGroupId?.(prevActiveGroupId);
+          _ctx.syncBackupBaseline?.(previous);
+          _ctx.deps?.resetSettingsClockBaseline?.(previous);
+          _ctx.deps?.resetPlacementClockBaseline?.(previous);
+          toast(`清空数据失败：${error?.message || error}`, "error");
+        }
       });
     });
     $("btnClearCards").addEventListener("click", async () => {
       if (!confirm(t("confirm.clearCards"))) return;
       await runWithButtonState($("btnClearCards"), t("settings.action.clearing"), async () => {
-        pushBackup();
-        const preservedSettings = deepClone(getData().settings || {});
-        for (const id of Object.keys(getData().nodes || {})) markNodeDeleted(getData(), id);
-        getData().nodes = {};
-        getData().groups = [{ id: ALL_BOOKMARKS_GROUP_ID, name: "全部", order: -1, nodes: [], systemAllGroup: true }];
-        getData().settings = preservedSettings;
-        setActiveGroupId(ALL_BOOKMARKS_GROUP_ID);
-        await persistData();
-        closeModal();
-        render();
-        toast(t("toast.cardsCleared"));
+        const previous = getData();
+        const prevActiveGroupId = _ctx.getActiveGroupId?.();
+        const cloneFn = _ctx.deps?.cloneDataSnapshot || deepClone;
+        try {
+          setData(cloneFn(previous));
+          pushBackup();
+          const preservedSettings = deepClone(getData().settings || {});
+          for (const id of Object.keys(getData().nodes || {})) markNodeDeleted(getData(), id);
+          getData().nodes = {};
+          getData().groups = [{ id: ALL_BOOKMARKS_GROUP_ID, name: "全部", order: -1, nodes: [], systemAllGroup: true }];
+          getData().settings = preservedSettings;
+          setActiveGroupId(ALL_BOOKMARKS_GROUP_ID);
+          const res = await persistData();
+          if (!res?.ok) throw new Error(res?.err || "写入失败");
+          closeModal();
+          render();
+          toast(t("toast.cardsCleared"));
+        } catch (error) {
+          setData(previous);
+          if (prevActiveGroupId !== undefined) setActiveGroupId?.(prevActiveGroupId);
+          _ctx.syncBackupBaseline?.(previous);
+          _ctx.deps?.resetSettingsClockBaseline?.(previous);
+          _ctx.deps?.resetPlacementClockBaseline?.(previous);
+          toast(`清空卡片失败：${error?.message || error}`, "error");
+        }
       });
     });
     $("btnRefreshIcons").addEventListener("click", async () => {

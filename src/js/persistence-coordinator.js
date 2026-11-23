@@ -194,8 +194,25 @@ var HomepagePersistenceCoordinator = (() => {
       const run = async () => {
         const data = getData();
         persistInFlight += 1;
+        const prevBackupFingerprint = backupFingerprint;
+        const prevBackupBaselineSnapshot = backupBaselineSnapshot;
+        const prevSkipAutoBackupOnce = skipAutoBackupOnce;
+        const prevBackups = Array.isArray(data?.backups) ? [...data.backups] : null;
+        const prevSettingsClockBaseline = settingsClockBaseline ? deepClone(settingsClockBaseline) : null;
+        const prevPlacementClockBaseline = placementClockBaseline ? deepClone(placementClockBaseline) : null;
+        const rollbackBaselines = () => {
+          backupFingerprint = prevBackupFingerprint;
+          backupBaselineSnapshot = prevBackupBaselineSnapshot;
+          skipAutoBackupOnce = prevSkipAutoBackupOnce;
+          if (autoBackedUp && Array.isArray(data?.backups) && prevBackups) {
+            data.backups = prevBackups;
+          }
+          settingsClockBaseline = prevSettingsClockBaseline;
+          placementClockBaseline = prevPlacementClockBaseline;
+        };
         const autoBackedUp = ensureAutoBackupBeforePersist();
         suppressStorageUntil = Math.max(suppressStorageUntil, Date.now() + storageSuppressMs * 4);
+        let saveSucceeded = false;
         try {
           debugLog("persist_start", {
             useSync: data.settings.syncEnabled,
@@ -244,11 +261,17 @@ var HomepagePersistenceCoordinator = (() => {
             });
           }
           if (!err) {
+            saveSucceeded = true;
             syncBackupBaseline(data);
+          } else {
+            rollbackBaselines();
           }
           debugLog("persist_done", { err1, changed, warning, err, autoBackedUp });
           return { ok: !err, warning, err };
         } finally {
+          if (!saveSucceeded) {
+            rollbackBaselines();
+          }
           persistInFlight = Math.max(0, persistInFlight - 1);
         }
       };

@@ -230,4 +230,35 @@ describe("persistence-coordinator clock stamping", () => {
     // 基线重建后再打标为空
     assert.deepEqual(await coordinator.stampPlacementClockBeforePersist(), []);
   });
+
+  it("rolls back auto-backup and clock baselines when saveData fails or throws", async () => {
+    const { coordinator, data, failNextSaves } = setup();
+    coordinator.syncBackupBaseline(data);
+    coordinator.resetSettingsClockBaseline(data);
+    coordinator.resetPlacementClockBaseline(data);
+
+    // 修改节点、设置和放置顺序，然后让第一次写盘返回错误
+    data.settings.language = "en";
+    data.nodes.itm_2 = {
+      id: "itm_2",
+      type: "item",
+      title: "二",
+      url: "https://2.example.com/",
+      updatedAt: 2,
+      updatedBy: "dev",
+    };
+    data.groups[0].nodes.push("itm_2");
+
+    failNextSaves(["disk_full"]);
+    const failedRes = await coordinator.persistData();
+    assert.equal(failedRes.ok, false);
+    assert.equal(failedRes.err, "disk_full");
+    // 写盘失败后：自动压入的备份必须被回退，且下一次重试仍能识别差异并生成自动备份与时钟打标
+    assert.equal(data.backups.length, 0, "失败时自动压入的备份已回滚");
+
+    const retryRes = await coordinator.persistData();
+    assert.equal(retryRes.ok, true);
+    assert.equal(data.backups.length, 1, "重试成功时仍能依据旧基线生成自动备份");
+    assert.deepEqual(Object.keys(data.backups[0].data.nodes), ["itm_1"]);
+  });
 });

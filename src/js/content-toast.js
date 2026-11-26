@@ -20,7 +20,7 @@
   };
 
   function showToast(message, fontSize) {
-    if (!document.body) return;
+    if (!document.body) return false;
     const existing = document.getElementById(TOAST_ID);
     if (existing) existing.remove();
     const el = document.createElement("div");
@@ -29,6 +29,7 @@
     Object.assign(el.style, TOAST_STYLE_PROPS, { fontSize: `${Number(fontSize) || 14}px` });
     document.body.appendChild(el);
     setTimeout(() => el.remove(), 3000);
+    return true;
   }
 
   function getRuntime() {
@@ -40,8 +41,8 @@
   const api = getRuntime();
   api?.runtime?.onMessage?.addListener?.((message, _sender, sendResponse) => {
     if (message?.type === "homepage_show_toast" && message?.text) {
-      showToast(message.text, message.fontSize);
-      sendResponse?.({ ok: true });
+      const ok = showToast(message.text, message.fontSize);
+      sendResponse?.({ ok });
       return true;
     }
     return false;

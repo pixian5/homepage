@@ -344,6 +344,19 @@ export async function loadDataFromArea(useSync = false) {
   return data;
 }
 
+async function fallbackSyncToLocal(data, prevLastUpdated, prevSyncEnabled, sentinel, api) {
+  if (data.settings) data.settings.syncEnabled = false;
+  data.lastUpdated = Math.max(nowTs(), (Number(data.lastUpdated) || 0) + 1);
+  const localErr = await storageSetLocal(storageArea(false), { [ROOT_KEY]: data });
+  if (localErr) {
+    data.lastUpdated = prevLastUpdated;
+    if (data.settings && prevSyncEnabled !== undefined) data.settings.syncEnabled = prevSyncEnabled;
+  } else {
+    await writeSafariStableHomepage(data, api);
+  }
+  return sentinel;
+}
+
 /**
  * 保存数据
  * @param {HomepageData} data
@@ -356,16 +369,13 @@ export async function saveData(data, useSync = false) {
   // 无扩展 API 但有 Web 回退存储（localStorage）时照常读写
   if (!api && !area) return "no_api";
   const prevLastUpdated = data.lastUpdated;
+  const prevSyncEnabled = data.settings?.syncEnabled;
   data.lastUpdated = Math.max(nowTs(), (Number(prevLastUpdated) || 0) + 1);
   const payload = useSync ? sanitizeForSync(data, ICON_DATA_MAX_LENGTH) : data;
   if (useSync) {
     const size = estimateBytes(payload);
     if (size > SYNC_ITEM_QUOTA_BYTES) {
-      data.settings.syncEnabled = false;
-      data.lastUpdated = Math.max(nowTs(), (Number(data.lastUpdated) || 0) + 1);
-      const localErr = await storageSetLocal(storageArea(false), { [ROOT_KEY]: data });
-      if (localErr) data.lastUpdated = prevLastUpdated;
-      return "sync_quota_exceeded";
+      return fallbackSyncToLocal(data, prevLastUpdated, prevSyncEnabled, "sync_quota_exceeded", api);
     }
   }
   let err = await storageSetLocal(area, { [ROOT_KEY]: payload });
@@ -411,11 +421,7 @@ export async function saveData(data, useSync = false) {
   }
   if (err && useSync) {
     // 远端同步写入失败：回退本地存储并把同步开关关闭，返回 sentinel 让 UI 给出准确提示。
-    data.settings.syncEnabled = false;
-    data.lastUpdated = Math.max(nowTs(), (Number(data.lastUpdated) || 0) + 1);
-    const localErr = await storageSetLocal(storageArea(false), { [ROOT_KEY]: data });
-    if (localErr) data.lastUpdated = prevLastUpdated;
-    return "sync_write_failed";
+    return fallbackSyncToLocal(data, prevLastUpdated, prevSyncEnabled, "sync_write_failed", api);
   }
   if (err) {
     // 写盘失败：回滚 lastUpdated，避免 LWW 把“内存新、磁盘旧”当成权威

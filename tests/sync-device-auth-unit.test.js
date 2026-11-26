@@ -90,6 +90,11 @@ describe("sync_device_auth", () => {
     assert.equal(await auth.ensureDevicePairing(), false);
     assert.equal(data.settings.syncDeviceSecret, undefined);
     assert.equal(data.settings.syncDeviceSecretUrl, undefined);
+
+    const trimmed = setupAuth({ saveErr: "local_trimmed_backups" });
+    assert.equal(await trimmed.auth.ensureDevicePairing(), true);
+    assert.equal(trimmed.data.settings.syncDeviceSecret, "sec_123");
+    assert.equal(trimmed.data.settings.syncDeviceSecretUrl, "http://127.0.0.1:8787");
   });
 
   it("clears stale credentials on 401 and invokes onDeviceRetired callback on 403", async () => {

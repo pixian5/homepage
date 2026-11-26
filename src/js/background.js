@@ -97,13 +97,30 @@ export function addBookmarkToFolderInData(data, { folderId, url, title, deviceId
   if (!targetId || !/^https?:\/\//i.test(cleanUrl)) {
     return { ok: false, error: "invalid_url" };
   }
-  const container = data?.groups?.find((group) => group.id === targetId) || data?.nodes?.[targetId];
-  if (!data?.nodes || !container || (container.type && container.type !== "folder")) {
+  const groups = Array.isArray(data?.groups) ? data.groups : [];
+  const container = groups.find((group) => group?.id === targetId) || data?.nodes?.[targetId];
+  if (
+    !data?.nodes ||
+    !container ||
+    container.deletedAt ||
+    container.purgedAt ||
+    (container.type && container.type !== "folder")
+  ) {
     return { ok: false, error: "no_folder" };
   }
-  const ts = nextSyncTimestamp(now, data.lastUpdated, container.updatedAt);
+  const ts = nextSyncTimestamp(
+    now,
+    data.lastUpdated,
+    container.updatedAt,
+    container.titleUpdatedAt,
+    container.nameUpdatedAt,
+    container.orderUpdatedAt,
+  );
   const node = createItemNode({ url: cleanUrl, title: title || cleanUrl, iconType: "auto", iconPending: true });
+  node.createdAt = ts;
   node.updatedAt = ts;
+  node.titleUpdatedAt = ts;
+  node.urlUpdatedAt = ts;
   if (deviceId) node.updatedBy = deviceId;
   data.nodes[node.id] = node;
   const isGroup = Array.isArray(container.nodes);
@@ -160,7 +177,9 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
             }
             chrome.storage.local.set({ homepage_data: data }, () =>
               sendResponse(
-                chrome.runtime?.lastError ? { ok: false, error: chrome.runtime.lastError.message } : { ok: true },
+                chrome.runtime?.lastError
+                  ? { ok: false, error: chrome.runtime.lastError.message }
+                  : { ok: true, node: added.node, folderId },
               ),
             );
           }),

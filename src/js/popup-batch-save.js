@@ -81,6 +81,10 @@ function appendTabsToContainer(data, savableTabs, { containerId, deviceId = "", 
       iconType: "auto",
       iconPending: true,
     });
+    node.createdAt = clockNow;
+    node.updatedAt = clockNow;
+    node.titleUpdatedAt = clockNow;
+    node.urlUpdatedAt = clockNow;
     if (deviceId) node.updatedBy = deviceId;
     data.nodes[node.id] = node;
     list.push(node.id);

@@ -209,5 +209,12 @@ describe("popup on-demand script injection compatibility", () => {
       true,
     );
     assert.equal(reply?.ok, true);
+
+    context.document.body = null;
+    let noBodyReply = null;
+    listeners[0]({ type: "homepage_show_toast", text: "skip", fontSize: 14 }, null, (r) => {
+      noBodyReply = r;
+    });
+    assert.equal(noBodyReply?.ok, false);
   });
 });

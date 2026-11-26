@@ -21,7 +21,7 @@ import {
   resolveIcon,
   withIconFetchConcurrency,
 } from "./icons.js";
-import { getChromeApi } from "./shared-utils.js";
+import { callExtensionApi, getChromeApi } from "./shared-utils.js";
 import { loadIconCache, saveIconCache } from "./storage.js";
 
 var HomepageIconManager = (() => {
@@ -231,6 +231,12 @@ var HomepageIconManager = (() => {
 
     /** 进行中的后台抓取任务集合（nodeId::url），避免重复触发并发抓取 */
     const _pendingIconFetches = new Set();
+    /** 进行中的后台标题抓取集合（nodeId::url），避免重复打开静默标签页 */
+    const _pendingTitleFetches = new Set();
+
+    function isActiveItemWithUrl(node, url) {
+      return !!(node && !node.deletedAt && !node.purgedAt && node.url === url);
+    }
 
     /** 后台补抓 pending 图标：成功/失败都会清 iconPending 并持久化 */
     async function fetchFaviconInBackground(nodeId, url) {
@@ -243,6 +249,7 @@ var HomepageIconManager = (() => {
       try {
         // 在全局并发信号量内串行尝试候选，避免多节点并发抓取触发请求风暴
         await withIconFetchConcurrency(async () => {
+          if (!isActiveItemWithUrl(deps.getData()?.nodes?.[nodeId], url)) return;
           const cache = await loadIconCache();
           const siteKey = getSiteKey(url);
           for (const candidate of candidates) {
@@ -253,7 +260,7 @@ var HomepageIconManager = (() => {
             if (siteKey) cache[siteKey] = { ...cache[url] };
             await saveIconCache(cache);
             const target = deps.getData()?.nodes?.[nodeId];
-            if (!target || target.deletedAt || target.purgedAt || target.url !== url) return;
+            if (!isActiveItemWithUrl(target, url)) return;
             target.iconPending = false;
             await deps.persistData();
             deps.render();
@@ -264,7 +271,7 @@ var HomepageIconManager = (() => {
           if (siteKey) applyFailureToCache(cache, siteKey, cache[siteKey]);
           await saveIconCache(cache);
           const target = deps.getData()?.nodes?.[nodeId];
-          if (target && !target.deletedAt && !target.purgedAt && target.url === url) {
+          if (isActiveItemWithUrl(target, url)) {
             target.iconPending = false;
             await deps.persistData();
             deps.render();
@@ -286,35 +293,12 @@ var HomepageIconManager = (() => {
       }
     }
 
-    /** 兼容 Chrome 回调与 Firefox/Safari Promise-only 的 tabs API 调用 */
+    /** 兼容 Chrome 回调与 Firefox/Safari Promise-only 的 tabs API 调用，并确保消费 runtime.lastError */
     function callTabsApi(tabs, methodName, ...args) {
-      const fn = tabs?.[methodName];
-      if (typeof fn !== "function") return Promise.resolve(null);
-      return new Promise((resolve) => {
-        let done = false;
-        const settle = (value) => {
-          if (done) return;
-          done = true;
-          resolve(value ?? null);
-        };
-        try {
-          const maybePromise = fn.apply(tabs, [...args, (res) => settle(res)]);
-          if (typeof maybePromise?.then === "function") {
-            maybePromise.then(settle, () => settle(null));
-          }
-        } catch (_firstErr) {
-          try {
-            const retry = fn.apply(tabs, args);
-            if (typeof retry?.then === "function") {
-              retry.then(settle, () => settle(null));
-            } else {
-              settle(retry);
-            }
-          } catch (_retryErr) {
-            settle(null);
-          }
-        }
-      });
+      if (typeof tabs?.[methodName] !== "function") return Promise.resolve(null);
+      return callExtensionApi(getChromeApi(), tabs, methodName, args)
+        .then((value) => value ?? null)
+        .catch(() => null);
     }
 
     /** 纯 Web / 无 tabs 环境返回空串（安全降级） */
@@ -326,11 +310,17 @@ var HomepageIconManager = (() => {
       const tabId = tab.id;
       return new Promise((resolve) => {
         let settled = false;
+        let removedExternally = false;
         let timeout = null;
         const onUpdated = (id, info, updatedTab) => {
           if (id === tabId && info?.status === "complete") {
             finish(updatedTab?.title || "");
           }
+        };
+        const onRemoved = (closedTabId) => {
+          if (closedTabId !== tabId) return;
+          removedExternally = true;
+          finish("");
         };
         const finish = (title) => {
           if (settled) return;
@@ -338,8 +328,13 @@ var HomepageIconManager = (() => {
           if (timeout) clearTimeout(timeout);
           try {
             api.tabs.onUpdated?.removeListener?.(onUpdated);
+            api.tabs.onRemoved?.removeListener?.(onRemoved);
           } catch (_e) {
             // ignore
+          }
+          if (removedExternally) {
+            resolve(title || "");
+            return;
           }
           void callTabsApi(api.tabs, "remove", tabId).finally(() => resolve(title || ""));
         };
@@ -350,6 +345,7 @@ var HomepageIconManager = (() => {
             return;
           }
           api.tabs.onUpdated.addListener(onUpdated);
+          api.tabs.onRemoved?.addListener?.(onRemoved);
         } catch (_e) {
           finish("");
         }
@@ -358,15 +354,25 @@ var HomepageIconManager = (() => {
 
     /** 后台补抓标题：通过静默标签页读取页面 title 后回写节点 */
     async function fetchTitleInBackground(nodeId, url) {
-      const title = await fetchTitleViaTab(url);
-      if (!title) return;
-      const target = deps.getData()?.nodes?.[nodeId];
-      if (!target || target.deletedAt || target.purgedAt || !target.titlePending || target.url !== url) return;
-      deps.stampNodeFieldChanges?.(target, { titleChanged: true });
-      target.title = title;
-      target.titlePending = false;
-      await deps.persistData();
-      deps.render();
+      if (!nodeId || !url || !/^https?:\/\//i.test(url)) return;
+      const initial = deps.getData()?.nodes?.[nodeId];
+      if (!isActiveItemWithUrl(initial, url) || !initial.titlePending) return;
+      const fetchKey = `${nodeId}::${url}`;
+      if (_pendingTitleFetches.has(fetchKey)) return;
+      _pendingTitleFetches.add(fetchKey);
+      try {
+        const title = await fetchTitleViaTab(url);
+        if (!title) return;
+        const target = deps.getData()?.nodes?.[nodeId];
+        if (!isActiveItemWithUrl(target, url) || !target.titlePending) return;
+        deps.stampNodeFieldChanges?.(target, { titleChanged: true });
+        target.title = title;
+        target.titlePending = false;
+        await deps.persistData();
+        deps.render();
+      } finally {
+        _pendingTitleFetches.delete(fetchKey);
+      }
     }
 
     /** 批量刷新全部节点图标（复用 icons.js 的 6 路并发控制）并重渲染 */

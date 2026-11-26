@@ -205,6 +205,9 @@ describe("saveSingleTabToContainer", () => {
     assert.equal(res.ok, true);
     assert.equal(data.nodes[res.nodeId].title, "skew.example.com");
     assert.equal(data._syncMeta.placementClock[res.nodeId].updatedAt, NOW + 5001);
+    assert.equal(data.nodes[res.nodeId].updatedAt, NOW + 5001);
+    assert.equal(data.nodes[res.nodeId].titleUpdatedAt, NOW + 5001);
+    assert.equal(data.nodes[res.nodeId].urlUpdatedAt, NOW + 5001);
     assert.equal(data.nodes.fld_work.updatedAt, NOW + 5001);
     assert.equal(data.lastUpdated, NOW + 6001);
   });

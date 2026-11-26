@@ -361,4 +361,84 @@ describe("sync_engine local write failure atomicity", () => {
       }
     });
   }
+
+  it("saveLocal 返回 local_trimmed_* 成功降级哨兵时仍正常提交内存、触发 onMerged 并确认远端", async () => {
+    const baseUrl = "http://127.0.0.1:18787";
+    const remoteState = makeHomepageState({
+      baseUrl,
+      title: "Trimmed Remote Title",
+      extraNodes: {
+        n2: {
+          id: "n2",
+          type: "item",
+          title: "Cloud Item",
+          url: "https://trimmed.example/",
+          iconType: "auto",
+          updatedAt: 260,
+          updatedBy: "dev_peer",
+        },
+      },
+    });
+    remoteState.nodes.n1.updatedAt = 260;
+    remoteState.nodes.n1.titleUpdatedAt = 260;
+    remoteState.nodes.n1.updatedBy = "dev_peer";
+    const remoteDoc = toSyncDocument(remoteState, {
+      deviceId: "dev_peer",
+      docId: "doc_shared_trim",
+      revision: 6,
+      writtenAt: 260,
+    });
+    remoteDoc.contentHash = hashSyncDocument(remoteDoc);
+
+    const h = setupHarness({
+      remoteDoc,
+      initialSyncState: {
+        docId: "doc_shared_trim",
+        status: "idle",
+        lastRemoteRevision: 2,
+      },
+      saveImpl: async () => "local_trimmed_backups",
+    });
+
+    const pullRes = await pullNow("manual");
+    assert.equal(pullRes.ok, true);
+    assert.equal(pullRes.merged, true);
+    assert.equal(h.getData().nodes.n1.title, "Trimmed Remote Title");
+    assert.ok(h.getData().nodes.n2);
+    assert.equal(h.counts().onMergedCount, 1);
+    assert.equal(h.requests.confirms.length, 1);
+    assert.equal(getSyncStatus().status, "idle");
+    assert.equal(getSyncStatus().lastRemoteRevision, 6);
+
+    // 文档冲突分支遇到 local_trimmed_* 同样必须提交并清理冲突态
+    const conflictRemote = structuredClone(remoteDoc);
+    conflictRemote.docId = "doc_cloud_trim";
+    conflictRemote.revision = 7;
+    const realFetchFn = globalThis.fetch;
+    globalThis.fetch = async (url, init = {}) => {
+      const pathname = new URL(String(url)).pathname;
+      const method = String(init.method || "GET").toUpperCase();
+      if (pathname === "/v1/sync/state" && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            doc: conflictRemote,
+            revision: conflictRemote.revision,
+            etag: '"rev-7"',
+            epoch: 0,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json", ETag: '"rev-7"' } },
+        );
+      }
+      return realFetchFn(url, init);
+    };
+    const conflictRes = await pullNow("manual");
+    assert.equal(conflictRes.ok, false);
+    assert.equal(conflictRes.reason, "doc_conflict");
+    h.setSaveImpl(async () => "local_trimmed_icons");
+    const resolved = await resolveDocConflict("remote");
+    assert.equal(resolved.ok, true);
+    assert.equal(getPendingConflict(), null);
+    assert.equal(getSyncStatus().docId, "doc_cloud_trim");
+    assert.equal(getSyncStatus().status, "idle");
+  });
 });

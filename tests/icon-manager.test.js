@@ -361,4 +361,143 @@ describe("createIconManager", () => {
     assert.equal(calls.render, 1);
     assert.deepEqual(calls.stamps, [{ id: "n_title", changes: { titleChanged: true } }]);
   });
+
+  it("fetchTitleInBackground deduplicates in-flight calls, settles via onRemoved, and handles callback lastError safely", async () => {
+    stubIconStorage();
+    let createCalls = 0;
+    let removeCalls = 0;
+    let removedListener = null;
+    globalThis.chrome.runtime.lastError = null;
+    globalThis.chrome.tabs = {
+      create(_opts, cb) {
+        createCalls += 1;
+        cb({ id: 88 });
+      },
+      remove(_tabId, cb) {
+        removeCalls += 1;
+        globalThis.chrome.runtime.lastError = { message: "No tab with id: 88" };
+        cb(undefined);
+        globalThis.chrome.runtime.lastError = null;
+      },
+      onUpdated: {
+        addListener() {},
+        removeListener() {},
+      },
+      onRemoved: {
+        addListener(fn) {
+          removedListener = fn;
+        },
+        removeListener(fn) {
+          if (removedListener === fn) removedListener = null;
+        },
+      },
+    };
+
+    const { manager, data, calls } = makeManager({ titleTimeoutMs: 5000 });
+    data.nodes.n_dup = {
+      id: "n_dup",
+      type: "item",
+      title: "",
+      url: "https://close-early.example.com/",
+      iconType: "auto",
+      titlePending: true,
+    };
+
+    const p1 = manager.fetchTitleInBackground("n_dup", "https://close-early.example.com/");
+    const p2 = manager.fetchTitleInBackground("n_dup", "https://close-early.example.com/");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(createCalls, 1, "同一 nodeId::url 在途标题抓取只创建一个标签页");
+    assert.ok(removedListener);
+
+    // 用户提前关闭临时标签页：立即结束等待，无需触发 tabs.remove 或等到 5 秒超时
+    removedListener(88);
+    await Promise.all([p1, p2]);
+    assert.equal(removeCalls, 0);
+    assert.equal(calls.persist, 0);
+
+    // 非法 URL / 非 titlePending / 墓碑节点前置直接跳过
+    data.nodes.n_deleted = {
+      id: "n_deleted",
+      type: "item",
+      title: "",
+      url: "https://del.example/",
+      titlePending: true,
+      deletedAt: 1,
+    };
+    await manager.fetchTitleInBackground("n_deleted", "https://del.example/");
+    await manager.fetchTitleInBackground("n_dup", "javascript:alert(1)");
+    assert.equal(createCalls, 1);
+
+    // 测试 callback remove 触发 runtime.lastError 时不残留未消费错误
+    globalThis.chrome.tabs.onRemoved = undefined;
+    const shortMgr = makeManager({ titleTimeoutMs: 25 });
+    shortMgr.data.nodes.n_timeout = {
+      id: "n_timeout",
+      type: "item",
+      title: "",
+      url: "https://timeout.example/",
+      titlePending: true,
+    };
+    await shortMgr.manager.fetchTitleInBackground("n_timeout", "https://timeout.example/");
+    assert.equal(removeCalls, 1);
+    assert.equal(globalThis.chrome.runtime.lastError, null);
+  });
+
+  it("fetchFaviconInBackground skips network probes if node is tombstoned before executing queued fetch", async () => {
+    stubIconStorage();
+    const realImage = globalThis.Image;
+    let probeCount = 0;
+    const probedUrls = [];
+    let releaseFirst = null;
+    const firstGate = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    globalThis.Image = class MockImage {
+      set src(url) {
+        probeCount += 1;
+        probedUrls.push(url);
+        void firstGate.then(() => this.onerror?.());
+      }
+    };
+
+    try {
+      const { manager, data } = makeManager();
+      for (let i = 0; i < 6; i += 1) {
+        data.nodes[`q_${i}`] = {
+          id: `q_${i}`,
+          type: "item",
+          title: `Q${i}`,
+          url: `https://q${i}.example/`,
+          iconType: "auto",
+          iconPending: true,
+        };
+      }
+      data.nodes.n_victim = {
+        id: "n_victim",
+        type: "item",
+        title: "Victim",
+        url: "https://victim.example/",
+        iconType: "auto",
+        iconPending: true,
+      };
+      // 先占满 6 个并发信号量槽位，再排入 n_victim，并在排队期间标为已删
+      const blockers = Array.from({ length: 6 }, (_, i) =>
+        manager.fetchFaviconInBackground(`q_${i}`, `https://q${i}.example/`),
+      );
+      const victimJob = manager.fetchFaviconInBackground("n_victim", "https://victim.example/");
+      data.nodes.n_victim.deletedAt = Date.now();
+
+      releaseFirst();
+      await Promise.all([...blockers, victimJob]);
+      assert.ok(probeCount >= 6);
+      assert.equal(
+        probedUrls.some((u) => u.includes("victim.example")),
+        false,
+        "排队等待期间被删除的节点进入并发槽后不应发起探测",
+      );
+    } finally {
+      if (realImage === undefined) delete globalThis.Image;
+      else globalThis.Image = realImage;
+    }
+  });
 });

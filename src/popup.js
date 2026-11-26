@@ -2,6 +2,7 @@ import { collectBookmarkFolders, collectBookmarkTree, getPopupBookmarkRoots } fr
 import { filterSavableTabs, saveSingleTabToContainer, saveTabsToContainer } from "./js/popup-batch-save.js";
 import { POPUP_SUPPORTED_LANGUAGES, translatePopupText } from "./js/popup-i18n.js";
 import {
+  callExtensionApi,
   detectPreferredLanguage,
   getChromeApi,
   normalizeLanguage,
@@ -13,9 +14,7 @@ import { getStorageKey, loadData } from "./js/storage.js";
 import { getOrCreateDeviceId } from "./js/sync_ids.js";
 
 const ROOT_KEY = getStorageKey();
-const _SYNC_ITEM_QUOTA_BYTES = 7500;
 const MAX_LOG_ENTRIES = 30;
-const _ICON_DATA_MAX_LENGTH = 2048;
 const TOAST_DURATION_MS = 3000;
 const DEFAULT_FONT_SIZE = 13;
 const TOAST_FONT_STACK = '"Avenir Next", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif';
@@ -101,15 +100,18 @@ const LOG_KEY = "homepage_save_log";
  * @param {object} entry
  * @returns {Promise<void>}
  */
-function appendLog(entry) {
+async function appendLog(entry) {
   const area = storageArea();
-  return new Promise((resolve) => {
-    area.get(LOG_KEY, (res) => {
-      const list = Array.isArray(res[LOG_KEY]) ? res[LOG_KEY] : [];
-      list.unshift(entry);
-      area.set({ [LOG_KEY]: list.slice(0, MAX_LOG_ENTRIES) }, () => resolve());
-    });
-  });
+  if (!area) return;
+  const api = getChromeApi();
+  try {
+    const res = await callExtensionApi(api, area, "get", [LOG_KEY]);
+    const list = Array.isArray(res?.[LOG_KEY]) ? res[LOG_KEY] : [];
+    list.unshift(entry);
+    await callExtensionApi(api, area, "set", [{ [LOG_KEY]: list.slice(0, MAX_LOG_ENTRIES) }]);
+  } catch (_e) {
+    // 日志记录失败不影响保存主流程
+  }
 }
 
 /**
@@ -127,26 +129,14 @@ async function loadLatestData() {
  */
 async function getCurrentTab() {
   const api = getChromeApi();
-  if (!api?.tabs) return null;
-  const query = { active: true, lastFocusedWindow: true };
-  const result = api.tabs.query(query);
-  if (typeof result?.then === "function") {
-    const tabs = await result;
-    if (api.runtime?.lastError) {
-      console.warn("getCurrentTab error:", api.runtime.lastError.message);
-      return null;
-    }
+  if (!api?.tabs?.query) return null;
+  try {
+    const tabs = await callExtensionApi(api, api.tabs, "query", [{ active: true, lastFocusedWindow: true }]);
     return tabs?.[0] || null;
+  } catch (e) {
+    console.warn("getCurrentTab error:", e?.message || e);
+    return null;
   }
-  return new Promise((resolve) =>
-    api.tabs.query(query, (tabs) => {
-      if (api.runtime?.lastError) {
-        console.warn("getCurrentTab error:", api.runtime.lastError.message);
-        return resolve(null);
-      }
-      resolve(tabs?.[0] || null);
-    }),
-  );
 }
 
 /**
@@ -155,11 +145,10 @@ async function getCurrentTab() {
  */
 async function getCurrentWindowTabs() {
   const api = getChromeApi();
-  if (!api?.tabs) return [];
+  if (!api?.tabs?.query) return [];
   try {
-    const result = api.tabs.query({ currentWindow: true });
-    if (typeof result?.then === "function") return (await result) || [];
-    return await new Promise((resolve) => api.tabs.query({ currentWindow: true }, (tabs) => resolve(tabs || [])));
+    const tabs = await callExtensionApi(api, api.tabs, "query", [{ currentWindow: true }]);
+    return Array.isArray(tabs) ? tabs : [];
   } catch (e) {
     console.warn("getCurrentWindowTabs error:", e?.message || e);
     return [];
@@ -184,67 +173,6 @@ function getExtensionBaseUrl() {
 function isExtensionPageUrl(url) {
   const base = getExtensionBaseUrl();
   return !!(url && base && url.startsWith(base));
-}
-
-/**
- * 调用扩展异步 API，同时兼容回调形态（Chrome）与 Promise 形态（Firefox / Safari）。
- * 优先传回调以读取 runtime.lastError；若同时返回 Promise 或因参数校验同步抛错，
- * 则无缝回退单参数调用并接管 Promise，避免未捕获异常。
- * @param {typeof chrome | null} api
- * @param {object | null | undefined} target
- * @param {string} methodName
- * @param {Array<any>} args
- * @returns {Promise<any>}
- */
-function callExtensionApi(api, target, methodName, args) {
-  const method = target?.[methodName];
-  if (typeof method !== "function") {
-    return Promise.reject(new Error(`Missing extension API: ${methodName}`));
-  }
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finishResolve = (value) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-    const finishReject = (err) => {
-      if (settled) return;
-      settled = true;
-      reject(err instanceof Error ? err : new Error(err?.message || String(err)));
-    };
-    const callback = (result) => {
-      const lastErr = api?.runtime?.lastError;
-      if (lastErr) return finishReject(lastErr);
-      finishResolve(result);
-    };
-
-    try {
-      const maybePromise = method.apply(target, [...args, callback]);
-      if (typeof maybePromise?.then === "function") {
-        maybePromise.then(
-          (value) => {
-            const lastErr = api?.runtime?.lastError;
-            if (lastErr) return finishReject(lastErr);
-            finishResolve(value);
-          },
-          (err) => finishReject(err),
-        );
-      }
-    } catch (firstError) {
-      // Firefox / Safari 的 browser.* Promise-only 封装可能在传入额外 callback 时同步抛错
-      try {
-        const retryResult = method.apply(target, args);
-        if (typeof retryResult?.then === "function") {
-          retryResult.then(finishResolve, finishReject);
-        } else {
-          finishResolve(retryResult);
-        }
-      } catch (_retryError) {
-        finishReject(firstError);
-      }
-    }
-  });
 }
 
 /**
@@ -622,6 +550,7 @@ export async function showToastInTab(tab, message, fontSize) {
       await executeScriptingFiles(api, {
         target: { tabId: tab.id },
         func: (msg, size, duration, styleProps) => {
+          if (!document.body) return;
           const toastId = "homepage-save-toast";
           const existing = document.getElementById(toastId);
           if (existing) existing.remove();
@@ -647,7 +576,7 @@ export async function showToastInTab(tab, message, fontSize) {
       const msg = JSON.stringify(message || "");
       const size = Number(fontSize) || 14;
       const styleJson = JSON.stringify(TOAST_STYLE_PROPS);
-      const code = `(function(){var toastId="homepage-save-toast";var existing=document.getElementById(toastId);if(existing){existing.remove();}var el=document.createElement("div");el.id=toastId;el.textContent=${msg};Object.assign(el.style,${styleJson},{fontSize:"${size}px"});document.body.appendChild(el);setTimeout(function(){el.remove();},${TOAST_DURATION_MS});})();`;
+      const code = `(function(){if(!document.body){return;}var toastId="homepage-save-toast";var existing=document.getElementById(toastId);if(existing){existing.remove();}var el=document.createElement("div");el.id=toastId;el.textContent=${msg};Object.assign(el.style,${styleJson},{fontSize:"${size}px"});document.body.appendChild(el);setTimeout(function(){el.remove();},${TOAST_DURATION_MS});})();`;
       await executeTabsScript(api, tab.id, { code });
       return true;
     }

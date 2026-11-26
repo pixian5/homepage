@@ -198,7 +198,7 @@
       #${ROOT_ID} .hp-logo{position:absolute;inset:0;width:24px;height:24px;border-radius:5px;object-fit:contain;background:#fff;display:block}
       #${ROOT_ID} .hp-logo-letter{position:absolute;inset:0;width:24px;height:24px;border-radius:5px;display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px}
       #${ROOT_ID} .hp-item-copy{min-width:0;display:block}
-      #${ROOT_ID} .hp-folders{border-top:1px solid #ffffff20;padding-top:6px;max-height:220px;overflow:visible;display:grid;gap:2px}
+      #${ROOT_ID} .hp-folders{border-top:1px solid #ffffff20;padding-top:6px;flex-shrink:0;overflow:visible;display:grid;gap:2px}
       #${ROOT_ID} .hp-menu-parent{position:relative}
       #${ROOT_ID} .hp-folder,#${ROOT_ID} .hp-add{width:100%;padding:7px 9px;color:#cdd8e5;border:1px solid transparent;border-radius:5px;background:transparent;text-align:left;cursor:pointer;font:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       #${ROOT_ID} .hp-menu-parent.hp-has-children>.hp-folder::after,#${ROOT_ID} .hp-add::after{content:'›';float:right;color:#9fb0c4;font-size:18px;line-height:13px}
@@ -327,7 +327,7 @@
     const lang = resolveLang(data?.settings?.language);
     const root = document.createElement("div");
     root.id = ROOT_ID;
-    const { folders, items } = walk(data, lang);
+    let { folders, items } = walk(data, lang);
     const appendFolderTree = (host, parentId, onSelect) => {
       for (const folder of folders.filter((entry) => entry.parentId === parentId)) {
         const row = document.createElement("div");
@@ -372,6 +372,7 @@
       }
       panel.appendChild(head);
       let statusTimer = null;
+      let selectedFolderId = "";
       const statusEl = document.createElement("div");
       statusEl.className = "hp-status hp-hidden";
       statusEl.setAttribute("role", "status");
@@ -384,27 +385,6 @@
           statusTimer = null;
         }, 2600);
       };
-      if (side === "left") {
-        const addRow = document.createElement("div");
-        addRow.className = `hp-menu-parent hp-has-children${openAdd ? " hp-force-open" : ""}`;
-        const add = document.createElement("button");
-        add.className = "hp-add";
-        add.textContent = sbText(lang, "addBookmark");
-        addRow.appendChild(add);
-        const addFolders = document.createElement("div");
-        addFolders.className = "hp-submenu";
-        appendFolderTree(addFolders, "", async (folder) => {
-          addRow.classList.remove("hp-force-open");
-          const result = await sendRuntimeMessage({
-            type: "homepage_add_bookmark_to_folder",
-            folderId: folder.id,
-          });
-          showStatus(!!result?.ok, sbText(lang, result?.ok ? "saved" : "saveFailed"));
-        });
-        addRow.appendChild(addFolders);
-        panel.appendChild(addRow);
-      }
-      panel.appendChild(statusEl);
       const list = document.createElement("div");
       list.className = "hp-list";
       const fillList = (visibleItems) => {
@@ -432,20 +412,61 @@
           list.appendChild(button);
         }
       };
+      const appendSavedNode = (folderId, node) => {
+        if (!node?.id) return;
+        if (!data.nodes || typeof data.nodes !== "object") data.nodes = {};
+        data.nodes[node.id] = node;
+        const groups = Array.isArray(data.groups) ? data.groups : [];
+        const target = groups.find((entry) => entry?.id === folderId) || data.nodes[folderId];
+        if (target) {
+          const targetList = Array.isArray(target.nodes)
+            ? target.nodes
+            : Array.isArray(target.children)
+              ? target.children
+              : (target.children = []);
+          if (!targetList.includes(node.id)) targetList.push(node.id);
+        }
+        const refreshed = walk(data, lang);
+        folders = refreshed.folders;
+        items = refreshed.items;
+        fillList(selectedFolderId ? items.filter((item) => item.folderIds.includes(selectedFolderId)) : items);
+      };
+      if (side === "left") {
+        const addRow = document.createElement("div");
+        addRow.className = `hp-menu-parent hp-has-children${openAdd ? " hp-force-open" : ""}`;
+        const add = document.createElement("button");
+        add.className = "hp-add";
+        add.textContent = sbText(lang, "addBookmark");
+        addRow.appendChild(add);
+        const addFolders = document.createElement("div");
+        addFolders.className = "hp-submenu";
+        appendFolderTree(addFolders, "", async (folder) => {
+          addRow.classList.remove("hp-force-open");
+          const result = await sendRuntimeMessage({
+            type: "homepage_add_bookmark_to_folder",
+            folderId: folder.id,
+          });
+          if (result?.ok && result.node) appendSavedNode(result.folderId || folder.id, result.node);
+          showStatus(!!result?.ok, sbText(lang, result?.ok ? "saved" : "saveFailed"));
+        });
+        addRow.appendChild(addFolders);
+        panel.appendChild(addRow);
+      }
+      panel.appendChild(statusEl);
       fillList(items);
       panel.appendChild(list);
       const foldersBox = document.createElement("div");
       foldersBox.className = "hp-folders";
       appendFolderTree(foldersBox, "", (folder) => {
+        selectedFolderId = folder.id;
         fillList(items.filter((item) => item.folderIds.includes(folder.id)));
       });
       panel.appendChild(foldersBox);
       if (openSide === side) panel.classList.add("hp-open");
       return panel;
     };
-    const leftPanel = makeSide("left", true);
-    const rightPanel = makeSide("right", true);
-    root.append(leftPanel, rightPanel);
+    const activeSide = openSide === "right" ? "right" : "left";
+    root.append(makeSide(activeSide, true));
     document.documentElement.appendChild(root);
     if (typeof document?.addEventListener === "function") {
       activeKeydownHandler = (event) => {

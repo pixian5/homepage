@@ -248,6 +248,76 @@ export function storageArea(useSync) {
 }
 
 /**
+ * 调用扩展异步 API，同时兼容回调形态（Chrome）与 Promise 形态（Firefox / Safari）。
+ * 优先传回调以读取 runtime.lastError；若同时返回 Promise 或因参数校验同步抛错，
+ * 则无缝回退无回调参数调用并接管 Promise，避免未捕获异常或漏读 lastError。
+ * @param {typeof chrome | null} api
+ * @param {object | null | undefined} target
+ * @param {string} methodName
+ * @param {Array<any>} [args]
+ * @returns {Promise<any>}
+ */
+export function callExtensionApi(api, target, methodName, args = []) {
+  const method = target?.[methodName];
+  if (typeof method !== "function") {
+    return Promise.reject(new Error(`Missing extension API: ${methodName}`));
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finishResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const finishReject = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err instanceof Error ? err : new Error(err?.message || String(err)));
+    };
+    const callback = (result) => {
+      const lastErr = api?.runtime?.lastError;
+      if (lastErr) return finishReject(lastErr);
+      finishResolve(result);
+    };
+
+    try {
+      const maybePromise = method.apply(target, [...args, callback]);
+      if (typeof maybePromise?.then === "function") {
+        maybePromise.then(
+          (value) => {
+            const lastErr = api?.runtime?.lastError;
+            if (lastErr) return finishReject(lastErr);
+            finishResolve(value);
+          },
+          (err) => finishReject(err),
+        );
+      }
+    } catch (firstError) {
+      // Firefox / Safari 的 browser.* Promise-only 封装可能在传入额外 callback 时同步抛错
+      try {
+        const retryResult = method.apply(target, args);
+        if (typeof retryResult?.then === "function") {
+          retryResult.then(finishResolve, finishReject);
+        } else {
+          finishResolve(retryResult);
+        }
+      } catch (_retryError) {
+        finishReject(firstError);
+      }
+    }
+  });
+}
+
+/**
+ * 判断 saveData 返回值是否为“配额自动裁剪后已成功写入”的非阻断警告哨兵。
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isLocalTrimWarning(err) {
+  return typeof err === "string" && err.startsWith("local_trimmed_");
+}
+
+/**
  * 获取最后一个 runtime 错误
  * @returns {chrome.runtime.LastError | null}
  */

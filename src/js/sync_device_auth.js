@@ -8,6 +8,8 @@
  * 用 IIFE 包裹：Firefox 版把所有模块拼成一个经典脚本，
  * 顶层 const/let 会和其它模块重名。IIFE 保证只暴露一个全局名。
  */
+import { isLocalTrimWarning } from "./shared-utils.js";
+
 var HomepageSyncDeviceAuth = (() => {
   /** 根据 UserAgent 生成友好设备名（配对时登记到服务端设备表，仪表盘可见） */
   function friendlyDeviceName() {
@@ -103,7 +105,7 @@ var HomepageSyncDeviceAuth = (() => {
           current.settings.syncDeviceSecret = res.deviceSecret;
           current.settings.syncDeviceSecretUrl = baseUrl;
           const err = await saveLocal(current);
-          if (err) {
+          if (err && !isLocalTrimWarning(err)) {
             // 落盘失败必须回滚内存：否则本页一直用未持久化的凭据，重启后凭据丢失
             delete current.settings.syncDeviceSecret;
             delete current.settings.syncDeviceSecretUrl;

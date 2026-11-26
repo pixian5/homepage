@@ -536,4 +536,65 @@ describe("storage", async () => {
       global.chrome.storage.local.set = origSet;
     }
   });
+
+  it("saveData useSync fallback syncs Safari stable storage on success and rolls back syncEnabled on local failure", async () => {
+    const origLocalSet = global.chrome.storage.local.set;
+    const origSyncSet = global.chrome.storage.sync.set;
+    const nativeWrites = [];
+    global.chrome.runtime.getURL = (p) => `safari-web-extension://ext/${p || ""}`;
+    global.chrome.runtime.sendNativeMessage = (_app, msg, cb) => {
+      nativeWrites.push(msg);
+      cb?.({ ok: true });
+    };
+
+    try {
+      const okData = defaultData();
+      okData.settings.syncEnabled = true;
+      okData.lastUpdated = 1000;
+      global.chrome.storage.sync.set = (_obj, cb) => {
+        lastError = { message: "sync_unavailable" };
+        cb?.();
+        lastError = null;
+        return Promise.resolve();
+      };
+      assert.equal(await saveData(okData, true), "sync_write_failed");
+      assert.equal(okData.settings.syncEnabled, false);
+      assert.equal(nativeWrites.length, 1);
+
+      const failData = defaultData();
+      failData.settings.syncEnabled = true;
+      for (let i = 0; i < 60; i += 1) {
+        failData.nodes[`n_${i}`] = {
+          id: `n_${i}`,
+          type: "item",
+          title: `Bookmark-${i}-${"x".repeat(80)}`,
+          url: `https://example-${i}.test/${"path/".repeat(10)}`,
+          iconType: "auto",
+        };
+      }
+      failData.lastUpdated = 2000;
+      nativeWrites.length = 0;
+      global.chrome.storage.local.set = (_obj, cb) => {
+        lastError = { message: "local_disk_full" };
+        cb?.();
+        lastError = null;
+        return Promise.resolve();
+      };
+      assert.equal(await saveData(failData, true), "sync_quota_exceeded");
+      assert.equal(failData.lastUpdated, 2000);
+      assert.equal(failData.settings.syncEnabled, true);
+      assert.equal(nativeWrites.length, 0);
+
+      // sync_write_failed 时若本地回退写盘同样失败，也必须同步回滚 syncEnabled 与 lastUpdated
+      failData.nodes = {};
+      failData.lastUpdated = 3000;
+      assert.equal(await saveData(failData, true), "sync_write_failed");
+      assert.equal(failData.lastUpdated, 3000);
+      assert.equal(failData.settings.syncEnabled, true);
+      assert.equal(nativeWrites.length, 0);
+    } finally {
+      global.chrome.storage.local.set = origLocalSet;
+      global.chrome.storage.sync.set = origSyncSet;
+    }
+  });
 });

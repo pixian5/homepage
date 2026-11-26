@@ -2,7 +2,7 @@
  * 同步引擎：local 权威 + HTTP 服务器推送/拉取 + merge
  */
 
-import { getLastError, storageArea } from "./shared-utils.js";
+import { getLastError, isLocalTrimWarning, storageArea } from "./shared-utils.js";
 import { createSyncDeviceAuth } from "./sync_device_auth.js";
 import { httpConfirmSyncState, httpPairDevice, httpPullState, httpPushState } from "./sync_http_transport.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
@@ -472,20 +472,26 @@ export async function pullNow(reason = "manual") {
 
 /**
  * 先将合并结果安全落盘再切换内存引用，避免写盘失败/抛错后出现内存已污染、磁盘仍为旧值的裂脑状态。
+ * saveData 返回的 `local_trimmed_*` 哨兵代表配额自动裁剪后已成功落盘，不得按失败处理。
  * @param {object} nextState
- * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ * @returns {Promise<{ ok: true, warning?: string } | { ok: false, error: string }>}
  */
 async function persistMergedLocalState(nextState) {
+  let warning = "";
   try {
     const err = await _saveLocal(nextState);
     if (err) {
-      return { ok: false, error: typeof err === "string" ? err : err?.message || String(err) };
+      if (isLocalTrimWarning(err)) {
+        warning = err;
+      } else {
+        return { ok: false, error: typeof err === "string" ? err : err?.message || String(err) };
+      }
     }
   } catch (e) {
     return { ok: false, error: e?.message || String(e) || "local_write_failed" };
   }
   _setData(nextState);
-  return { ok: true };
+  return warning ? { ok: true, warning } : { ok: true };
 }
 
 /**
@@ -493,7 +499,7 @@ async function persistMergedLocalState(nextState) {
  * @param {object} nextState
  * @param {string} targetDocId
  * @param {object} onMergedStats
- * @returns {Promise<{ ok: true } | { ok: false, reason: string }>}
+ * @returns {Promise<{ ok: true, warning?: string } | { ok: false, reason: string }>}
  */
 async function applyConflictLocalState(nextState, targetDocId, onMergedStats) {
   try {
@@ -510,8 +516,8 @@ async function applyConflictLocalState(nextState, targetDocId, onMergedStats) {
   _pendingConflictRemote = null;
   delete _status.conflictRemoteDocId;
   delete _status.conflictLocalDocId;
-  await _onMerged(nextState, onMergedStats);
-  return { ok: true };
+  await _onMerged(nextState, saved.warning ? { ...onMergedStats, warning: saved.warning } : onMergedStats);
+  return saved.warning ? { ok: true, warning: saved.warning } : { ok: true };
 }
 
 async function applyRemoteDoc(doc, deviceId, reason) {

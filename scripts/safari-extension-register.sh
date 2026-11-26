@@ -24,6 +24,13 @@ is_registered() {
     | grep -F "${APPEX_PATH}" >/dev/null
 }
 
+is_enabled() {
+  pluginkit -m -v -p com.apple.Safari.web-extension 2>/dev/null \
+    | grep -F "${EXT_ID}" \
+    | grep -F "${APPEX_PATH}" \
+    | grep -q '^[[:space:]]*+'
+}
+
 case "${1:-}" in
   --check)
     if is_registered; then
@@ -36,7 +43,12 @@ case "${1:-}" in
 esac
 
 if is_registered; then
-  log "扩展在册，无需注册"
+  if ! is_enabled; then
+    pluginkit -e use -i "${EXT_ID}" >/dev/null 2>&1 || true
+    log "扩展已在册，已确保启用：${EXT_ID}"
+  else
+    log "扩展在册，无需注册"
+  fi
   exit 0
 fi
 

@@ -17,6 +17,7 @@ import {
   ensureAllBookmarksGroup,
   pruneSyncTombstones,
 } from "./data-utils.js";
+import { isLocalTrimWarning } from "./shared-utils.js";
 import { createBackupSnapshot, deepClone } from "./storage.js";
 import { collectPlacementSnapshot, stampChangedPlacementClock } from "./sync_projection.js";
 import { stampChangedSyncSettings } from "./sync_settings.js";
@@ -231,7 +232,7 @@ var HomepagePersistenceCoordinator = (() => {
           let err = null;
           const err1 = await saveData(data, false);
           if (err1) {
-            if (typeof err1 === "string" && err1.startsWith("local_trimmed_")) {
+            if (isLocalTrimWarning(err1)) {
               warning = err1;
             } else {
               err = err1;

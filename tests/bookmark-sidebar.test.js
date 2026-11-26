@@ -291,7 +291,7 @@ describe("bookmark-sidebar filtering, feedback and Escape handling", () => {
     assert.deepEqual(doc2VisibleTitles, ["Doc Beta"]);
   });
 
-  it("shows localized saved and saveFailed status across callback & Promise-only runtimes", async () => {
+  it("shows localized saved and saveFailed status across callback & Promise-only runtimes and updates list", async () => {
     let shouldFail = false;
     const sent = [];
     const { document, dispatchMessage } = await mountSidebar({
@@ -301,7 +301,11 @@ describe("bookmark-sidebar filtering, feedback and Escape handling", () => {
         }
         sent.push(msg);
         if (shouldFail) return Promise.resolve({ ok: false, error: "no_folder" });
-        return Promise.resolve({ ok: true });
+        return Promise.resolve({
+          ok: true,
+          folderId: msg.folderId,
+          node: { id: "itm_new", type: "item", title: "Current Page", url: "https://current.example/" },
+        });
       },
     });
 
@@ -311,6 +315,7 @@ describe("bookmark-sidebar filtering, feedback and Escape handling", () => {
     });
 
     const rootEl = document.getElementById("homepage-bookmark-sidebar-root");
+    assert.equal(rootEl.querySelectorAll(".hp-side").length, 1, "只应渲染当前开启一侧，避免双倍 DOM 与图标请求");
     const leftPanel = rootEl.querySelector(".hp-side.hp-left");
     const addTarget = leftPanel.querySelector(".hp-menu-parent .hp-submenu").querySelectorAll(".hp-folder")[1];
     assert.ok(addTarget);
@@ -323,6 +328,11 @@ describe("bookmark-sidebar filtering, feedback and Escape handling", () => {
     assert.equal(statusEl.textContent, "Saved");
     assert.equal(statusEl.classList.contains("hp-status-ok"), true);
     assert.equal(/[\u4e00-\u9fff]/.test(statusEl.textContent), false);
+    assert.equal(
+      leftPanel.querySelectorAll(".hp-item .hp-title").some((el) => el.textContent === "Current Page"),
+      true,
+      "添加书签成功后侧栏当前列表应即时刷新可见",
+    );
 
     shouldFail = true;
     addTarget.click();

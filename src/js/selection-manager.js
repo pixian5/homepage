@@ -115,12 +115,22 @@ var HomepageSelectionManager = (() => {
       selectedIds = new Set([...selectedIds].filter((id) => valid.has(id)));
     }
 
-    /** 工具栏状态：全选按钮可见性与批量按钮文案 */
+    /** 工具栏状态：全选 / 批量移至按钮可见性与批量按钮文案 */
     function updateControls() {
       const selectAllBtn = document.getElementById("btnSelectAll");
+      const batchMoveBtn = document.getElementById("btnBatchMove");
+      const folderBatchMoveBtn = document.getElementById("btnFolderBatchMove");
       const batchBtn = document.getElementById("btnBatchDelete");
       const folderBatchBtn = document.getElementById("btnFolderBatchDelete");
       if (selectAllBtn) selectAllBtn.classList.toggle("hidden", !selectionMode);
+      if (batchMoveBtn) {
+        batchMoveBtn.classList.toggle("hidden", !selectionMode);
+        batchMoveBtn.textContent = deps.t("toolbar.batchMove");
+      }
+      if (folderBatchMoveBtn) {
+        folderBatchMoveBtn.classList.toggle("hidden", !selectionMode);
+        folderBatchMoveBtn.textContent = deps.t("toolbar.batchMove");
+      }
       if (batchBtn) batchBtn.textContent = selectionMode ? deps.t("context.delete") : deps.t("toolbar.batchDelete");
       if (folderBatchBtn) {
         folderBatchBtn.textContent = selectionMode ? deps.t("context.delete") : deps.t("folder.batchDelete");
@@ -195,10 +205,30 @@ var HomepageSelectionManager = (() => {
       updateControls();
     }
 
-    /** 绑定批量按钮（btnBatchDelete / btnFolderBatchDelete / btnSelectAll） */
+    /** 批量移动选中卡片到指定分组或文件夹 */
+    function executeBatchMove() {
+      if (deps.isRecentGroup(deps.getState().activeGroupId)) {
+        deps.toast(deps.t("history.batchDeleteDisabled"), "warning");
+        return;
+      }
+      const ids = [...selectedIds];
+      if (!selectionMode || !ids.length) {
+        deps.toast(deps.t("selection.selectFirst"), "warning");
+        return;
+      }
+      deps.requestMoveNodes?.(ids, () => {
+        clearSelection();
+        updateControls();
+        updateStyles();
+      });
+    }
+
+    /** 绑定批量按钮（btnBatchDelete / btnFolderBatchDelete / btnBatchMove / btnFolderBatchMove / btnSelectAll） */
     function bindBatchButtons() {
       document.getElementById("btnBatchDelete")?.addEventListener("click", () => executeBatchDelete());
       document.getElementById("btnFolderBatchDelete")?.addEventListener("click", () => executeBatchDelete());
+      document.getElementById("btnBatchMove")?.addEventListener("click", () => executeBatchMove());
+      document.getElementById("btnFolderBatchMove")?.addEventListener("click", () => executeBatchMove());
       document.getElementById("btnSelectAll")?.addEventListener("click", () => selectAll());
     }
 
@@ -270,6 +300,7 @@ var HomepageSelectionManager = (() => {
       retainOnly,
       clearSelection,
       executeBatchDelete,
+      executeBatchMove,
       updateControls,
       updateStyles,
       bindBatchButtons,

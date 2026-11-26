@@ -141,4 +141,36 @@ describe("icons", async () => {
     const res = await compressImageFileToDataUrl(null);
     assert.equal(res, "");
   });
+
+  it("blocks third-party favicon services when iconThirdPartyFallback is disabled", async () => {
+    const { isThirdPartyFaviconUrl } = await import("../src/js/icons.js");
+    const privacyCandidates = getFaviconCandidates("https://example.com/docs", { allowThirdPartyFallback: false });
+    assert.ok(privacyCandidates.length > 0);
+    assert.equal(
+      privacyCandidates.some((url) => isThirdPartyFaviconUrl(url)),
+      false,
+      "关闭第三方服务后候选不得包含 Google / DuckDuckGo",
+    );
+
+    stored.homepage_icon_cache = {
+      "site:example.com": { url: "https://www.google.com/s2/favicons?sz=128&domain_url=https://example.com", ts: 1 },
+    };
+    const fallbackIcon = await resolveIcon(
+      { id: "n1", title: "Example", url: "https://example.com", iconType: "auto" },
+      { iconThirdPartyFallback: false },
+    );
+    assert.ok(fallbackIcon.startsWith("data:image/png"), "隐私模式下应退回本地字母头像而非返回第三方 URL");
+
+    const remoteBlocked = await resolveIcon(
+      {
+        id: "n2",
+        title: "Example",
+        url: "https://example.com",
+        iconType: "remote",
+        iconData: "https://icons.duckduckgo.com/ip3/example.com.ico",
+      },
+      { iconThirdPartyFallback: false },
+    );
+    assert.ok(remoteBlocked.startsWith("data:image/png"));
+  });
 });

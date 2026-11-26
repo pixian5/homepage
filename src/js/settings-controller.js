@@ -74,6 +74,7 @@ var HomepageSettingsController = (() => {
         <button id="btnImportBookmarksHtml" class="icon-btn">${t("settings.bookmarks.importHtml")}</button>
         <button id="btnClearData" class="icon-btn danger strong-label">${t("settings.action.clearData")}</button>
         <button id="btnClearCards" class="icon-btn danger">${t("settings.action.clearCards")}</button>
+        <button id="btnDedupeBookmarks" class="icon-btn">${t("settings.action.dedupeBookmarks")}</button>
         <button id="btnRefreshIcons" class="icon-btn">${t("settings.action.refreshIcons")}</button>
       </div>
       <div class="section settings-language-row">
@@ -278,6 +279,7 @@ var HomepageSettingsController = (() => {
             <option value="23">23:00</option>
           </select>
         </div>
+        <label><input id="settingIconThirdPartyFallback" type="checkbox"> ${t("settings.iconThirdPartyFallback")}</label>
       </div>
 
     `;
@@ -334,6 +336,7 @@ var HomepageSettingsController = (() => {
     $("settingBackup").value = getData().settings.maxBackups;
     const retryHour = getData().settings.iconRetryHour ?? (getData().settings.iconRetryAtSix ? 18 : "");
     $("settingIconRetryHour").value = retryHour === "" ? "" : String(retryHour);
+    $("settingIconThirdPartyFallback").checked = getData().settings.iconThirdPartyFallback !== false;
     $("settingSidebarCollapsed").checked = getData().settings.sidebarHidden;
     $("settingSidebarCollapsed").addEventListener("change", (e) => {
       getData().settings.sidebarHidden = e.target.checked;
@@ -546,6 +549,7 @@ var HomepageSettingsController = (() => {
           getData().settings.iconRetryHour = Number(retryVal);
           getData().settings.iconRetryAtSix = Number(retryVal) === 18;
         }
+        getData().settings.iconThirdPartyFallback = $("settingIconThirdPartyFallback").checked;
 
         const bgFile = $("settingBgFile").files?.[0];
         if (bgFile) {

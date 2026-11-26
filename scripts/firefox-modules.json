@@ -14,6 +14,7 @@
     "search-manager.js",
     "sync_policy.js",
     "data-utils.js",
+    "dedupe-bookmarks.js",
     "bookmark-html.js",
     "drag-geometry.js",
     "keyboard-navigator.js",

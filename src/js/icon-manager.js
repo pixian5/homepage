@@ -16,6 +16,7 @@ import {
   getFaviconCandidates,
   getSiteKey,
   hashColor,
+  isThirdPartyFaviconUrl,
   probeImage,
   refreshAllIcons,
   resolveIcon,
@@ -102,13 +103,17 @@ var HomepageIconManager = (() => {
       await saveIconCache(cache);
     }
 
+    function allowThirdPartyFallback() {
+      return deps.getData()?.settings?.iconThirdPartyFallback !== false;
+    }
+
     /**
      * 渲染期候选回退：img 加载失败后按候选顺序换下一个可用 favicon。
      * 在全局并发信号量内串行尝试，避免一次渲染 N 个 tile 全部并发触发请求风暴。
      */
     async function trySwitchToNextFavicon(url, triedCandidates) {
       if (!url) return "";
-      const candidates = getFaviconCandidates(url);
+      const candidates = getFaviconCandidates(url, { allowThirdPartyFallback: allowThirdPartyFallback() });
       if (!candidates.length) return "";
       return withIconFetchConcurrency(async () => {
         const cache = await loadIconCache();
@@ -148,6 +153,7 @@ var HomepageIconManager = (() => {
         const siteKey = getSiteKey(node.url);
         const entry = (siteKey && cache[siteKey]) || cache[node.url];
         if (!entry || entry.dataUrl || !entry.url) return;
+        if (!allowThirdPartyFallback() && isThirdPartyFaviconUrl(entry.url)) return;
         const dataUrl = await fetchAsDataUrl(entry.url);
         if (!dataUrl) return;
         cache[node.url] = { dataUrl, ts: Date.now() };
@@ -204,7 +210,7 @@ var HomepageIconManager = (() => {
      * 只写图标缓存，不改 node、不 persist——「取消」后不落盘。
      */
     async function fetchFaviconNow(nodeId, url) {
-      const candidates = getFaviconCandidates(url);
+      const candidates = getFaviconCandidates(url, { allowThirdPartyFallback: allowThirdPartyFallback() });
       if (!candidates.length) return false;
       return withIconFetchConcurrency(async () => {
         const cache = await loadIconCache();
@@ -243,7 +249,7 @@ var HomepageIconManager = (() => {
       if (!nodeId || !url || !deps.getData()?.settings?.iconFetch) return;
       const fetchKey = `${nodeId}::${url}`;
       if (_pendingIconFetches.has(fetchKey)) return;
-      const candidates = getFaviconCandidates(url);
+      const candidates = getFaviconCandidates(url, { allowThirdPartyFallback: allowThirdPartyFallback() });
       if (!candidates.length) return;
       _pendingIconFetches.add(fetchKey);
       try {
@@ -377,7 +383,8 @@ var HomepageIconManager = (() => {
 
     /** 批量刷新全部节点图标（复用 icons.js 的 6 路并发控制）并重渲染 */
     async function batchRefreshAllIcons(nodes) {
-      await refreshAllIcons(Array.isArray(nodes) ? nodes : Object.values(deps.getData()?.nodes || {}));
+      const data = deps.getData();
+      await refreshAllIcons(Array.isArray(nodes) ? nodes : Object.values(data?.nodes || {}), data?.settings);
       deps.render();
     }
 

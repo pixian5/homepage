@@ -168,7 +168,26 @@ function shouldBypassIconFailureCache(pageUrl) {
   }
 }
 
-export function getFaviconCandidates(pageUrl) {
+/**
+ * 判断候选 URL 是否属于第三方图标代理服务（Google Favicon / DuckDuckGo）。
+ * 开启隐私保护开关（iconThirdPartyFallback === false）时禁止向这些域名外发请求。
+ */
+export function isThirdPartyFaviconUrl(raw) {
+  try {
+    const parsed = new URL(raw);
+    const host = parsed.hostname.toLowerCase();
+    const pathname = parsed.pathname || "/";
+    if (host === "icons.duckduckgo.com") return true;
+    if (host === "www.google.com" && pathname.startsWith("/s2/favicons")) return true;
+    if (/^t\d+\.gstatic\.com$/i.test(host) && pathname.startsWith("/faviconV2")) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+export function getFaviconCandidates(pageUrl, options = {}) {
+  const allowThirdPartyFallback = options?.allowThirdPartyFallback !== false;
   try {
     if (!isHttpUrl(pageUrl)) return [];
     const u = new URL(pageUrl);
@@ -189,24 +208,30 @@ export function getFaviconCandidates(pageUrl) {
           `https://${host}/favicon.ico`,
           ...siblingHostSpecial,
           ...dynamicSpecial,
-          buildGoogleFaviconByPageUrl(pageUrl),
-          buildGoogleFaviconUrl(host),
-          buildGoogleDomainFaviconUrl(host),
-          duckduckgo,
+          ...(allowThirdPartyFallback
+            ? [
+                buildGoogleFaviconByPageUrl(pageUrl),
+                buildGoogleFaviconUrl(host),
+                buildGoogleDomainFaviconUrl(host),
+                duckduckgo,
+              ]
+            : []),
         ]
       : [
           ...pathSpecific,
           ...special,
           ...siblingHostSpecial,
           ...dynamicSpecial,
-          buildGoogleFaviconByPageUrl(pageUrl),
+          ...(allowThirdPartyFallback ? [buildGoogleFaviconByPageUrl(pageUrl)] : []),
           `https://${host}/favicon.ico`,
-          buildGoogleFaviconUrl(host),
-          buildGoogleDomainFaviconUrl(host),
-          duckduckgo,
+          ...(allowThirdPartyFallback
+            ? [buildGoogleFaviconUrl(host), buildGoogleDomainFaviconUrl(host), duckduckgo]
+            : []),
         ];
     const normalized = rawCandidates.map((candidate) => normalizeCandidateUrl(candidate)).filter(Boolean);
-    const filtered = normalized.filter((candidate) => !shouldSkipCandidate(candidate));
+    const filtered = normalized.filter(
+      (candidate) => !shouldSkipCandidate(candidate) && (allowThirdPartyFallback || !isThirdPartyFaviconUrl(candidate)),
+    );
     return Array.from(new Set(filtered));
   } catch (_e) {
     // URL 解析失败是预期行为
@@ -399,8 +424,8 @@ async function resolveFinalUrl(pageUrl, timeoutMs = 6000) {
   }
 }
 
-function buildFaviconUrl(url) {
-  const candidates = getFaviconCandidates(url);
+function buildFaviconUrl(url, options = {}) {
+  const candidates = getFaviconCandidates(url, options);
   return candidates[0] || "";
 }
 
@@ -545,8 +570,9 @@ function looksLikeImageBytes(bytes, mimeHint = "") {
   return false;
 }
 
-export async function resolveIcon(node, _settings, preloadedCache = null) {
+export async function resolveIcon(node, settings, preloadedCache = null) {
   const base = node.title || node.url || "?";
+  const allowThirdPartyFallback = settings?.iconThirdPartyFallback !== false;
   const isHttp = node.url ? isHttpUrl(node.url) : false;
   const siteKey = node.url ? getSiteKey(node.url) : "";
   const cache = preloadedCache || (await loadIconCache());
@@ -570,7 +596,11 @@ export async function resolveIcon(node, _settings, preloadedCache = null) {
 
   if (node.iconType === "remote" && node.iconData) {
     const remoteUrl = normalizeCandidateUrl(node.iconData);
-    if (!remoteUrl || shouldSkipCandidate(remoteUrl)) {
+    if (
+      !remoteUrl ||
+      shouldSkipCandidate(remoteUrl) ||
+      (!allowThirdPartyFallback && isThirdPartyFaviconUrl(remoteUrl))
+    ) {
       return avatarDataUrl(base, node.color || hashColor(base));
     }
     if (siteKey && !cache[siteKey]) {
@@ -615,7 +645,7 @@ export async function resolveIcon(node, _settings, preloadedCache = null) {
     // 其次远程 URL（可能是旧缓存，render 时会后台迁移为 dataUrl）
     const safeUrl = sanitizeCachedIconUrl(cache, siteKey);
     if (!safeUrl && !cache[siteKey]) cacheChanged = true;
-    if (safeUrl) {
+    if (safeUrl && (allowThirdPartyFallback || !isThirdPartyFaviconUrl(safeUrl))) {
       if (cacheChanged) await saveIconCache(cache);
       return safeUrl;
     }
@@ -633,7 +663,7 @@ export async function resolveIcon(node, _settings, preloadedCache = null) {
     // 其次远程 URL
     const safeUrl = sanitizeCachedIconUrl(cache, cacheKey);
     if (!safeUrl && !cache[cacheKey]) cacheChanged = true;
-    if (safeUrl) {
+    if (safeUrl && (allowThirdPartyFallback || !isThirdPartyFaviconUrl(safeUrl))) {
       if (cacheChanged) await saveIconCache(cache);
       return safeUrl;
     }
@@ -654,7 +684,8 @@ export async function resolveIcon(node, _settings, preloadedCache = null) {
   return avatarDataUrl(base, node.color || hashColor(base));
 }
 
-export async function refreshAllIcons(nodes) {
+export async function refreshAllIcons(nodes, settings = null) {
+  const allowThirdPartyFallback = settings?.iconThirdPartyFallback !== false;
   const cache = await loadIconCache();
   const tasks = nodes.filter((n) => n.url);
   const limit = 6;
@@ -665,7 +696,7 @@ export async function refreshAllIcons(nodes) {
       const node = tasks[idx];
       if (!node?.url) continue;
       const finalUrl = await resolveFinalUrl(node.url);
-      const candidates = getFaviconCandidates(finalUrl);
+      const candidates = getFaviconCandidates(finalUrl, { allowThirdPartyFallback });
       let done = false;
       for (const candidate of candidates) {
         if (!candidate) continue;
@@ -691,6 +722,7 @@ export async function refreshAllIcons(nodes) {
 }
 
 export async function retryFailedIconsIfDue(settings) {
+  const allowThirdPartyFallback = settings?.iconThirdPartyFallback !== false;
   const retryHour = settings.iconRetryHour ?? (settings.iconRetryAtSix ? 18 : "");
   if (retryHour === "" || retryHour === null || retryHour === undefined) return;
   const targetHour = Number(retryHour);
@@ -710,9 +742,9 @@ export async function retryFailedIconsIfDue(settings) {
       const key = keys[idx];
       if (!cache[key]) continue;
       const raw = key.startsWith("site:") ? `https://${key.slice(5)}` : key;
-      const candidates = getFaviconCandidates(raw);
+      const candidates = getFaviconCandidates(raw, { allowThirdPartyFallback });
       let recovered = false;
-      for (const candidate of candidates.length ? candidates : [buildFaviconUrl(raw)]) {
+      for (const candidate of candidates.length ? candidates : [buildFaviconUrl(raw, { allowThirdPartyFallback })]) {
         if (!candidate) continue;
         const dataUrl = await fetchAsDataUrl(candidate);
         if (dataUrl) {

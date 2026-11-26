@@ -8,6 +8,7 @@ import {
   ALL_BOOKMARKS_GROUP_ID,
   canMoveNodeToFolder,
   cloneDataSnapshot,
+  collectNodeSubtreeIds,
   createItemNode,
   dedupeData,
   ensureAllBookmarksGroup,
@@ -21,6 +22,7 @@ import {
   repairHomepageData,
   stampNodeFieldChanges,
 } from "./data-utils.js";
+import { findDuplicateBookmarkGroups, mergeDuplicateBookmarks } from "./dedupe-bookmarks.js";
 import { createDragManager } from "./drag-manager.js";
 import { createFolderManager } from "./folder-manager.js";
 import { createGridRenderer } from "./grid-renderer.js";
@@ -131,6 +133,7 @@ const elements = {
   topSearchWrap: $("topSearchWrap"),
   btnAdd: $("btnAdd"),
   btnBatchDelete: $("btnBatchDelete"),
+  btnBatchMove: $("btnBatchMove"),
   btnSelectAll: $("btnSelectAll"),
   btnOpenMode: $("btnOpenMode"),
   btnSettings: $("btnSettings"),
@@ -148,6 +151,7 @@ const elements = {
   btnCloseFolder: $("btnCloseFolder"),
   btnFolderAdd: $("btnFolderAdd"),
   btnFolderBatchDelete: $("btnFolderBatchDelete"),
+  btnFolderBatchMove: $("btnFolderBatchMove"),
   btnFolderDissolve: $("btnFolderDissolve"),
 };
 
@@ -493,6 +497,76 @@ function deleteGroup(group) {
 
 function deleteNodes(ids) {
   return nodeOpsManager.deleteNodes(ids);
+}
+
+function moveNodesToContainer(ids, targetContainerId) {
+  return nodeOpsManager.moveNodesToContainer(ids, targetContainerId);
+}
+
+function collectBatchMoveTargets(selectedIds) {
+  const blocked = new Set();
+  for (const id of selectedIds) {
+    for (const subId of collectNodeSubtreeIds(data, id)) blocked.add(subId);
+  }
+  const targets = [];
+  const root = getRootGroup();
+  if (root) {
+    targets.push({ id: root.id, label: t("batchMove.rootContainer"), depth: 0 });
+  }
+  const walkFolder = (folderId, depth) => {
+    const folder = data?.nodes?.[folderId];
+    if (folder?.type !== "folder" || folder.deletedAt || folder.purgedAt) return;
+    if (!blocked.has(folder.id)) {
+      targets.push({ id: folder.id, label: folder.title || t("folder.defaultTitle"), depth });
+    }
+    for (const childId of folder.children || []) {
+      walkFolder(childId, depth + 1);
+    }
+  };
+  for (const group of data?.groups || []) {
+    if (!group || (!isAllBookmarksGroup(group) && group.id !== root?.id)) {
+      targets.push({ id: group.id, label: group.title || group.name || t("group.default"), depth: 0 });
+    }
+    for (const childId of group?.nodes || []) {
+      walkFolder(childId, 1);
+    }
+  }
+  return targets;
+}
+
+function openBatchMoveModal(ids, onMoved) {
+  const targets = collectBatchMoveTargets(ids);
+  if (!targets.length) {
+    toast(t("batchMove.emptyTargets"), "warning");
+    return;
+  }
+  const buttonsHtml = targets
+    .map(
+      (item) =>
+        html`<button type="button" class="icon-btn batch-move-target" data-target-id="${item.id}" style="text-align:left;padding-left:${12 + item.depth * 18}px">${item.label}</button>`,
+    )
+    .join("");
+  const modalHtml = html`
+    <h2>${t("batchMove.title", { count: ids.length })}</h2>
+    <div class="section" style="display:flex;flex-direction:column;gap:6px;max-height:320px;overflow:auto">${rawHtml(buttonsHtml)}</div>
+    <div class="actions"><button id="btnBatchMoveCancel" class="icon-btn">${t("common.cancel")}</button></div>
+  `;
+  openModal(modalHtml);
+  $("btnBatchMoveCancel")?.addEventListener("click", closeModal);
+  qsa(".batch-move-target", elements.modal).forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const targetId = btn.dataset.targetId;
+      const targetLabel = btn.textContent || "";
+      const res = moveNodesToContainer(ids, targetId);
+      await closeModal();
+      if (res?.movedCount > 0) {
+        onMoved?.();
+        toast(t("batchMove.moved", { count: res.movedCount, target: targetLabel }));
+      } else {
+        toast(t("batchMove.noneMoved"), "warning");
+      }
+    });
+  });
 }
 
 let modalManager = null;
@@ -876,6 +950,7 @@ function createSelectionManagerInstance() {
     getGrid: (inFolder) => (inFolder ? elements.folderGrid : elements.grid),
     getMain: () => elements.main,
     deleteNodes,
+    requestMoveNodes: (ids, onMoved) => openBatchMoveModal(ids, onMoved),
     toast,
     t,
     isRecentGroup: (groupId) => groupId === RECENT_GROUP_ID,
@@ -992,6 +1067,9 @@ async function init() {
       getPlacementList,
       setPlacementList,
       touchPlacementContainer,
+      removeNodeFromLocation,
+      findDuplicateBookmarkGroups,
+      mergeDuplicateBookmarks,
       isAllBookmarksGroup,
       refreshAllIcons: (nodes) => iconManager.batchRefreshAllIcons(nodes),
       syncBytesBudgetLevel,

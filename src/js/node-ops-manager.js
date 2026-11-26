@@ -11,11 +11,13 @@
 
 import {
   ALL_BOOKMARKS_GROUP_ID,
+  canMoveNodeToFolder,
   collectNodeSubtreeIds,
   dedupeData,
   getRootFolderNodeIds,
   isAllBookmarksGroup,
   markNodeDeleted,
+  moveNodeToFolder,
 } from "./data-utils.js";
 import { deepClone } from "./storage.js";
 import { nextSyncTimestamp } from "./sync_policy.js";
@@ -288,12 +290,68 @@ var HomepageNodeOpsManager = (() => {
       return true;
     }
 
+    /**
+     * 批量将节点移至目标分组（含「全部」根分组）或目标文件夹。
+     * 过滤掉不合法目标、已删除节点及会产生环路的文件夹子孙，统一记录结构时钟并推进一次备份/落盘。
+     */
+    function moveNodesToContainer(ids, targetContainerId) {
+      if (!Array.isArray(ids) || !ids.length || !targetContainerId) return { ok: false, movedCount: 0 };
+      if (isRecentGroup(getState().activeGroupId)) return { ok: false, movedCount: 0 };
+      const data = getData();
+      const root = getRootGroup();
+      const targetGroup = (data.groups || []).find((group) => group?.id === targetContainerId) || null;
+      const targetFolder =
+        !targetGroup && data.nodes?.[targetContainerId]?.type === "folder" && !data.nodes[targetContainerId]?.deletedAt
+          ? data.nodes[targetContainerId]
+          : null;
+      const target = targetGroup || targetFolder || (isAllBookmarksGroup(targetContainerId) ? root : null);
+      if (!target) return { ok: false, movedCount: 0 };
+
+      const targetList = getPlacementList(target);
+      const movable = [];
+      for (const id of ids) {
+        const node = data.nodes?.[id];
+        if (!node || node.deletedAt || node.purgedAt) continue;
+        if (targetFolder) {
+          if (canMoveNodeToFolder(data, id, targetFolder.id)) movable.push(id);
+        } else if (!targetList.includes(id)) {
+          movable.push(id);
+        }
+      }
+      if (!movable.length) return { ok: true, movedCount: 0 };
+
+      pushBackup();
+      let movedCount = 0;
+      for (const id of movable) {
+        if (targetFolder) {
+          removeNodeFromLocation(id);
+          if (moveNodeToFolder(data, id, targetFolder.id)) movedCount += 1;
+        } else {
+          removeNodeFromLocation(id);
+          if (Array.isArray(target.nodes)) target.nodes.push(id);
+          else {
+            if (!Array.isArray(target.children)) target.children = [];
+            target.children.push(id);
+          }
+          movedCount += 1;
+        }
+      }
+      if (movedCount > 0) {
+        touchPlacementContainer(target);
+        dedupeData(data);
+        queuePersist();
+        render();
+      }
+      return { ok: true, movedCount };
+    }
+
     return {
       deleteNodes,
       undoDelete,
       deleteGroup,
       renameGroup,
       moveGroupToIndex,
+      moveNodesToContainer,
       removeNodeFromLocation,
       touchPlacementContainer,
       getActiveGroup,

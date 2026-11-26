@@ -358,4 +358,36 @@ describe("bookmark-sidebar filtering, feedback and Escape handling", () => {
     assert.equal(document.getElementById("homepage-bookmark-sidebar-root"), null);
     assert.equal(document.listenerCount("keydown"), 0);
   });
+
+  it("avoids third-party favicon fallback URLs when iconThirdPartyFallback is false", async () => {
+    const { document, dispatchMessage } = await mountSidebar({
+      apiImpl: (_msg, cb) => cb?.({ ok: true }),
+    });
+    const data = buildFolderCollisionData("zh-CN");
+    data.settings.iconThirdPartyFallback = false;
+    data.nodes.itm_ai.iconType = "auto";
+    data.nodes.itm_tools.iconType = "remote";
+    data.nodes.itm_tools.iconData = "https://www.google.com/s2/favicons?sz=64&domain=tools.example";
+
+    dispatchMessage({
+      type: "homepage_open_bookmark_sidebar",
+      side: "left",
+      data,
+    });
+
+    const imgs = document.getElementById("homepage-bookmark-sidebar-root").querySelectorAll(".hp-logo");
+    assert.ok(imgs.length >= 2);
+    for (const img of imgs) {
+      const visited = [img.src];
+      while (img.listeners.get("error")?.length && img.parentNode) {
+        img.listeners.get("error")[0]();
+        if (img.parentNode) visited.push(img.src);
+      }
+      assert.equal(
+        visited.some((url) => url.includes("google.com/s2/favicons") || url.includes("duckduckgo.com")),
+        false,
+        `隐私开关关闭后不得包含第三方候选：${JSON.stringify(visited)}`,
+      );
+    }
+  });
 });

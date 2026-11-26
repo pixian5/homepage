@@ -47,6 +47,9 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
     getPlacementList,
     setPlacementList,
     touchPlacementContainer,
+    removeNodeFromLocation,
+    findDuplicateBookmarkGroups,
+    mergeDuplicateBookmarks,
     isAllBookmarksGroup,
     RECENT_GROUP_ID,
   } = { ...ctx.ui, ...ctx.deps };
@@ -637,6 +640,9 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
     $("btnImportBookmarksHtml")?.addEventListener("click", () => {
       $("importBookmarksHtmlInput")?.click();
     });
+    $("btnDedupeBookmarks")?.addEventListener("click", () => {
+      openDedupeBookmarksModal();
+    });
     $("importBookmarksHtmlInput")?.addEventListener("change", async (e) => {
       const file = e.target?.files?.[0];
       e.target.value = "";
@@ -693,5 +699,65 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
     });
   }
 
-  return { bindButtons, exportJsonToClipboard, openImportModal, openImportUrlModal, openBackupModal, downloadJsonFile };
+  function openDedupeBookmarksModal() {
+    if (typeof findDuplicateBookmarkGroups !== "function" || typeof mergeDuplicateBookmarks !== "function") return;
+    const scan = findDuplicateBookmarkGroups(getData());
+    if (!scan.totalDuplicateCount) {
+      toast(t("settings.dedupe.none"));
+      return;
+    }
+    void leaveSettingsForSubpanel();
+    const previewRows = rawHtml(
+      scan.groups
+        .slice(0, 50)
+        .map(
+          (entry) =>
+            html`<div class="row" style="flex-direction:column;align-items:flex-start;gap:2px"><div><strong>${entry.keep.title || entry.keep.url}</strong> (${t("settings.dedupe.groupCount", { total: entry.duplicates.length + 1 })})</div><div class="hint" style="margin:0;word-break:break-all">${entry.canonicalUrl}</div></div>`,
+        )
+        .join(""),
+    );
+    const modalHtml = html`
+      <h2>${t("settings.dedupe.title")}</h2>
+      <p class="hint">${t("settings.dedupe.summary", { groups: scan.groups.length, duplicates: scan.totalDuplicateCount })}</p>
+      <div class="section" style="max-height:280px;overflow:auto">${previewRows}</div>
+      <div class="actions">
+        <button id="btnDedupeCancel" class="icon-btn">${t("common.cancel")}</button>
+        <button id="btnDedupeConfirm" class="icon-btn primary">${t("settings.dedupe.confirm", { count: scan.totalDuplicateCount })}</button>
+      </div>
+    `;
+    openModal(modalHtml);
+    $("btnDedupeCancel").addEventListener("click", closeModal);
+    $("btnDedupeConfirm").addEventListener("click", async () => {
+      await runWithButtonState($("btnDedupeConfirm"), t("settings.dedupe.running"), async () => {
+        try {
+          let merged = { mergedGroups: 0, removedCount: 0 };
+          await commitImport(() => {
+            pushBackup();
+            merged = mergeDuplicateBookmarks(getData(), {
+              removeNodeFromLocation,
+              touchPlacementContainer,
+              markNodeDeleted,
+              stampNodeFieldChanges,
+            });
+          });
+          closeModal();
+          render();
+          toast(t("settings.dedupe.done", { removed: merged.removedCount }));
+          void refreshSyncStatusLine();
+        } catch (error) {
+          toast(t("settings.dedupe.fail", { reason: error?.message || error }), "error");
+        }
+      });
+    });
+  }
+
+  return {
+    bindButtons,
+    exportJsonToClipboard,
+    openImportModal,
+    openImportUrlModal,
+    openBackupModal,
+    downloadJsonFile,
+    openDedupeBookmarksModal,
+  };
 }

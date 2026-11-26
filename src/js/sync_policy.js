@@ -119,6 +119,7 @@ export const SYNC_SETTINGS_WHITELIST = [
   "sidebarCollapsed",
   "sidebarHidden",
   "iconFetch",
+  "iconThirdPartyFallback",
   "iconRetryAtSix",
   "iconRetryHour",
   "backgroundType",

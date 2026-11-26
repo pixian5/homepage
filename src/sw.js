@@ -27,6 +27,7 @@ const PRECACHE_URLS = [
   "js/search-manager.js",
   "js/sync_policy.js",
   "js/data-utils.js",
+  "js/dedupe-bookmarks.js",
   "js/bookmark-html.js",
   "js/drag-geometry.js",
   "js/keyboard-navigator.js",

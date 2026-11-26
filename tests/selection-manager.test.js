@@ -52,7 +52,7 @@ function fakeEl(id, { classes = new Set() } = {}) {
 }
 
 function setup({ activeGroupId = "grp_all" } = {}) {
-  const calls = { deletes: [], toasts: [] };
+  const calls = { deletes: [], moves: [], toasts: [] };
   const nodes = [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }];
   const tiles = nodes.map((node) => {
     const tile = fakeEl(node.id);
@@ -66,7 +66,9 @@ function setup({ activeGroupId = "grp_all" } = {}) {
   };
   const main = fakeEl("main");
   const byId = new Map([
-    ["btnSelectAll", fakeEl("btnSelectAll")],
+    ["btnSelectAll", fakeEl("btnSelectAll", { classes: new Set(["hidden"]) })],
+    ["btnBatchMove", fakeEl("btnBatchMove", { classes: new Set(["hidden"]) })],
+    ["btnFolderBatchMove", fakeEl("btnFolderBatchMove", { classes: new Set(["hidden"]) })],
     ["btnBatchDelete", fakeEl("btnBatchDelete")],
     ["btnFolderBatchDelete", fakeEl("btnFolderBatchDelete")],
     ["grid", grid],
@@ -93,6 +95,7 @@ function setup({ activeGroupId = "grp_all" } = {}) {
     getGrid: () => grid,
     getMain: () => main,
     deleteNodes: (ids) => calls.deletes.push(ids),
+    requestMoveNodes: (ids, onMoved) => calls.moves.push({ ids, onMoved }),
     toast: (message, kind) => calls.toasts.push({ message, kind }),
     t: (key) => key,
     isRecentGroup: (groupId) => groupId === "__recent__",
@@ -221,5 +224,27 @@ describe("selection-manager batch delete & guards", () => {
     manager.selectTile("a", true);
     main.dispatch("click", { target: { closest: (sel) => (sel === ".tile" ? {} : null) } });
     assert.deepEqual(manager.getSelectedIds(), ["a"], "点在卡片上不清除选择");
+  });
+
+  it("toggles batch move buttons and triggers requestMoveNodes cleanly", () => {
+    const { manager, calls, byId } = setup();
+    manager.executeBatchDelete();
+    assert.equal(byId.get("btnBatchMove").classes.has("hidden"), false);
+    assert.equal(byId.get("btnFolderBatchMove").classes.has("hidden"), false);
+
+    manager.executeBatchMove();
+    assert.equal(calls.moves.length, 0);
+    assert.equal(calls.toasts.at(-1)?.message, "selection.selectFirst");
+
+    manager.selectTile("a", true);
+    manager.selectTile("c", true);
+    manager.executeBatchMove();
+    assert.equal(calls.moves.length, 1);
+    assert.deepEqual(calls.moves[0].ids, ["a", "c"]);
+    assert.equal(manager.isBatchModeActive(), true, "未确认移动前保留选择态");
+
+    calls.moves[0].onMoved();
+    assert.equal(manager.isBatchModeActive(), false);
+    assert.equal(byId.get("btnBatchMove").classes.has("hidden"), true);
   });
 });

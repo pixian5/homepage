@@ -87,6 +87,10 @@ var HomepageI18nManager = (() => {
         elements.btnAdd.setAttribute("data-tooltip", t("toolbar.add"));
       }
       if (elements.btnBatchDelete) elements.btnBatchDelete.setAttribute("data-tooltip", t("toolbar.batchDelete"));
+      if (elements.btnBatchMove) {
+        elements.btnBatchMove.textContent = t("toolbar.batchMove");
+        elements.btnBatchMove.setAttribute("data-tooltip", t("toolbar.batchMove"));
+      }
       if (elements.btnSelectAll) {
         elements.btnSelectAll.textContent = t("toolbar.selectAll");
         elements.btnSelectAll.setAttribute("data-tooltip", t("toolbar.selectAll"));
@@ -104,6 +108,7 @@ var HomepageI18nManager = (() => {
       if (elements.btnCloseFolder) elements.btnCloseFolder.textContent = t("folder.back");
       if (elements.btnFolderAdd) elements.btnFolderAdd.textContent = t("folder.add");
       if (elements.btnFolderBatchDelete) elements.btnFolderBatchDelete.textContent = t("folder.batchDelete");
+      if (elements.btnFolderBatchMove) elements.btnFolderBatchMove.textContent = t("toolbar.batchMove");
       if (elements.btnFolderDissolve) elements.btnFolderDissolve.textContent = t("folder.dissolve");
       const emptyTitle = elements.emptyState?.querySelector?.(".empty-title") || null;
       const emptyDesc = elements.emptyState?.querySelector?.(".empty-desc") || null;

@@ -99,6 +99,7 @@ function createHarness(seedOverride = null) {
     "settingKeyboard",
     "settingSync",
     "settingSidebarCollapsed",
+    "settingIconThirdPartyFallback",
   ]);
 
   const $ = (id) => {
@@ -358,6 +359,7 @@ describe("settings-controller", () => {
     assert.equal(h.$("settingOpenMode").value, "new");
     assert.equal(h.$("settingBackup").value, 12);
     assert.equal(h.$("settingIconRetryHour").value, "7");
+    assert.equal(h.$("settingIconThirdPartyFallback").checked, true);
     assert.equal(h.$("settingSidebarCollapsed").checked, true);
     assert.equal(h.$("settingsVersion").textContent, "27.3.3");
   });
@@ -384,6 +386,7 @@ describe("settings-controller", () => {
     h.$("settingFontSize").value = "18";
     h.$("settingOpenMode").value = "background";
     h.$("settingIconRetryHour").value = "";
+    h.$("settingIconThirdPartyFallback").checked = false;
     h.densityRadios.forEach((r) => {
       r.checked = r.value === "spacious";
     });
@@ -398,6 +401,7 @@ describe("settings-controller", () => {
     assert.equal(s.openMode, "background");
     assert.equal(s.iconRetryHour, "");
     assert.equal(s.iconRetryAtSix, false);
+    assert.equal(s.iconThirdPartyFallback, false);
     assert.equal(h.calls.appliesDensity, 1);
     assert.equal(h.calls.appliesTheme, 1);
     assert.equal(h.calls.appliesStaticI18n, 1);

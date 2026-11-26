@@ -279,4 +279,25 @@ describe("node-ops-manager container helpers", () => {
     assert.deepEqual(data.nodes.fld_a.children, ["fld_sub", "itm_a1"]);
     assert.deepEqual(manager.getPlacementList(null), [], "空容器安全");
   });
+
+  it("moveNodesToContainer moves multiple nodes atomically and avoids cycles", () => {
+    const { manager, data, calls } = setup();
+    const res = manager.moveNodesToContainer(["itm_1", "fld_a", "itm_3"], "fld_b");
+    assert.deepEqual(res, { ok: true, movedCount: 3 });
+    assert.ok(data.nodes.fld_b.children.includes("itm_1"));
+    assert.ok(data.nodes.fld_b.children.includes("fld_a"));
+    assert.ok(data.nodes.fld_b.children.includes("itm_3"));
+    assert.ok(!data.groups[0].nodes.includes("itm_1"));
+    assert.equal(calls.persists, 1);
+
+    // 防止把父文件夹移入其子文件夹导致环路
+    const cycleRes = manager.moveNodesToContainer(["fld_a"], "fld_sub");
+    assert.deepEqual(cycleRes, { ok: true, movedCount: 0 });
+
+    // 支持批量移回根目录 grp_all
+    const backRes = manager.moveNodesToContainer(["itm_1", "itm_3"], "grp_all");
+    assert.deepEqual(backRes, { ok: true, movedCount: 2 });
+    assert.ok(data.groups[0].nodes.includes("itm_1"));
+    assert.ok(data.groups[0].nodes.includes("itm_3"));
+  });
 });

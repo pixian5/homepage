@@ -270,16 +270,38 @@
     void sendRuntimeMessage({ type: "homepage_open_bookmark", url, settings });
   }
 
-  function logoCandidates(item) {
+  function isThirdPartyServiceUrl(raw) {
+    try {
+      const parsed = new URL(raw);
+      const host = parsed.hostname.toLowerCase();
+      const pathname = parsed.pathname || "/";
+      if (host === "icons.duckduckgo.com") return true;
+      if (host === "www.google.com" && pathname.startsWith("/s2/favicons")) return true;
+      if (/^t\d+\.gstatic\.com$/i.test(host) && pathname.startsWith("/faviconV2")) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  function logoCandidates(item, allowThirdPartyFallback = true) {
     const candidates = [];
     if (item.iconType === "upload" && /^data:image\//i.test(item.iconData)) candidates.push(item.iconData);
-    if (item.iconType === "remote" && /^https?:\/\//i.test(item.iconData)) candidates.push(item.iconData);
+    if (
+      item.iconType === "remote" &&
+      /^https?:\/\//i.test(item.iconData) &&
+      (allowThirdPartyFallback || !isThirdPartyServiceUrl(item.iconData))
+    ) {
+      candidates.push(item.iconData);
+    }
     try {
       const parsed = new URL(item.url);
       if (/^https?:$/.test(parsed.protocol)) {
         candidates.push(`${parsed.origin}/favicon.ico`);
-        candidates.push(`https://www.google.com/s2/favicons?sz=64&domain_url=${encodeURIComponent(parsed.origin)}`);
-        candidates.push(`https://icons.duckduckgo.com/ip3/${parsed.hostname}.ico`);
+        if (allowThirdPartyFallback) {
+          candidates.push(`https://www.google.com/s2/favicons?sz=64&domain_url=${encodeURIComponent(parsed.origin)}`);
+          candidates.push(`https://icons.duckduckgo.com/ip3/${parsed.hostname}.ico`);
+        }
       }
     } catch (_) {}
     return [...new Set(candidates)];
@@ -291,7 +313,7 @@
     return `hsl(${Math.abs(hash) % 360} 55% 42%)`;
   }
 
-  function makeLogo(item) {
+  function makeLogo(item, allowThirdPartyFallback = true) {
     const wrap = document.createElement("span");
     wrap.className = "hp-logo-wrap";
     const letter = document.createElement("span");
@@ -304,7 +326,7 @@
     letter.style.background = item.color || hashColor(item.title || item.url);
     wrap.appendChild(letter);
     if (item.iconType === "color") return wrap;
-    const candidates = logoCandidates(item);
+    const candidates = logoCandidates(item, allowThirdPartyFallback);
     if (!candidates.length) return wrap;
     const image = document.createElement("img");
     image.className = "hp-logo";
@@ -407,7 +429,8 @@
           copy.querySelector(".hp-title").textContent = item.title;
           copy.querySelector(".hp-url").textContent = item.url;
           copy.querySelector(".hp-path").textContent = item.path.join(" / ");
-          button.append(makeLogo(item), copy);
+          const allowThirdPartyFallback = data?.settings?.iconThirdPartyFallback !== false;
+          button.append(makeLogo(item, allowThirdPartyFallback), copy);
           button.addEventListener("click", () => sendOpen(item.url, data?.settings || {}));
           list.appendChild(button);
         }

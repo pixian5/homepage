@@ -64,6 +64,7 @@ const DEFAULT_SETTINGS = {
   backgroundFade: true,
   backgroundOverlayStrength: 0.08,
   iconFetch: true,
+  iconThirdPartyFallback: true,
   iconRetryAtSix: true,
   iconRetryHour: 18,
   syncEnabled: false,

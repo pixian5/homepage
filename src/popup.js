@@ -622,7 +622,7 @@ async function init() {
   });
 }
 
-if (typeof document !== "undefined") {
+if (typeof document !== "undefined" && document.getElementById("popupBookmarkList")) {
   init().catch((error) => {
     console.error("popup init failed", error);
     const empty = document.getElementById("empty");

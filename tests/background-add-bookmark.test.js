@@ -120,4 +120,107 @@ describe("background addBookmarkToFolderInData", () => {
     });
     assert.equal(Object.keys(data.nodes).length, 3);
   });
+
+  it("runtime onMessage 串行处理并发添加书签并兼容 Promise-only 与 Chrome lastError", async () => {
+    const realChrome = globalThis.chrome;
+    const realBrowser = globalThis.browser;
+    try {
+      // 1) Firefox/Safari Promise-only runtime（无 globalThis.chrome）
+      delete globalThis.chrome;
+      const listeners = [];
+      let storeData = sampleData();
+      let setCalls = 0;
+      globalThis.browser = {
+        runtime: {
+          onMessage: { addListener: (fn) => listeners.push(fn) },
+        },
+        storage: {
+          local: {
+            get(_keys, extra) {
+              if (typeof extra === "function") throw new TypeError("Promise-only storage.get");
+              return Promise.resolve({ homepage_data: structuredClone(storeData) });
+            },
+            set(obj, extra) {
+              if (typeof extra === "function") throw new TypeError("Promise-only storage.set");
+              setCalls += 1;
+              if (obj.homepage_data) storeData = structuredClone(obj.homepage_data);
+              return Promise.resolve();
+            },
+          },
+        },
+        tabs: {
+          create(_opts, extra) {
+            if (typeof extra === "function") throw new TypeError("Promise-only tabs.create");
+            return Promise.resolve({ id: 91 });
+          },
+        },
+      };
+
+      await import(`../src/js/background.js?case=promise_${Date.now()}`);
+      assert.equal(listeners.length, 1);
+
+      const dispatch = (msg, sender = {}) =>
+        new Promise((resolve) => {
+          listeners[0](msg, sender, resolve);
+        });
+
+      const [r1, r2] = await Promise.all([
+        dispatch(
+          { type: "homepage_add_bookmark_to_folder", folderId: "fld_work" },
+          { tab: { url: "https://one.example/", title: "One" } },
+        ),
+        dispatch(
+          { type: "homepage_add_bookmark_to_folder", folderId: "fld_work" },
+          { tab: { url: "https://two.example/", title: "Two" } },
+        ),
+      ]);
+      assert.equal(r1.ok, true);
+      assert.equal(r2.ok, true);
+      assert.equal(setCalls, 2);
+      assert.equal(storeData.nodes.fld_work.children.length, 3);
+
+      // 2) Chrome 回调模式：tabs.create 触发 runtime.lastError 时必须消费并如实失败
+      delete globalThis.browser;
+      const chromeListeners = [];
+      globalThis.chrome = {
+        runtime: {
+          lastError: null,
+          onMessage: { addListener: (fn) => chromeListeners.push(fn) },
+        },
+        storage: {
+          local: {
+            get(_keys, cb) {
+              cb({});
+            },
+          },
+        },
+        tabs: {
+          query(_q, cb) {
+            cb([]);
+          },
+          create(_opts, cb) {
+            globalThis.chrome.runtime.lastError = { message: "Tab creation blocked" };
+            cb(undefined);
+            globalThis.chrome.runtime.lastError = null;
+          },
+        },
+      };
+      await import(`../src/js/background.js?case=chrome_${Date.now()}`);
+      const openErr = await new Promise((resolve) => {
+        chromeListeners[0](
+          { type: "homepage_open_bookmark", url: "https://target.example/", settings: { openMode: "new" } },
+          {},
+          resolve,
+        );
+      });
+      assert.equal(openErr.ok, false);
+      assert.equal(openErr.error, "Tab creation blocked");
+      assert.equal(globalThis.chrome.runtime.lastError, null);
+    } finally {
+      if (realChrome === undefined) delete globalThis.chrome;
+      else globalThis.chrome = realChrome;
+      if (realBrowser === undefined) delete globalThis.browser;
+      else globalThis.browser = realBrowser;
+    }
+  });
 });

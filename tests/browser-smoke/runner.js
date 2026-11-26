@@ -95,6 +95,77 @@
       );
       checks.push("右键删除与撤销落盘");
       if (errors.length) throw new Error(errors.join("；"));
+      if (config.pageUrl && api?.tabs?.create && api?.scripting?.executeScript) {
+        const popupMod = await import(api.runtime.getURL("popup.js"));
+        const webTab = await api.tabs.create({ url: config.pageUrl, active: false });
+        let loadedTab = null;
+        await waitFor(async () => {
+          const cur = await api.tabs.get(webTab.id);
+          if (cur?.status === "complete" && cur?.url === config.pageUrl) {
+            loadedTab = cur;
+            return true;
+          }
+          return false;
+        }, "打开测试网页标签");
+
+        // 1) 验证移除静态 content_scripts 后按需注入 content-toast.js（含二次注入 IIFE 幂等）
+        const t1 = await popupMod.showToastInTab(loadedTab, "按需注入提示一", 14);
+        const t2 = await popupMod.showToastInTab(loadedTab, "按需注入提示二", 15);
+        if (!t1 || !t2) throw new Error(`按需注入 Toast 失败：t1=${t1}, t2=${t2}`);
+        const [{ result: toastText }] = await api.scripting.executeScript({
+          target: { tabId: loadedTab.id },
+          func: () => document.getElementById("homepage-save-toast")?.textContent || "",
+        });
+        if (toastText !== "按需注入提示二") throw new Error(`Toast 文本异常：${toastText}`);
+
+        // 2) 验证按需注入 bookmark-sidebar.js、侧栏添加书签落盘与 Escape 关闭
+        const currentData = await stored();
+        const opened = await popupMod.openBookmarkSidebar(loadedTab, currentData, "left");
+        if (!opened) throw new Error("按需注入打开书签侧栏失败");
+        const [{ result: sidebarMeta }] = await api.scripting.executeScript({
+          target: { tabId: loadedTab.id },
+          func: () => {
+            const root = document.getElementById("homepage-bookmark-sidebar-root");
+            const panels = root ? root.querySelectorAll(".hp-side").length : 0;
+            const targetBtn = root?.querySelector(".hp-menu-parent .hp-submenu .hp-folder");
+            targetBtn?.click();
+            return { panels, clicked: !!targetBtn };
+          },
+        });
+        if (sidebarMeta?.panels !== 1 || !sidebarMeta?.clicked) {
+          throw new Error(`侧栏渲染或点击异常：${JSON.stringify(sidebarMeta)}`);
+        }
+        await waitFor(async () => {
+          const [{ result: status }] = await api.scripting.executeScript({
+            target: { tabId: loadedTab.id },
+            func: () => {
+              const root = document.getElementById("homepage-bookmark-sidebar-root");
+              const okEl = root?.querySelector(".hp-status-ok");
+              const titles = [...(root?.querySelectorAll(".hp-item .hp-title") || [])].map((el) => el.textContent);
+              return { okText: okEl?.textContent || "", titles };
+            },
+          });
+          return Boolean(status?.okText) && status.titles.includes("Smoke Target Page");
+        }, "侧栏保存提示与列表即时刷新");
+        await waitFor(
+          async () => Object.values((await stored()).nodes).some((node) => node.url === config.pageUrl),
+          "后台写入网页书签落盘",
+        );
+        await api.scripting.executeScript({
+          target: { tabId: loadedTab.id },
+          func: () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })),
+        });
+        await waitFor(async () => {
+          const [{ result: exists }] = await api.scripting.executeScript({
+            target: { tabId: loadedTab.id },
+            func: () => Boolean(document.getElementById("homepage-bookmark-sidebar-root")),
+          });
+          return exists === false;
+        }, "Escape 关闭书签侧栏");
+        await api.tabs.remove(loadedTab.id).catch(() => {});
+        checks.push("按需注入 Toast 与网页书签侧栏闭环");
+      }
+      if (errors.length) throw new Error(errors.join("；"));
       sessionStorage.setItem("smoke-checks", JSON.stringify(checks));
       sessionStorage.setItem("smoke-reload", "1");
       location.reload();

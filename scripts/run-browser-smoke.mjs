@@ -90,6 +90,13 @@ async function runBrowser(browser) {
       res.writeHead(204).end();
       return;
     }
+    if (req.method === "GET" && req.url === "/smoke-page.html") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(
+        "<!doctype html><html><head><meta charset='utf-8'><title>Smoke Target Page</title></head><body><h1>Smoke Target</h1></body></html>",
+      );
+      return;
+    }
     if (req.method !== "POST" || req.url !== `/${nonce}`) {
       res.writeHead(404).end();
       return;
@@ -127,6 +134,7 @@ async function runBrowser(browser) {
       browser,
       storageKey: getStorageKey(),
       fixture,
+      pageUrl: `http://127.0.0.1:${server.address().port}/smoke-page.html`,
       reportUrl: `http://127.0.0.1:${server.address().port}/${nonce}`,
     };
     const runner = await readFile(path.join(root, "tests/browser-smoke/runner.js"), "utf8");

@@ -4,11 +4,22 @@
  */
 import { createItemNode } from "./data-utils.js";
 import { writeSafariStableHomepage } from "./safari_native_storage.js";
+import { callExtensionApi, getChromeApi } from "./shared-utils.js";
 import { getOrCreateDeviceId } from "./sync_ids.js";
 import { nextSyncTimestamp } from "./sync_policy.js";
 import { initVisitTrackingInBackground } from "./visit-history.js";
 
 const BING_API_URL = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1";
+const RESTRICTED_TAB_URL_RE = /^(?:chrome|edge|about|safari-web-extension):/i;
+let _bookmarkWriteChain = Promise.resolve();
+
+function isWebTabUrl(url) {
+  return !RESTRICTED_TAB_URL_RE.test(String(url || ""));
+}
+
+function isWebTab(tab) {
+  return Number.isInteger(tab?.id) && isWebTabUrl(tab?.url);
+}
 
 function bingApiUrl(language) {
   const market =
@@ -25,46 +36,26 @@ function toDataUrl(buffer, contentType) {
   return `data:${contentType || "image/jpeg"};base64,${btoa(binary)}`;
 }
 
-function queryActiveTab() {
-  if (!chrome.tabs?.query) return Promise.resolve(null);
-  const query = { active: true, lastFocusedWindow: true };
-  const pickWebTab = (tabs) =>
-    (Array.isArray(tabs) ? tabs : []).find((tab) => {
-      const url = String(tab?.url || "");
-      return Number.isInteger(tab?.id) && !/^(?:chrome|edge|about|safari-web-extension):/i.test(url);
-    }) || null;
-  return new Promise((resolve) => {
-    try {
-      const result = chrome.tabs.query(query, (tabs) => {
-        if (chrome.runtime?.lastError) return resolve(null);
-        resolve(pickWebTab(tabs));
-      });
-      if (typeof result?.then === "function")
-        result.then((tabs) => resolve(pickWebTab(tabs))).catch(() => resolve(null));
-    } catch (_error) {
-      resolve(null);
-    }
-  });
+async function queryActiveTab() {
+  const api = getChromeApi();
+  if (!api?.tabs?.query) return null;
+  try {
+    const tabs = await callExtensionApi(api, api.tabs, "query", [{ active: true, lastFocusedWindow: true }]);
+    return (Array.isArray(tabs) ? tabs : []).find((tab) => isWebTab(tab)) || null;
+  } catch (_error) {
+    return null;
+  }
 }
 
-function isWebTab(tab) {
-  const url = String(tab?.url || "");
-  return Number.isInteger(tab?.id) && !/^(?:chrome|edge|about|safari-web-extension):/i.test(url);
-}
-
-function queryWebTabById(tabId) {
-  if (!Number.isInteger(tabId) || !chrome.tabs?.get) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    try {
-      const result = chrome.tabs.get(tabId, (tab) =>
-        resolve(chrome.runtime?.lastError ? null : isWebTab(tab) ? tab : null),
-      );
-      if (typeof result?.then === "function")
-        result.then((tab) => resolve(isWebTab(tab) ? tab : null)).catch(() => resolve(null));
-    } catch (_error) {
-      resolve(null);
-    }
-  });
+async function queryWebTabById(tabId) {
+  const api = getChromeApi();
+  if (!Number.isInteger(tabId) || !api?.tabs?.get) return null;
+  try {
+    const tab = await callExtensionApi(api, api.tabs, "get", [tabId]);
+    return isWebTab(tab) ? tab : null;
+  } catch (_error) {
+    return null;
+  }
 }
 
 async function fetchBingWallpaper(language) {
@@ -147,8 +138,16 @@ export function addBookmarkToFolderInData(data, { folderId, url, title, deviceId
   return { ok: true, node };
 }
 
-if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+function serializeBookmarkWrite(task) {
+  const next = _bookmarkWriteChain.then(task, task);
+  _bookmarkWriteChain = next.catch(() => {});
+  return next;
+}
+
+const _bgApi = getChromeApi();
+if (_bgApi?.runtime?.onMessage) {
+  _bgApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    const api = getChromeApi();
     if (message?.type === "homepage_add_bookmark_to_folder") {
       const tab = _sender?.tab;
       const folderId = String(message.folderId || "");
@@ -157,33 +156,22 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
         sendResponse({ ok: false, error: "invalid_url" });
         return false;
       }
-      void getOrCreateDeviceId()
-        .then((deviceId) =>
-          chrome.storage.local.get("homepage_data", (result) => {
-            if (chrome.runtime?.lastError) {
-              sendResponse({ ok: false, error: chrome.runtime.lastError.message || "storage_read_failed" });
-              return;
-            }
-            const data = result?.homepage_data;
-            const added = addBookmarkToFolderInData(data, {
-              folderId,
-              url,
-              title: tab?.title || url,
-              deviceId,
-            });
-            if (!added.ok) {
-              sendResponse({ ok: false, error: added.error });
-              return;
-            }
-            chrome.storage.local.set({ homepage_data: data }, () =>
-              sendResponse(
-                chrome.runtime?.lastError
-                  ? { ok: false, error: chrome.runtime.lastError.message }
-                  : { ok: true, node: added.node, folderId },
-              ),
-            );
-          }),
-        )
+      void serializeBookmarkWrite(async () => {
+        if (!api?.storage?.local) return { ok: false, error: "no_storage" };
+        const deviceId = await getOrCreateDeviceId().catch(() => "");
+        const result = await callExtensionApi(api, api.storage.local, "get", ["homepage_data"]);
+        const data = result?.homepage_data;
+        const added = addBookmarkToFolderInData(data, {
+          folderId,
+          url,
+          title: tab?.title || url,
+          deviceId,
+        });
+        if (!added.ok) return { ok: false, error: added.error };
+        await callExtensionApi(api, api.storage.local, "set", [{ homepage_data: data }]);
+        return { ok: true, node: added.node, folderId };
+      })
+        .then((reply) => sendResponse(reply))
         .catch((error) => sendResponse({ ok: false, error: error?.message || "save_failed" }));
       return true;
     }
@@ -197,7 +185,7 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
       const mode = settings.openMode || "current";
       const senderTabId = _sender?.tab?.id;
       const senderUrl = String(_sender?.tab?.url || "");
-      const senderIsWebTab = senderUrl && !/^(?:chrome|edge|about|safari-web-extension):/i.test(senderUrl);
+      const senderIsWebTab = senderUrl && isWebTabUrl(senderUrl);
       const requestedTabId =
         senderIsWebTab && Number.isInteger(senderTabId)
           ? senderTabId
@@ -206,9 +194,11 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
             : undefined;
       const open = (tabId) => {
         if (mode === "new" || mode === "background" || !Number.isInteger(tabId)) {
-          return chrome.tabs.create({ url, ...(mode === "background" ? { active: false } : {}) });
+          return callExtensionApi(api, api?.tabs, "create", [
+            { url, ...(mode === "background" ? { active: false } : {}) },
+          ]);
         }
-        return chrome.tabs.update(tabId, { url });
+        return callExtensionApi(api, api?.tabs, "update", [tabId, { url }]);
       };
       const target = requestedTabId
         ? queryWebTabById(requestedTabId)
@@ -235,8 +225,8 @@ try {
   console.warn("background init failed", e);
 }
 
-if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
-  chrome.storage.onChanged.addListener((changes, areaName) => {
+if (_bgApi?.storage?.onChanged) {
+  _bgApi.storage.onChanged.addListener((changes, areaName) => {
     const next = changes?.homepage_data?.newValue;
     if (areaName === "local" && next && typeof next === "object") {
       void writeSafariStableHomepage(next);

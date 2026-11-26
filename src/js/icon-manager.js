@@ -229,39 +229,50 @@ var HomepageIconManager = (() => {
       });
     }
 
+    /** 进行中的后台抓取任务集合（nodeId::url），避免重复触发并发抓取 */
+    const _pendingIconFetches = new Set();
+
     /** 后台补抓 pending 图标：成功/失败都会清 iconPending 并持久化 */
     async function fetchFaviconInBackground(nodeId, url) {
-      if (!deps.getData()?.settings?.iconFetch) return;
+      if (!nodeId || !url || !deps.getData()?.settings?.iconFetch) return;
+      const fetchKey = `${nodeId}::${url}`;
+      if (_pendingIconFetches.has(fetchKey)) return;
       const candidates = getFaviconCandidates(url);
       if (!candidates.length) return;
-      // 在全局并发信号量内串行尝试候选，避免多节点并发抓取触发请求风暴
-      await withIconFetchConcurrency(async () => {
-        const cache = await loadIconCache();
-        const siteKey = getSiteKey(url);
-        for (const candidate of candidates) {
-          const ok = await probeImageWithIconTimeout(candidate);
-          if (!ok) continue;
-          const dataUrl = await fetchAsDataUrl(candidate);
-          cache[url] = dataUrl ? { dataUrl, ts: Date.now() } : { url: candidate, ts: Date.now() };
-          if (siteKey) cache[siteKey] = { ...cache[url] };
-          await saveIconCache(cache);
-          const target = deps.getData()?.nodes?.[nodeId];
-          if (target) target.iconPending = false;
-          await deps.persistData();
-          deps.render();
-          return;
-        }
-        const target = deps.getData()?.nodes?.[nodeId];
-        if (target) {
-          target.iconPending = false;
-          // 全部候选失败：按失败次数退避（首次 15min，递增封顶 7 天）
+      _pendingIconFetches.add(fetchKey);
+      try {
+        // 在全局并发信号量内串行尝试候选，避免多节点并发抓取触发请求风暴
+        await withIconFetchConcurrency(async () => {
+          const cache = await loadIconCache();
+          const siteKey = getSiteKey(url);
+          for (const candidate of candidates) {
+            const ok = await probeImageWithIconTimeout(candidate);
+            if (!ok) continue;
+            const dataUrl = await fetchAsDataUrl(candidate);
+            cache[url] = dataUrl ? { dataUrl, ts: Date.now() } : { url: candidate, ts: Date.now() };
+            if (siteKey) cache[siteKey] = { ...cache[url] };
+            await saveIconCache(cache);
+            const target = deps.getData()?.nodes?.[nodeId];
+            if (!target || target.deletedAt || target.purgedAt || target.url !== url) return;
+            target.iconPending = false;
+            await deps.persistData();
+            deps.render();
+            return;
+          }
+          // 全部候选失败：始终记录失败次数退避，仅当节点存活且 URL 未变动时才清除 pending
           applyFailureToCache(cache, url, cache[url]);
           if (siteKey) applyFailureToCache(cache, siteKey, cache[siteKey]);
           await saveIconCache(cache);
-          await deps.persistData();
-          deps.render();
-        }
-      });
+          const target = deps.getData()?.nodes?.[nodeId];
+          if (target && !target.deletedAt && !target.purgedAt && target.url === url) {
+            target.iconPending = false;
+            await deps.persistData();
+            deps.render();
+          }
+        });
+      } finally {
+        _pendingIconFetches.delete(fetchKey);
+      }
     }
 
     /** 处理所有 iconPending 节点（导入/新增后调用） */
@@ -269,37 +280,79 @@ var HomepageIconManager = (() => {
       const data = deps.getData();
       if (!data?.settings?.iconFetch || !data?.nodes) return;
       for (const node of Object.values(data.nodes)) {
-        if (node?.type === "item" && node.iconPending && node.url) {
+        if (node?.type === "item" && !node.deletedAt && !node.purgedAt && node.iconPending && node.url) {
           void fetchFaviconInBackground(node.id, node.url);
         }
       }
     }
 
-    /** 纯 Web / 无 tabs 环境返回空串（安全降级） */
-    function fetchTitleViaTab(url) {
-      const api = getChromeApi();
-      if (!api?.tabs) return Promise.resolve("");
+    /** 兼容 Chrome 回调与 Firefox/Safari Promise-only 的 tabs API 调用 */
+    function callTabsApi(tabs, methodName, ...args) {
+      const fn = tabs?.[methodName];
+      if (typeof fn !== "function") return Promise.resolve(null);
       return new Promise((resolve) => {
-        api.tabs.create({ url, active: false }, (tab) => {
-          if (!tab?.id) return resolve("");
-          const tabId = tab.id;
-          const timeout = setTimeout(() => finish(""), titleTimeoutMs);
-          const finish = (title) => {
-            clearTimeout(timeout);
-            api.tabs.onUpdated.removeListener(onUpdated);
-            api.tabs.remove(tabId, () => resolve(title || ""));
-          };
-          const onUpdated = (id, info, updatedTab) => {
-            if (id === tabId && info.status === "complete") {
-              finish(updatedTab?.title || "");
-            }
-          };
-          try {
-            api.tabs.onUpdated.addListener(onUpdated);
-          } catch (_e) {
-            finish("");
+        let done = false;
+        const settle = (value) => {
+          if (done) return;
+          done = true;
+          resolve(value ?? null);
+        };
+        try {
+          const maybePromise = fn.apply(tabs, [...args, (res) => settle(res)]);
+          if (typeof maybePromise?.then === "function") {
+            maybePromise.then(settle, () => settle(null));
           }
-        });
+        } catch (_firstErr) {
+          try {
+            const retry = fn.apply(tabs, args);
+            if (typeof retry?.then === "function") {
+              retry.then(settle, () => settle(null));
+            } else {
+              settle(retry);
+            }
+          } catch (_retryErr) {
+            settle(null);
+          }
+        }
+      });
+    }
+
+    /** 纯 Web / 无 tabs 环境返回空串（安全降级） */
+    async function fetchTitleViaTab(url) {
+      const api = getChromeApi();
+      if (!api?.tabs?.create || !api?.tabs?.remove) return "";
+      const tab = await callTabsApi(api.tabs, "create", { url, active: false });
+      if (!tab?.id) return "";
+      const tabId = tab.id;
+      return new Promise((resolve) => {
+        let settled = false;
+        let timeout = null;
+        const onUpdated = (id, info, updatedTab) => {
+          if (id === tabId && info?.status === "complete") {
+            finish(updatedTab?.title || "");
+          }
+        };
+        const finish = (title) => {
+          if (settled) return;
+          settled = true;
+          if (timeout) clearTimeout(timeout);
+          try {
+            api.tabs.onUpdated?.removeListener?.(onUpdated);
+          } catch (_e) {
+            // ignore
+          }
+          void callTabsApi(api.tabs, "remove", tabId).finally(() => resolve(title || ""));
+        };
+        timeout = setTimeout(() => finish(""), titleTimeoutMs);
+        try {
+          if (!api.tabs.onUpdated?.addListener) {
+            finish("");
+            return;
+          }
+          api.tabs.onUpdated.addListener(onUpdated);
+        } catch (_e) {
+          finish("");
+        }
       });
     }
 
@@ -308,7 +361,7 @@ var HomepageIconManager = (() => {
       const title = await fetchTitleViaTab(url);
       if (!title) return;
       const target = deps.getData()?.nodes?.[nodeId];
-      if (!target?.titlePending) return;
+      if (!target || target.deletedAt || target.purgedAt || !target.titlePending || target.url !== url) return;
       deps.stampNodeFieldChanges?.(target, { titleChanged: true });
       target.title = title;
       target.titlePending = false;

@@ -222,4 +222,143 @@ describe("createIconManager", () => {
     await manager.batchRefreshAllIcons([{ id: "n1", type: "item", url: "https://a.example.com/", iconType: "auto" }]);
     assert.equal(calls.render, 1, "批量刷新后必须重渲染");
   });
+
+  it("processPendingIconFetches deduplicates in-flight fetches and skips tombstoned nodes", async () => {
+    stubIconStorage();
+    const realImage = globalThis.Image;
+    const probedUrls = [];
+    let releaseProbe = null;
+    const probeGate = new Promise((resolve) => {
+      releaseProbe = resolve;
+    });
+    globalThis.Image = class MockImage {
+      set src(url) {
+        probedUrls.push(url);
+        void probeGate.then(() => this.onerror?.());
+      }
+    };
+
+    try {
+      const { manager, data, calls } = makeManager();
+      data.nodes.n_deleted = {
+        id: "n_deleted",
+        type: "item",
+        title: "已删",
+        url: "https://deleted.example.com/",
+        iconType: "auto",
+        iconPending: true,
+        deletedAt: 1234,
+      };
+      // 在候选里放置一次性触发：首次触发期间再调用 processPendingIconFetches
+      manager.processPendingIconFetches();
+      manager.processPendingIconFetches();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      assert.equal(
+        probedUrls.some((u) => u.includes("deleted.example.com")),
+        false,
+        "墓碑节点不得触发图标探测",
+      );
+      // 同一时间 n_pending 的首条候选只被探测 1 次（未因第二次调用翻倍）
+      assert.equal(probedUrls.filter((u) => u.includes("pending.example.com")).length, 1);
+
+      releaseProbe();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      assert.equal(data.nodes.n_pending.iconPending, false);
+      assert.equal(calls.persist, 1, "去重后仅持久化一次");
+    } finally {
+      if (realImage === undefined) delete globalThis.Image;
+      else globalThis.Image = realImage;
+    }
+  });
+
+  it("fetchFaviconInBackground does not clear iconPending when node url changed mid-flight", async () => {
+    stubIconStorage();
+    const realImage = globalThis.Image;
+    let releaseFirstProbe = null;
+    const gate = new Promise((resolve) => {
+      releaseFirstProbe = resolve;
+    });
+    globalThis.Image = class MockImage {
+      set src(_url) {
+        void gate.then(() => this.onerror?.());
+      }
+    };
+
+    try {
+      const { manager, data, calls } = makeManager();
+      const job = manager.fetchFaviconInBackground("n_pending", "https://pending.example.com/");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // 抓取在途期间用户修改了卡片 URL 并重新标 pending
+      data.nodes.n_pending.url = "https://changed.example.com/";
+      data.nodes.n_pending.iconPending = true;
+
+      releaseFirstProbe();
+      await job;
+      assert.equal(data.nodes.n_pending.iconPending, true, "陈旧请求结束后不得误清变更后 URL 的 iconPending");
+      assert.equal(calls.persist, 0);
+      assert.equal(calls.render, 0);
+    } finally {
+      if (realImage === undefined) delete globalThis.Image;
+      else globalThis.Image = realImage;
+    }
+  });
+
+  it("fetchTitleInBackground handles Promise-only tabs API and removes tab once across update/timeout races", async () => {
+    stubIconStorage();
+    let updatedListener = null;
+    let removeCount = 0;
+    globalThis.chrome.tabs = {
+      create(_opts, ...extra) {
+        if (extra.length > 0 && typeof extra[0] === "function") {
+          throw new TypeError("Promise-only tabs.create");
+        }
+        return Promise.resolve({ id: 77 });
+      },
+      remove(tabId, ...extra) {
+        if (extra.length > 0 && typeof extra[0] === "function") {
+          throw new TypeError("Promise-only tabs.remove");
+        }
+        assert.equal(tabId, 77);
+        removeCount += 1;
+        return Promise.resolve();
+      },
+      onUpdated: {
+        addListener(fn) {
+          updatedListener = fn;
+        },
+        removeListener(fn) {
+          if (updatedListener === fn) updatedListener = null;
+        },
+      },
+    };
+
+    const { manager, data, calls } = makeManager({ titleTimeoutMs: 40 });
+    data.nodes.n_title = {
+      id: "n_title",
+      type: "item",
+      title: "",
+      url: "https://title.example.com/",
+      iconType: "auto",
+      titlePending: true,
+    };
+
+    const promise = manager.fetchTitleInBackground("n_title", "https://title.example.com/");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(updatedListener);
+    updatedListener(77, { status: "complete" }, { title: "Resolved Page Title" });
+    updatedListener?.(77, { status: "complete" }, { title: "Duplicate Event" });
+
+    await promise;
+    // 等超时窗口过去，确认 timeout 竞态不会第二次触发 tabs.remove
+    await new Promise((resolve) => setTimeout(resolve, 55));
+
+    assert.equal(removeCount, 1);
+    assert.equal(data.nodes.n_title.title, "Resolved Page Title");
+    assert.equal(data.nodes.n_title.titlePending, false);
+    assert.equal(calls.persist, 1);
+    assert.equal(calls.render, 1);
+    assert.deepEqual(calls.stamps, [{ id: "n_title", changes: { titleChanged: true } }]);
+  });
 });

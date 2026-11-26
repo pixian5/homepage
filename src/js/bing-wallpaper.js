@@ -1,3 +1,4 @@
+import { callExtensionApi } from "./shared-utils.js";
 import { getChromeApi, loadBgCache, saveBgCache } from "./storage.js";
 
 const BING_API_BASE = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1";
@@ -42,35 +43,15 @@ function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
 function fetchViaBackground(language) {
   const api = getChromeApi();
   if (!api?.runtime?.sendMessage) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      resolve(value || null);
-    };
-    const timer = setTimeout(() => finish(null), 20000);
-    try {
-      const result = api.runtime.sendMessage({ type: "homepage.fetchBingWallpaper", language }, (response) => {
-        clearTimeout(timer);
-        finish(response);
-      });
-      if (result && typeof result.then === "function") {
-        result.then(
-          (response) => {
-            clearTimeout(timer);
-            finish(response);
-          },
-          () => {
-            clearTimeout(timer);
-            finish(null);
-          },
-        );
-      }
-    } catch {
-      clearTimeout(timer);
-      finish(null);
-    }
+  let timer = null;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), 20000);
+  });
+  const request = callExtensionApi(api, api.runtime, "sendMessage", [{ type: "homepage.fetchBingWallpaper", language }])
+    .then((response) => response || null)
+    .catch(() => null);
+  return Promise.race([request, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
   });
 }
 

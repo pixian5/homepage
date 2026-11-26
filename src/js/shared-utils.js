@@ -363,36 +363,29 @@ export function sanitizeForSync(data, iconDataMaxLength) {
 }
 
 /**
- * 从存储区域读取指定 key（空区域安全：返回 undefined）
+ * 从存储区域读取指定 key（空区域安全：返回 undefined；兼容回调与 Promise-only）
  * @param {chrome.storage.StorageArea} area
  * @param {string} key
  * @returns {Promise<any>}
  */
 export function storageGet(area, key) {
   if (!area) return Promise.resolve(undefined);
-  return new Promise((resolve) => {
-    area.get(key, (res) => {
-      const err = getLastError();
-      if (err) return resolve(undefined);
-      resolve(res[key]);
-    });
-  });
+  return callExtensionApi(getChromeApi(), area, "get", [key])
+    .then((res) => res?.[key])
+    .catch(() => undefined);
 }
 
 /**
- * 写入存储区域（空区域安全：返回错误串）
+ * 写入存储区域（空区域安全：返回错误串；兼容回调与 Promise-only）
  * @param {chrome.storage.StorageArea} area
  * @param {object} obj
  * @returns {Promise<string | null>}
  */
 export function storageSet(area, obj) {
   if (!area) return Promise.resolve("no_storage_area");
-  return new Promise((resolve) => {
-    area.set(obj, () => {
-      const err = getLastError();
-      resolve(err ? err.message : null);
-    });
-  });
+  return callExtensionApi(getChromeApi(), area, "set", [obj])
+    .then(() => null)
+    .catch((err) => err?.message || String(err));
 }
 
 /**

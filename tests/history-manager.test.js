@@ -210,4 +210,81 @@ describe("createHistoryManager.addHistoryToShortcuts", () => {
     await manager.addHistoryToDefaultGroup({ title: "y", url: "https://y.example.com/" });
     assert.ok(data.groups[0].nodes.length === 1, "历史分组不可作为固化目标");
   });
+
+  it("supports Promise-only browser.history.search that throws on trailing callback", async () => {
+    const realChrome = globalThis.chrome;
+    const realBrowser = globalThis.browser;
+    try {
+      delete globalThis.chrome;
+      globalThis.browser = {
+        history: {
+          search(_query, extra) {
+            if (typeof extra === "function") {
+              throw new TypeError("Promise-only history.search");
+            }
+            return Promise.resolve([{ url: "https://ff.example.com/", title: "FF", lastVisitTime: Date.now() }]);
+          },
+        },
+      };
+      const { deps } = makeDeps();
+      const manager = createHistoryManager(deps);
+      const items = await manager.fetchRecentHistory();
+      assert.equal(manager.status, "ok");
+      assert.equal(items[0].url, "https://ff.example.com/");
+    } finally {
+      if (realChrome === undefined) delete globalThis.chrome;
+      else globalThis.chrome = realChrome;
+      if (realBrowser === undefined) delete globalThis.browser;
+      else globalThis.browser = realBrowser;
+    }
+  });
+
+  it("rolls back memory nodes, group list, updatedAt, and backups when persistData fails", async () => {
+    let touched = 0;
+    const { deps, calls, data } = makeDeps({
+      persistData: async () => {
+        calls.persist += 1;
+        return { ok: false, error: "quota" };
+      },
+      pushBackup: () => {
+        data.backups.unshift({ id: "bak_new", ts: 2 });
+      },
+      setPlacementList: (container, list) => {
+        container.nodes = list;
+      },
+      touchPlacementContainer: (container) => {
+        touched += 1;
+        container.updatedAt = 9999;
+        container.updatedBy = "dev_test";
+      },
+    });
+    data.backups = [{ id: "bak_orig", ts: 1 }];
+    data.groups[0].updatedAt = 500;
+    data.groups[0].updatedBy = "dev_orig";
+
+    const manager = createHistoryManager(deps);
+    const ok = await manager.addHistoryToShortcuts({ title: "Fail", url: "https://fail.example.com/" }, "grp_all");
+    assert.equal(ok, false);
+    assert.equal(touched, 1);
+    assert.deepEqual(Object.keys(data.nodes), []);
+    assert.deepEqual(data.groups[0].nodes, []);
+    assert.equal(data.groups[0].updatedAt, 500);
+    assert.equal(data.groups[0].updatedBy, "dev_orig");
+    assert.deepEqual(data.backups, [{ id: "bak_orig", ts: 1 }]);
+    assert.equal(calls.icons, 0);
+    assert.equal(calls.render, 1);
+    assert.equal(calls.toasts.at(-1)?.kind, "error");
+    assert.equal(calls.toasts.at(-1)?.message, "error.saveQuota");
+
+    // 正常持久化成功时返回 true 并推进容器时钟
+    deps.persistData = async () => {
+      calls.persist += 1;
+      return { ok: true };
+    };
+    const okSaved = await manager.addHistoryToShortcuts({ title: "Ok", url: "https://ok.example.com/" }, "grp_all");
+    assert.equal(okSaved, true);
+    assert.equal(touched, 2);
+    assert.equal(data.groups[0].nodes.length, 1);
+    assert.equal(calls.icons, 1);
+  });
 });

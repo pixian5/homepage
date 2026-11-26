@@ -66,10 +66,10 @@ var HomepageStorageListener = (() => {
       if (disposed) return;
       if (areaName !== "local") return;
       // 同步状态/队列变化：其它标签页解决冲突或后台推送后，本页状态栏与提示条也要跟上。
-      // 这些键不受写入窗口期 / 抑制期影响（它们只保护数据写入）。
+      // 这些键不受写入窗口期 / 抑制期影响（它们只保护数据写入）；
+      // 若同一次批量变更同时包含 dataKey，不得早退，须继续检查数据重载。
       if (syncKeys.some((key) => changes?.[key])) {
         deps.onSyncKeysChanged?.();
-        return;
       }
       if (deps.isPersistInFlight()) return;
       if (deps.isSuppressed()) return;
@@ -107,6 +107,7 @@ var HomepageStorageListener = (() => {
 
     function bind() {
       dispose();
+      disposed = false;
       const api = getChromeApi();
       const disposers = [];
       if (api?.storage?.onChanged?.addListener) {

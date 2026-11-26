@@ -97,4 +97,70 @@ describe("bing-wallpaper", async () => {
     assert.equal(result.fromCache, false);
     assert.equal(stored.homepage_bg_cache.dataUrl, "data:image/jpeg;base64,new");
   });
+
+  it("supports Promise-only background messaging and consumes Chrome lastError cleanly", async () => {
+    const realChrome = globalThis.chrome;
+    const realBrowser = globalThis.browser;
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => {
+        throw new Error("cors blocked");
+      };
+
+      // 1) Firefox/Safari Promise-only sendMessage 兼容
+      delete globalThis.chrome;
+      globalThis.browser = {
+        storage: {
+          local: {
+            get(key) {
+              return Promise.resolve({ [key]: stored[key] });
+            },
+            set(obj) {
+              Object.assign(stored, obj);
+              return Promise.resolve();
+            },
+          },
+        },
+        runtime: {
+          sendMessage(_msg, extra) {
+            if (typeof extra === "function") throw new TypeError("Promise-only sendMessage");
+            return Promise.resolve({
+              ok: true,
+              url: "https://www.bing.com/th?id=ff_bg",
+              dataUrl: "data:image/jpeg;base64,ffbg",
+            });
+          },
+        },
+      };
+      const ffResult = await getBingWallpaper();
+      assert.equal(ffResult.dataUrl, "data:image/jpeg;base64,ffbg");
+      assert.equal(ffResult.fromCache, false);
+
+      // 2) Chrome 回调 runtime.lastError 必须被消费，失败时平滑回退旧缓存
+      delete globalThis.browser;
+      stored.homepage_bg_cache = { date: "20000101", dataUrl: "data:image/png;base64,fallback", ts: 1 };
+      globalThis.chrome = {
+        ...realChrome,
+        runtime: {
+          lastError: null,
+          sendMessage(_msg, cb) {
+            globalThis.chrome.runtime.lastError = { message: "Receiving end does not exist" };
+            cb(undefined);
+            globalThis.chrome.runtime.lastError = null;
+          },
+        },
+      };
+      const errResult = await getBingWallpaper();
+      assert.equal(errResult.dataUrl, "data:image/png;base64,fallback");
+      assert.equal(errResult.fromCache, true);
+      assert.equal(errResult.failed, true);
+      assert.equal(globalThis.chrome.runtime.lastError, null);
+    } finally {
+      globalThis.fetch = realFetch;
+      if (realChrome === undefined) delete globalThis.chrome;
+      else globalThis.chrome = realChrome;
+      if (realBrowser === undefined) delete globalThis.browser;
+      else globalThis.browser = realBrowser;
+    }
+  });
 });

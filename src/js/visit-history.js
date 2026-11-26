@@ -4,7 +4,7 @@
  * Chrome/Firefox 仍优先用 browser.history；此模块作为补充数据源。
  */
 
-import { getChromeApi, getLastError, normalizeUrl, storageArea, storageGet, storageSet } from "./shared-utils.js";
+import { callExtensionApi, getChromeApi, normalizeUrl, storageArea, storageGet, storageSet } from "./shared-utils.js";
 
 export const VISIT_HISTORY_KEY = "homepage_visit_history";
 export const VISIT_HISTORY_LIMIT = 48;
@@ -131,22 +131,11 @@ export function initVisitTrackingInBackground() {
   // 启动时也记一下当前活动标签（若可获取）
   const api = getChromeApi();
   if (!api?.tabs?.query) return;
-  try {
-    const result = api.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-      const err = getLastError();
-      if (err) return;
+  void callExtensionApi(api, api.tabs, "query", [{ active: true, lastFocusedWindow: true }])
+    .then((tabs) => {
       const tab = tabs?.[0];
-      if (tab) recordVisit(tab).catch(() => {});
-    });
-    if (result && typeof result.then === "function") {
-      result
-        .then((tabs) => {
-          const tab = tabs?.[0];
-          if (tab) return recordVisit(tab);
-        })
-        .catch(() => {});
-    }
-  } catch (_e) {
-    // ignore
-  }
+      if (tab) return recordVisit(tab);
+      return null;
+    })
+    .catch(() => {});
 }

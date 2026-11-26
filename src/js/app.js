@@ -589,6 +589,7 @@ function createHistoryManagerInstance() {
     isAllBookmarksGroup,
     getPlacementList,
     setPlacementList,
+    touchPlacementContainer,
     pushBackup,
     persistData,
     render,

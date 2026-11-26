@@ -89,12 +89,30 @@ describe("storage-listener extension onChanged", () => {
     await flushReloads(1, calls);
   });
 
-  it("stops responding after dispose", async () => {
+  it("stops responding after dispose and resumes responding after re-bind", async () => {
     const { listener, calls } = setup();
     const dispose = listener.bind();
     dispose();
     listener.handleExtensionChanges({ homepage_data: { newValue: { lastUpdated: 999 } } }, "local");
     await flushReloads(0, calls);
+
+    listener.bind();
+    listener.handleExtensionChanges({ homepage_data: { newValue: { lastUpdated: 1000 } } }, "local");
+    await flushReloads(1, calls);
+    listener.dispose();
+  });
+
+  it("handles batched extension changes containing both sync keys and dataKey without skipping reload", async () => {
+    const { listener, calls } = setup();
+    listener.handleExtensionChanges(
+      {
+        homepage_sync_state: { newValue: { status: "idle" } },
+        homepage_data: { newValue: { lastUpdated: 500 } },
+      },
+      "local",
+    );
+    assert.equal(calls.syncRefreshes, 1);
+    await flushReloads(1, calls);
   });
 });
 

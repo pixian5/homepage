@@ -4,10 +4,11 @@
 
 ## 当前开发进度
 
-当前产品版本 **27.3.0**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
+当前产品版本 **27.3.1**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
 
 项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。
 
+- **27.3.1**：修复 `history-manager.js` 固化写盘失败未回滚节点/分组列表/时钟/备份且弹窗误关闭的缺陷（并在 `app.js` 注入 `touchPlacementContainer`）；修复 `storage-listener.js` 同批事件同时含 `syncKeys` 与 `dataKey` 时提前返回漏重载及 `dispose() -> bind()` 重绑定永久静默的缺陷；将 `shared-utils.js`（`storageGet`/`storageSet`）、`history-manager.js`（`history.search`）、`bing-wallpaper.js`（`fetchViaBackground`）与 `visit-history.js`（`tabs.query`）统一收口至 `callExtensionApi`；补齐 5 项回归测试（单测增至 623/623），完成 Safari `27.3.1` 原生覆盖安装与双端真实冒烟，见[当前开发进度](docs/20261126-2335-当前开发进度-Gemini.md)。
 - **27.3.0**：统一 `src/js/background.js` 跨端扩展 API 调用与 `homepage_add_bookmark_to_folder` 写盘串行队列，消费 Chrome 回调 `runtime.lastError` 并兼容 Firefox/Safari Promise-only 运行时；在 `scripts/run-browser-smoke.mjs` 与 `tests/browser-smoke/runner.js` 落地真实 HTTP 网页的按需注入 Toast 与书签侧栏写盘 E2E 校验；新增 `background.js` 运行期消息单测，完成 Safari `27.3.0` 原生覆盖安装验收、618/618 全量单测与 Chrome/Firefox 双端真实冒烟，见[当前开发进度](docs/20261126-2324-当前开发进度-Gemini.md)。
 - **27.2.9**：闭环修复代码审查发现的跨模块与边界问题——抽出 `isLocalTrimWarning` 修复 `sync_engine` / `sync_device_auth` 对配额裁剪降级哨兵 `local_trimmed_*` 的误判裂脑；将 `callExtensionApi` 下沉至 `shared-utils.js` 复用并修复 `icon-manager.js` `lastError` 漏消费、标题抓取在途去重及 `onRemoved` 关页监听；对齐 `background.js` 与 `popup-batch-save.js` 节点字段级单调时钟、拦截墓碑文件夹写入，补齐 `storage.js` `useSync` 回退回滚/稳定存储同步、`bookmark-sidebar.js` 单侧按需渲染与实时刷新、`safari-extension-register.sh` 已在册自动启用校验；完成 Safari `27.2.9` 原生覆盖安装验收与 617/617 全量回归，见[当前开发进度](docs/20261126-2309-当前开发进度-Gemini.md)。
 - **27.2.8**：加固 `icon-manager.js` 并发去重（`_pendingIconFetches`）、跳过墓碑节点、修改 URL/删除后防误清 `iconPending`，并抽出 `callTabsApi` + `settled` 守卫修复静默标签页标题抓取兼容与重复关闭竞态；在 `tests/icon-manager.test.js` 新增 3 项回归用例，完成 Safari `27.2.8` 原生覆盖安装验收与 613/613 全量回归，见[当前开发进度](docs/20261126-2243-当前开发进度-Gemini.md)。
@@ -63,7 +64,7 @@
 - **26.6.1**：修复 Safari 扩展消失：新增注册自愈脚本并挂进每日体检，详见[Safari 扩展消失自愈](docs/20261103-1525-Safari扩展消失自愈-DeepSeek-V4.1-Flash.md)。
 - **26.6.0（基线）**：修复 Chrome 永久误报「同步已多次失败，自动重试已停止」：同步实际健康，根因是存储中残留一条指向已废弃浏览器 storage.sync 传输目标的僵尸队列项，它永远发不出去也清不掉；新增 filterCurrentOutbox 在读取与加载时剔除废弃目标，详见[Chrome 永久误报同步失败](docs/20261102-1725-Chrome永久误报同步失败-DeepSeek-V4.1-Flash.md)。
 
-当前单测 618 项全部通过（耗时约 10.8s），Biome 检查 0 告警，三端构建、Safari 27.3.0 原生覆盖安装验收与双端无头浏览器冒烟均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
+当前单测 623 项全部通过（耗时约 10.8s），Biome 检查 0 告警，三端构建、Safari 27.3.1 原生覆盖安装验收与双端无头浏览器冒烟均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
 
 ## 下一步待实现
 

@@ -10,7 +10,7 @@
  */
 
 import { createItemNode } from "./data-utils.js";
-import { getChromeApi, normalizeUrl, RECENT_GROUP_ID } from "./shared-utils.js";
+import { callExtensionApi, getChromeApi, normalizeUrl, RECENT_GROUP_ID } from "./shared-utils.js";
 import { getVisitHistoryItems } from "./visit-history.js";
 
 var HomepageHistoryManager = (() => {
@@ -97,40 +97,18 @@ var HomepageHistoryManager = (() => {
         return { items: [], ok: false };
       }
       const startTime = Date.now() - days * 24 * 60 * 60 * 1000;
-      const raw = await new Promise((resolve) => {
-        let done = false;
-        const settle = (res) => {
-          if (!done) {
-            done = true;
-            resolve(res || []);
-          }
-        };
-        try {
-          const result = api.history.search({ text: "", startTime, maxResults: limit }, (res) => {
-            const err = api.runtime?.lastError;
-            if (err) {
-              apiStatus = "error";
-              console.warn("fetchRecentHistory lastError:", err.message || err);
-              return settle([]);
-            }
-            settle(res || []);
-          });
-          // Promise 形态（Firefox）与回调形态（Chrome/Safari）双兼容
-          if (result && typeof result.then === "function") {
-            result.then(settle).catch((e) => {
-              apiStatus = "error";
-              console.warn("fetchRecentHistory rejected", e);
-              settle([]);
-            });
-          }
-        } catch (e) {
-          apiStatus = "error";
-          console.warn("fetchRecentHistory threw", e);
-          settle([]);
-        }
-      });
+      let raw = [];
+      let hadError = false;
+      try {
+        const res = await callExtensionApi(api, api.history, "search", [{ text: "", startTime, maxResults: limit }]);
+        raw = Array.isArray(res) ? res : [];
+      } catch (e) {
+        hadError = true;
+        apiStatus = "error";
+        console.warn("fetchRecentHistory failed:", e?.message || e);
+      }
       const seen = new Set();
-      for (const item of raw || []) {
+      for (const item of raw) {
         if (!item?.url) continue;
         let normalized = item.url;
         try {
@@ -146,8 +124,8 @@ var HomepageHistoryManager = (() => {
           ts: Number(item.lastVisitTime) || 0,
         });
       }
-      if (apiStatus !== "error") apiStatus = "ok";
-      return { items, ok: true };
+      if (!hadError) apiStatus = "ok";
+      return { items, ok: !hadError };
     }
 
     /**
@@ -200,18 +178,24 @@ var HomepageHistoryManager = (() => {
      * @param {string} targetGroupId 目标分组 ID
      */
     async function addHistoryToShortcuts(node, targetGroupId) {
-      if (!node?.url) return;
+      if (!node?.url) return false;
       const safeUrl = normalizeUrl(node.url);
       if (!safeUrl) {
         deps.toast(deps.t("error.invalidUrlSimple"), "error");
-        return;
+        return false;
       }
       const targetGroup = deps.getRootContainerById(targetGroupId);
       if (!targetGroup) {
         deps.toast(deps.t("group.notFound"), "error");
-        return;
+        return false;
       }
       const data = deps.getData();
+      const prevBackups = Array.isArray(data.backups) ? [...data.backups] : null;
+      const targetList = deps.getPlacementList(targetGroup);
+      const prevList = [...targetList];
+      const prevLen = targetList.length;
+      const prevUpdatedAt = targetGroup.updatedAt;
+      const prevUpdatedBy = targetGroup.updatedBy;
       deps.pushBackup();
       let title = node.title || "";
       if (!title) {
@@ -223,22 +207,34 @@ var HomepageHistoryManager = (() => {
       }
       const item = createItemNode({ url: safeUrl, title, iconType: "auto", iconPending: true });
       data.nodes[item.id] = item;
-      const targetList = deps.getPlacementList(targetGroup);
       targetList.push(item.id);
       deps.setPlacementList(targetGroup, targetList);
-      await deps.persistData();
+      deps.touchPlacementContainer?.(targetGroup);
+      const persistResult = await deps.persistData();
+      if (persistResult && persistResult.ok === false) {
+        delete data.nodes[item.id];
+        targetList.length = prevLen;
+        deps.setPlacementList(targetGroup, prevList);
+        targetGroup.updatedAt = prevUpdatedAt;
+        targetGroup.updatedBy = prevUpdatedBy;
+        if (prevBackups && Array.isArray(data.backups)) data.backups = prevBackups;
+        deps.render();
+        deps.toast(deps.t("error.saveQuota"), "error");
+        return false;
+      }
       deps.render();
       deps.processPendingIconFetches();
       deps.toast(deps.t("toast.addedToShortcuts"));
+      return true;
     }
 
     /** 固化到首选分组（无分组可用时提示） */
     async function addHistoryToDefaultGroup(node) {
-      if (!node?.url) return;
+      if (!node?.url) return false;
       const targetGroupId = getPreferredGroupIdForNewItem();
       if (!targetGroupId) {
         deps.toast(deps.t("group.noneAvailable"), "warning");
-        return;
+        return false;
       }
       return addHistoryToShortcuts(node, targetGroupId);
     }
@@ -274,8 +270,8 @@ var HomepageHistoryManager = (() => {
       document.getElementById("btnAddHistoryCancel")?.addEventListener("click", () => deps.closeModal?.());
       document.getElementById("btnAddHistorySave")?.addEventListener("click", async () => {
         const groupId = select?.value || "";
-        await addHistoryToShortcuts(node, groupId);
-        deps.closeModal?.();
+        const saved = await addHistoryToShortcuts(node, groupId);
+        if (saved) deps.closeModal?.();
       });
     }
 

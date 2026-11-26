@@ -26,7 +26,7 @@
  */
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,11 +37,29 @@ const ROOT = path.resolve(__dirname, "..");
 const PORT = process.env.PORT === "0" ? 0 : Number(process.env.PORT) || 8787;
 const HOST = process.env.HOST || "0.0.0.0";
 const TOKEN = String(process.env.TOKEN || "").trim();
+const TOKEN_HASH = TOKEN ? Buffer.from(sha256Hex(TOKEN), "utf8") : null;
 const DATA_FILE = process.env.DATA_FILE || path.join(ROOT, "data", "homepage-sync-state.json");
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_RPM = parseNonNegativeInt(process.env.RATE_LIMIT_RPM, 60);
+const PAIR_RATE_LIMIT_RPM = parseNonNegativeInt(process.env.PAIR_RATE_LIMIT_RPM, RATE_LIMIT_RPM);
+const MAX_HISTORY_SNAPSHOTS = parseNonNegativeInt(process.env.MAX_HISTORY_SNAPSHOTS, 5);
+const TRUST_PROXY = process.env.TRUST_PROXY === "1";
+const ALLOWED_ORIGINS = new Set(
+  String(process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+);
 /** 当前服务端协议版本；设备表随协议一起演进。 */
 const SERVER_PROTOCOL = 2;
 /** 设备列表上限，防止异常客户端无限撑大状态文件。 */
 const MAX_DEVICES = 200;
+
+function parseNonNegativeInt(raw, fallback) {
+  if (raw === undefined || raw === null || String(raw).trim() === "") return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : fallback;
+}
 
 /**
  * 服务端状态。
@@ -60,6 +78,9 @@ const MAX_DEVICES = 200;
  */
 let state = null;
 const idempotency = new Map(); // key -> { status, body, at }
+const responseCors = new WeakMap();
+const rateBuckets = new Map(); // `${scope}:${ip}` -> number[]
+let snapshotSeq = 0;
 let writeChain = Promise.resolve();
 
 function enqueueWrite(task) {
@@ -71,14 +92,99 @@ function enqueueWrite(task) {
   return run;
 }
 
-function json(res, status, body, extraHeaders = {}) {
-  const raw = JSON.stringify(body);
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
+function getClientIp(req) {
+  if (TRUST_PROXY) {
+    const forwarded = String(req.headers["x-forwarded-for"] || "")
+      .split(",")[0]
+      .trim();
+    if (forwarded) return forwarded;
+  }
+  return req.socket?.remoteAddress || "unknown";
+}
+
+function pruneRateTimestamps(list, cutoff) {
+  let idx = 0;
+  while (idx < list.length && list[idx] <= cutoff) idx += 1;
+  return idx > 0 ? list.slice(idx) : list;
+}
+
+function checkRateLimit(scope, ip, limit, { record = false } = {}) {
+  if (limit <= 0) return { allowed: true, retryAfter: 0 };
+  const now = Date.now();
+  const cutoff = now - RATE_LIMIT_WINDOW_MS;
+  const key = `${scope}:${ip}`;
+  const current = pruneRateTimestamps(rateBuckets.get(key) || [], cutoff);
+  if (current.length >= limit) {
+    rateBuckets.set(key, current);
+    const oldest = current[0] ?? now;
+    const retryAfter = Math.max(1, Math.ceil((oldest + RATE_LIMIT_WINDOW_MS - now) / 1000));
+    return { allowed: false, retryAfter };
+  }
+  if (record) {
+    current.push(now);
+    rateBuckets.set(key, current);
+  } else if (current.length) {
+    rateBuckets.set(key, current);
+  } else {
+    rateBuckets.delete(key);
+  }
+  if (rateBuckets.size > 500) {
+    for (const [bucketKey, timestamps] of rateBuckets.entries()) {
+      const pruned = pruneRateTimestamps(timestamps, cutoff);
+      if (pruned.length) rateBuckets.set(bucketKey, pruned);
+      else rateBuckets.delete(bucketKey);
+    }
+  }
+  return { allowed: true, retryAfter: 0 };
+}
+
+function recordRateHit(scope, ip, limit) {
+  if (limit <= 0) return;
+  const now = Date.now();
+  const cutoff = now - RATE_LIMIT_WINDOW_MS;
+  const key = `${scope}:${ip}`;
+  const current = pruneRateTimestamps(rateBuckets.get(key) || [], cutoff);
+  current.push(now);
+  rateBuckets.set(key, current);
+}
+
+function buildCorsHeaders(req) {
+  const base = {
     "Access-Control-Allow-Methods": "GET, PUT, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, If-Match, Idempotency-Key, X-Sync-Epoch",
     "Access-Control-Expose-Headers": "ETag, X-Sync-Revision, X-Sync-Epoch",
+  };
+  if (ALLOWED_ORIGINS.size === 0) {
+    return { ...base, "Access-Control-Allow-Origin": "*", allowed: true };
+  }
+  const origin = String(req?.headers?.origin || "").trim();
+  if (!origin) {
+    return { ...base, allowed: true };
+  }
+  if (ALLOWED_ORIGINS.has(origin)) {
+    return { ...base, "Access-Control-Allow-Origin": origin, Vary: "Origin", allowed: true };
+  }
+  return { ...base, Vary: "Origin", allowed: false };
+}
+
+function json(res, status, body, extraHeaders = {}) {
+  const raw = JSON.stringify(body);
+  const cors = responseCors.get(res);
+  const corsHeaders = {};
+  if (cors) {
+    for (const [k, v] of Object.entries(cors)) {
+      if (k !== "allowed") corsHeaders[k] = v;
+    }
+  } else {
+    corsHeaders["Access-Control-Allow-Origin"] = "*";
+    corsHeaders["Access-Control-Allow-Methods"] = "GET, PUT, POST, OPTIONS";
+    corsHeaders["Access-Control-Allow-Headers"] =
+      "Content-Type, Authorization, If-Match, Idempotency-Key, X-Sync-Epoch";
+    corsHeaders["Access-Control-Expose-Headers"] = "ETag, X-Sync-Revision, X-Sync-Epoch";
+  }
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    ...corsHeaders,
     ...extraHeaders,
   });
   res.end(raw);
@@ -92,10 +198,16 @@ function sha256Hex(input) {
   return createHash("sha256").update(input).digest("hex");
 }
 
+function safeEqualToken(candidate) {
+  if (!TOKEN_HASH || typeof candidate !== "string") return false;
+  const given = Buffer.from(sha256Hex(candidate), "utf8");
+  return given.length === TOKEN_HASH.length && timingSafeEqual(given, TOKEN_HASH);
+}
+
 /**
  * 鉴权（三级）：
  * 1) 未配置全局 TOKEN：直接放行（无密单机开发模式）；
- * 2) Authorization: Bearer <TOKEN>：主管理凭据（可配对设备、退役设备、执行回收）；
+ * 2) Authorization: Bearer <TOKEN>：主管理凭据（使用 SHA-256 + timingSafeEqual 常量时间比对）；
  * 3) Authorization: Device <deviceId>:<deviceSecret>：设备独立凭据。
  *    - 已退役设备：挂载 req.authError = "device_retired" 并拒绝（路由层回 403）；
  *    - SHA-256(secret) 与登记的 secretHash 用 timingSafeEqual 常量时间比对；
@@ -110,7 +222,7 @@ function checkAuth(req) {
   }
   // 允许大小写 Bearer，以及多余空白
   const m = /^Bearer\s+(.+)$/i.exec(h);
-  if (m && m[1].trim() === TOKEN) {
+  if (m && safeEqualToken(m[1].trim())) {
     req.authKind = "master";
     return true;
   }
@@ -207,9 +319,34 @@ async function loadFromDisk() {
   console.log("[sync-server] no existing state");
 }
 
+async function rotateHistorySnapshot() {
+  if (MAX_HISTORY_SNAPSHOTS <= 0) return;
+  try {
+    const dir = path.join(path.dirname(DATA_FILE), ".snapshots");
+    const baseName = path.basename(DATA_FILE);
+    const prefix = `${baseName}.`;
+    await mkdir(dir, { recursive: true });
+    snapshotSeq = (snapshotSeq + 1) % 10000;
+    const stamp = `${String(Date.now()).padStart(15, "0")}-${String(snapshotSeq).padStart(4, "0")}`;
+    const snapPath = path.join(dir, `${prefix}${stamp}.json`);
+    await copyFile(DATA_FILE, snapPath);
+    const entries = await readdir(dir);
+    const matching = entries.filter((name) => name.startsWith(prefix) && name.endsWith(".json")).sort();
+    const overflow = matching.length - MAX_HISTORY_SNAPSHOTS;
+    if (overflow > 0) {
+      await Promise.all(matching.slice(0, overflow).map((name) => rm(path.join(dir, name), { force: true })));
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn("[sync-server] snapshot rotation skipped:", error?.message || error);
+    }
+  }
+}
+
 async function saveToDisk(snapshot = state) {
   if (!snapshot) return;
   await mkdir(path.dirname(DATA_FILE), { recursive: true });
+  await rotateHistorySnapshot();
   const tmp = `${DATA_FILE}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   const payload = JSON.stringify(
     {
@@ -491,14 +628,26 @@ function parseUrl(req) {
 const server = createServer(async (req, res) => {
   const url = parseUrl(req);
   const method = (req.method || "GET").toUpperCase();
+  const cors = buildCorsHeaders(req);
+  responseCors.set(res, cors);
 
   if (method === "OPTIONS") {
-    res.writeHead(204, {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, PUT, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, If-Match, Idempotency-Key, X-Sync-Epoch",
+    if (!cors.allowed) {
+      json(res, 403, { error: "origin_not_allowed" });
+      return;
+    }
+    const headers = {
+      "Access-Control-Allow-Methods": cors["Access-Control-Allow-Methods"],
+      "Access-Control-Allow-Headers": cors["Access-Control-Allow-Headers"],
       "Access-Control-Max-Age": "86400",
-    });
+    };
+    if (cors["Access-Control-Allow-Origin"]) {
+      headers["Access-Control-Allow-Origin"] = cors["Access-Control-Allow-Origin"];
+    }
+    if (cors.Vary) {
+      headers.Vary = cors.Vary;
+    }
+    res.writeHead(204, headers);
     res.end();
     return;
   }
@@ -523,6 +672,20 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  const clientIp = getClientIp(req);
+  if (url.pathname.startsWith("/v1/")) {
+    const authGate = checkRateLimit("authFail", clientIp, RATE_LIMIT_RPM);
+    if (!authGate.allowed) {
+      json(
+        res,
+        429,
+        { error: "rate_limited", retryAfter: authGate.retryAfter },
+        { "Retry-After": String(authGate.retryAfter) },
+      );
+      return;
+    }
+  }
+
   // Token 只允许通过 Authorization 请求头传输，避免出现在 URL、日志和代理记录中。
   const authOk = checkAuth(req);
   if (url.pathname.startsWith("/v1/") && !authOk) {
@@ -530,6 +693,7 @@ const server = createServer(async (req, res) => {
     if (req.authError === "device_retired") {
       json(res, 403, { error: "device_retired", deviceId: req.authDevice || "unknown" });
     } else {
+      recordRateHit("authFail", clientIp, RATE_LIMIT_RPM);
       unauthorized(res);
     }
     return;
@@ -540,6 +704,16 @@ const server = createServer(async (req, res) => {
   // body: { deviceId: string, deviceName?: string }
   if (url.pathname === "/v1/sync/pair" && method === "POST") {
     if (!requireMaster(req, res)) return;
+    const pairGate = checkRateLimit("pair", clientIp, PAIR_RATE_LIMIT_RPM, { record: true });
+    if (!pairGate.allowed) {
+      json(
+        res,
+        429,
+        { error: "rate_limited", retryAfter: pairGate.retryAfter },
+        { "Retry-After": String(pairGate.retryAfter) },
+      );
+      return;
+    }
     let raw;
     try {
       raw = await readBody(req, 16 * 1024);

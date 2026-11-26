@@ -41,8 +41,13 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Validate Firefox module bundle
+        run: node scripts/bundle-firefox.mjs
+
       - name: Validate build scripts
-        run: bash -n scripts/build.sh scripts/build-macos.command scripts/restore-sync-state.sh scripts/run-sync-recovery-drill.sh
+        run: |
+          bash -n scripts/build.sh scripts/build-macos.command scripts/restore-sync-state.sh scripts/run-sync-recovery-drill.sh
+          bash -n scripts/*.sh scripts/*.command dist/*.command
 
       - name: Build extensions
         run: SKIP_BUMP=1 npm run build
@@ -102,6 +107,13 @@ jobs:
           fi
           "$FIREFOX_E2E_BINARY" --version
           npm run test:browser-smoke -- firefox
+
+      - name: Run Firefox persistence and sync UI E2E
+        env:
+          FIREFOX_E2E_BINARY: ${{ steps.firefox.outputs.firefox-path }}
+        run: |
+          npm run test:firefox-persistence
+          npm run test:firefox-sync-ui
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

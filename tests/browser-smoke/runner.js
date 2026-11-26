@@ -165,6 +165,40 @@
         await api.tabs.remove(loadedTab.id).catch(() => {});
         checks.push("按需注入 Toast 与网页书签侧栏闭环");
       }
+      // 通过同源 iframe 加载 popup.html，避免对扩展页调用 scripting.executeScript（MV3 禁止）。
+      {
+        const iframe = document.createElement("iframe");
+        iframe.src = "popup.html";
+        iframe.style.cssText = "position:fixed;left:-9999px;width:360px;height:520px;";
+        await new Promise((resolve, reject) => {
+          iframe.onload = resolve;
+          iframe.onerror = () => reject(new Error("Popup 页面加载失败"));
+          document.body.appendChild(iframe);
+        });
+        const pWin = iframe.contentWindow;
+        const pDoc = iframe.contentDocument;
+        if (!pWin || !pDoc) throw new Error("无法访问 Popup 同源文档");
+        pWin.addEventListener("error", (event) => errors.push(`popup: ${event.message}`));
+        pWin.addEventListener("unhandledrejection", (event) => errors.push(`popup: ${String(event.reason)}`));
+        await waitFor(() => !pDoc.body.classList.contains("hidden"), "Popup body 显示");
+        await waitFor(() => pDoc.getElementById("popupBookmarksTitle")?.textContent === "所有书签", "Popup 标题渲染");
+        await waitFor(
+          () =>
+            pDoc.querySelectorAll("#bookmarkFolderMenu button").length >= 1 &&
+            pDoc.querySelectorAll("#saveAllTabsFolderMenu button").length >= 1,
+          "Popup 菜单分组渲染",
+        );
+        await waitFor(() => {
+          const text = pDoc.getElementById("popupBookmarkList")?.textContent || "";
+          return text.includes("冒烟书签 <安全文本>") && (!config.pageUrl || text.includes("Smoke Target Page"));
+        }, "Popup 书签列表渲染");
+        const emptyEl = pDoc.getElementById("empty");
+        if (!emptyEl?.classList.contains("hidden")) {
+          throw new Error(`Popup 意外显示空态提示：${emptyEl?.textContent || ""}`);
+        }
+        iframe.remove();
+        checks.push("Popup 页面渲染与书签列表加载");
+      }
       if (errors.length) throw new Error(errors.join("；"));
       sessionStorage.setItem("smoke-checks", JSON.stringify(checks));
       sessionStorage.setItem("smoke-reload", "1");

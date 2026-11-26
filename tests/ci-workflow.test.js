@@ -28,6 +28,10 @@ describe("CI 浏览器冒烟配置", () => {
     it("runs shell syntax checks before building extensions", async () => {
       const ci = await readCi();
       assert.match(ci, /bash -n scripts\/build\.sh scripts\/build-macos\.command/);
+      assert.match(ci, /bash -n scripts\/\*\.sh scripts\/\*\.command dist\/\*\.command/);
+      assert.match(ci, /node scripts\/bundle-firefox\.mjs/);
+      assert.match(ci, /npm run test:firefox-persistence/);
+      assert.match(ci, /npm run test:firefox-sync-ui/);
     });
   });
 

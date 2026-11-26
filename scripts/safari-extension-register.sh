@@ -52,6 +52,7 @@ pluginkit -a "${APPEX_PATH}" 2>/dev/null || true
 # Safari 运行中注册可能延迟生效，轮询最多 10 秒（构建场景里 5 秒偶有不够）
 for _ in $(seq 1 40); do
   if is_registered; then
+    pluginkit -e use -i "${EXT_ID}" >/dev/null 2>&1 || true
     log "注册成功：${EXT_ID} 已在册"
     exit 0
   fi

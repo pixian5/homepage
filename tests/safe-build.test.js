@@ -86,4 +86,5 @@ it("Safari 安装脚本必须先注销清理构建产物再注册扩展，且登
   assert.match(registerScript, /pluginkit\s+-m\s+-v\s+-p\s+com\.apple\.Safari\.web-extension/);
   assert.match(registerScript, /grep\s+-F\s+"\$\{?APPEX_PATH\}?"/);
   assert.match(registerScript, /lsregister\s+-f\s+"\$\{?APP_PATH\}?"/);
+  assert.match(registerScript, /pluginkit\s+-e\s+use\s+-i\s+"\$\{?EXT_ID\}?"/);
 });

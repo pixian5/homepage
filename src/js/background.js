@@ -5,6 +5,7 @@
 import { createItemNode } from "./data-utils.js";
 import { writeSafariStableHomepage } from "./safari_native_storage.js";
 import { getOrCreateDeviceId } from "./sync_ids.js";
+import { nextSyncTimestamp } from "./sync_policy.js";
 import { initVisitTrackingInBackground } from "./visit-history.js";
 
 const BING_API_URL = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1";
@@ -84,6 +85,51 @@ async function fetchBingWallpaper(language) {
   return { url: imageUrl, dataUrl: toDataUrl(await image.arrayBuffer(), image.headers.get("content-type")) };
 }
 
+/**
+ * 将网页侧栏传入的当前标签页写入目标分组或文件夹，并保持 node/容器时钟与 placementClock 单调一致。
+ * @param {object} data
+ * @param {{ folderId: string, url: string, title?: string, deviceId?: string, now?: number }} params
+ * @returns {{ ok: true, node: object } | { ok: false, error: string }}
+ */
+export function addBookmarkToFolderInData(data, { folderId, url, title, deviceId, now = Date.now() }) {
+  const targetId = String(folderId || "");
+  const cleanUrl = String(url || "");
+  if (!targetId || !/^https?:\/\//i.test(cleanUrl)) {
+    return { ok: false, error: "invalid_url" };
+  }
+  const container = data?.groups?.find((group) => group.id === targetId) || data?.nodes?.[targetId];
+  if (!data?.nodes || !container || (container.type && container.type !== "folder")) {
+    return { ok: false, error: "no_folder" };
+  }
+  const ts = nextSyncTimestamp(now, data.lastUpdated, container.updatedAt);
+  const node = createItemNode({ url: cleanUrl, title: title || cleanUrl, iconType: "auto", iconPending: true });
+  node.updatedAt = ts;
+  if (deviceId) node.updatedBy = deviceId;
+  data.nodes[node.id] = node;
+  const isGroup = Array.isArray(container.nodes);
+  const list = isGroup
+    ? container.nodes
+    : Array.isArray(container.children)
+      ? container.children
+      : (container.children = []);
+  list.push(node.id);
+  container.updatedAt = ts;
+  if (deviceId) container.updatedBy = deviceId;
+  if (!data._syncMeta || typeof data._syncMeta !== "object") data._syncMeta = {};
+  if (!data._syncMeta.placementClock || typeof data._syncMeta.placementClock !== "object") {
+    data._syncMeta.placementClock = {};
+  }
+  data._syncMeta.placementClock[node.id] = {
+    parentKind: isGroup ? "group" : "folder",
+    parentId: container.id,
+    index: list.indexOf(node.id),
+    updatedAt: ts,
+    updatedBy: deviceId,
+  };
+  data.lastUpdated = ts;
+  return { ok: true, node };
+}
+
 if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "homepage_add_bookmark_to_folder") {
@@ -94,39 +140,32 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
         sendResponse({ ok: false, error: "invalid_url" });
         return false;
       }
-      void getOrCreateDeviceId().then((deviceId) =>
-        chrome.storage.local.get("homepage_data", (result) => {
-          const data = result?.homepage_data;
-          const container = data?.groups?.find((group) => group.id === folderId) || data?.nodes?.[folderId];
-          if (!data?.nodes || !container || (container.type && container.type !== "folder")) {
-            sendResponse({ ok: false, error: "no_folder" });
-            return;
-          }
-          const now = Date.now();
-          const node = createItemNode({ url, title: tab.title || url, iconType: "auto", iconPending: true });
-          data.nodes[node.id] = node;
-          if (Array.isArray(container.nodes)) container.nodes.push(node.id);
-          else {
-            if (!Array.isArray(container.children)) container.children = [];
-            container.children.push(node.id);
-          }
-          container.updatedAt = now;
-          if (!data._syncMeta || typeof data._syncMeta !== "object") data._syncMeta = {};
-          if (!data._syncMeta.placementClock || typeof data._syncMeta.placementClock !== "object") {
-            data._syncMeta.placementClock = {};
-          }
-          const list = Array.isArray(container.nodes) ? container.nodes : container.children;
-          data._syncMeta.placementClock[node.id] = {
-            parentKind: Array.isArray(container.nodes) ? "group" : "folder",
-            parentId: container.id,
-            index: list.indexOf(node.id),
-            updatedAt: now,
-            updatedBy: deviceId,
-          };
-          data.lastUpdated = now;
-          chrome.storage.local.set({ homepage_data: data }, () => sendResponse({ ok: !chrome.runtime.lastError }));
-        }),
-      );
+      void getOrCreateDeviceId()
+        .then((deviceId) =>
+          chrome.storage.local.get("homepage_data", (result) => {
+            if (chrome.runtime?.lastError) {
+              sendResponse({ ok: false, error: chrome.runtime.lastError.message || "storage_read_failed" });
+              return;
+            }
+            const data = result?.homepage_data;
+            const added = addBookmarkToFolderInData(data, {
+              folderId,
+              url,
+              title: tab?.title || url,
+              deviceId,
+            });
+            if (!added.ok) {
+              sendResponse({ ok: false, error: added.error });
+              return;
+            }
+            chrome.storage.local.set({ homepage_data: data }, () =>
+              sendResponse(
+                chrome.runtime?.lastError ? { ok: false, error: chrome.runtime.lastError.message } : { ok: true },
+              ),
+            );
+          }),
+        )
+        .catch((error) => sendResponse({ ok: false, error: error?.message || "save_failed" }));
       return true;
     }
     if (message?.type === "homepage_open_bookmark") {

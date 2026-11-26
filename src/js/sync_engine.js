@@ -470,6 +470,50 @@ export async function pullNow(reason = "manual") {
   });
 }
 
+/**
+ * 先将合并结果安全落盘再切换内存引用，避免写盘失败/抛错后出现内存已污染、磁盘仍为旧值的裂脑状态。
+ * @param {object} nextState
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+async function persistMergedLocalState(nextState) {
+  try {
+    const err = await _saveLocal(nextState);
+    if (err) {
+      return { ok: false, error: typeof err === "string" ? err : err?.message || String(err) };
+    }
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) || "local_write_failed" };
+  }
+  _setData(nextState);
+  return { ok: true };
+}
+
+/**
+ * 在提交冲突解决前先落盘再切换 docId 与清理冲突上下文，确保写盘失败时冲突状态可完整重试。
+ * @param {object} nextState
+ * @param {string} targetDocId
+ * @param {object} onMergedStats
+ * @returns {Promise<{ ok: true } | { ok: false, reason: string }>}
+ */
+async function applyConflictLocalState(nextState, targetDocId, onMergedStats) {
+  try {
+    await _createSafety();
+  } catch (_e) {}
+  const saved = await persistMergedLocalState(nextState);
+  if (!saved.ok) {
+    _status.status = "need_setup";
+    _status.lastError = saved.error;
+    await saveState();
+    return { ok: false, reason: saved.error };
+  }
+  _status.docId = targetDocId;
+  _pendingConflictRemote = null;
+  delete _status.conflictRemoteDocId;
+  delete _status.conflictLocalDocId;
+  await _onMerged(nextState, onMergedStats);
+  return { ok: true };
+}
+
 async function applyRemoteDoc(doc, deviceId, reason) {
   const data = _getData();
   if (!_status.docId) _status.docId = doc.docId || createDocId();
@@ -509,13 +553,12 @@ async function applyRemoteDoc(doc, deviceId, reason) {
     } catch (e) {
       console.warn("sync safety snapshot failed", e);
     }
-    _setData(merged.state);
-    const err = await _saveLocal(merged.state);
-    if (err) {
+    const saved = await persistMergedLocalState(merged.state);
+    if (!saved.ok) {
       _status.status = "error";
-      _status.lastError = err;
+      _status.lastError = saved.error;
       await saveState();
-      return { ok: false, reason: "local_write_failed", error: err };
+      return { ok: false, reason: "local_write_failed", error: saved.error };
     }
     await _onMerged(merged.state, {
       ...merged.stats,
@@ -647,7 +690,7 @@ async function pushNowImpl(reason = "manual") {
     const sameAsRemote = isContentEqualToRemote(_getData(), remote.doc, _status.docId);
     if (!sameAsRemote) {
       const pulled = await applyRemoteDoc(remote.doc, deviceId, "push_pre_pull");
-      if (!pulled.ok && pulled.reason === "doc_conflict") return pulled;
+      if (!pulled.ok) return pulled;
       // 合并可能把远端最新内容写进本地，重取一次拿到最新 revision / etag
       const again = await readRemoteSyncDocument();
       if (again.ok) {
@@ -961,10 +1004,6 @@ export async function resolveDocConflict(choice) {
         forceDoc = fresh.doc;
         _status.lastRemoteEtag = fresh.etag || _status.lastRemoteEtag;
       }
-      _status.docId = forceDoc.docId;
-      _pendingConflictRemote = null;
-      delete _status.conflictRemoteDocId;
-      delete _status.conflictLocalDocId;
       // 临时清空 local doc 绑定后 apply
       const merged = mergeHomepage(
         {
@@ -978,11 +1017,11 @@ export async function resolveDocConflict(choice) {
         forceDoc,
         { deviceId, now: Date.now() },
       );
-      // 更好：直接用 from remote shape — merge empty local keeps remote
+      let nextState;
+      let mergedStats;
       if (!merged.ok) {
-        // fallback: project remote only
         const shape = syncDocumentToHomepageShape(forceDoc);
-        const state = {
+        nextState = {
           schemaVersion: HOMEPAGE_SCHEMA_VERSION,
           settings: {
             ...(local.settings || {}),
@@ -995,27 +1034,18 @@ export async function resolveDocConflict(choice) {
           backups: local.backups || [],
           lastUpdated: Date.now(),
         };
-        try {
-          await _createSafety();
-        } catch (_e) {}
-        _setData(state);
-        const err = await _saveLocal(state);
-        if (err) return { ok: false, reason: err };
-        await _onMerged(state, { applied: true, choice: "remote" });
+        mergedStats = { applied: true, choice: "remote" };
       } else {
         merged.state.settings = {
           ...merged.state.settings,
           backgroundCustom: local.settings?.backgroundCustom || merged.state.settings?.backgroundCustom || "",
           syncEnabled: true,
         };
-        try {
-          await _createSafety();
-        } catch (_e) {}
-        _setData(merged.state);
-        const err = await _saveLocal(merged.state);
-        if (err) return { ok: false, reason: err };
-        await _onMerged(merged.state, { ...merged.stats, choice: "remote" });
+        nextState = merged.state;
+        mergedStats = { ...merged.stats, choice: "remote" };
       }
+      const committed = await applyConflictLocalState(nextState, forceDoc.docId, mergedStats);
+      if (!committed.ok) return committed;
       _status.status = "idle";
       _status.lastError = "";
       _status.lastPullAt = Date.now();
@@ -1032,17 +1062,8 @@ export async function resolveDocConflict(choice) {
       // 若因 empty 等失败，仍尝试以 placements 并集：放宽 — 用远端 docId 强制 merge 忽略 doc check already done
       return { ok: false, reason: merged.reason || "merge_failed" };
     }
-    _status.docId = remote.docId;
-    _pendingConflictRemote = null;
-    delete _status.conflictRemoteDocId;
-    delete _status.conflictLocalDocId;
-    try {
-      await _createSafety();
-    } catch (_e) {}
-    _setData(merged.state);
-    const err = await _saveLocal(merged.state);
-    if (err) return { ok: false, reason: err };
-    await _onMerged(merged.state, { ...merged.stats, choice: "merge" });
+    const committed = await applyConflictLocalState(merged.state, remote.docId, { ...merged.stats, choice: "merge" });
+    if (!committed.ok) return committed;
     _status.status = "idle";
     _status.lastError = "";
     _status.lastPullAt = Date.now();

@@ -1,23 +1,23 @@
-const TOAST_ID = "homepage-save-toast";
-const FONT_STACK = '"Avenir Next", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif';
-const TOAST_STYLE_PROPS = {
-  position: "fixed",
-  top: "20px",
-  right: "20px",
-  zIndex: "2147483647",
-  background: "rgba(22, 128, 72, 0.92)",
-  color: "#ffffff",
-  padding: "10px 14px",
-  borderRadius: "10px",
-  lineHeight: "1.2",
-  boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
-  backdropFilter: "blur(6px)",
-  fontFamily: FONT_STACK,
-};
-
-// content script 在 SPA 路由切换时可能被重复注入，避免重复注册监听器
-if (!window.__homepageToastInjected) {
+(() => {
+  if (window.__homepageToastInjected) return;
   window.__homepageToastInjected = true;
+
+  const TOAST_ID = "homepage-save-toast";
+  const FONT_STACK = '"Avenir Next", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif';
+  const TOAST_STYLE_PROPS = {
+    position: "fixed",
+    top: "20px",
+    right: "20px",
+    zIndex: "2147483647",
+    background: "rgba(22, 128, 72, 0.92)",
+    color: "#ffffff",
+    padding: "10px 14px",
+    borderRadius: "10px",
+    lineHeight: "1.2",
+    boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+    backdropFilter: "blur(6px)",
+    fontFamily: FONT_STACK,
+  };
 
   function showToast(message, fontSize) {
     if (!document.body) return;
@@ -46,4 +46,4 @@ if (!window.__homepageToastInjected) {
     }
     return false;
   });
-}
+})();

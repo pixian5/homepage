@@ -172,4 +172,42 @@ describe("popup on-demand script injection compatibility", () => {
     assert.equal(await openBookmarkSidebar({ id: 1, url: "chrome://settings" }, { groups: [] }, "right"), false);
     assert.equal(await showToastInTab({ id: 1, url: "chrome://settings" }, "fail", 13), false);
   });
+
+  it("src/js/content-toast.js 在同一页面多次按需注入时不抛词法重声明错误且仅注册一次监听器", async () => {
+    const vm = await import("node:vm");
+    const code = await readFile(path.join(root, "src/js/content-toast.js"), "utf8");
+    const listeners = [];
+    const context = vm.createContext({
+      chrome: {
+        runtime: {
+          onMessage: {
+            addListener(fn) {
+              listeners.push(fn);
+            },
+          },
+        },
+      },
+      document: {
+        body: { appendChild() {} },
+        getElementById: () => null,
+        createElement: () => ({ id: "", textContent: "", style: {}, remove() {} }),
+      },
+      setTimeout,
+      clearTimeout,
+    });
+    context.window = context;
+
+    vm.runInContext(code, context, { filename: "content-toast.js" });
+    vm.runInContext(code, context, { filename: "content-toast.js" });
+
+    assert.equal(listeners.length, 1);
+    let reply = null;
+    assert.equal(
+      listeners[0]({ type: "homepage_show_toast", text: "ok", fontSize: 14 }, null, (r) => {
+        reply = r;
+      }),
+      true,
+    );
+    assert.equal(reply?.ok, true);
+  });
 });

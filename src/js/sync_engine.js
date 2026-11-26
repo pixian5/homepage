@@ -3,6 +3,7 @@
  */
 
 import { getLastError, isLocalTrimWarning, storageArea } from "./shared-utils.js";
+import { decryptSyncDocument, encryptSyncDocument, isEncryptedSyncEnvelope } from "./sync_crypto.js";
 import { createSyncDeviceAuth } from "./sync_device_auth.js";
 import { httpConfirmSyncState, httpPairDevice, httpPullState, httpPushState } from "./sync_http_transport.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
@@ -320,6 +321,27 @@ function enqueue(task) {
   return run;
 }
 
+function getE2eeConfig() {
+  const settings = _getData()?.settings || {};
+  return {
+    enabled: !!settings.syncE2eeEnabled,
+    passphrase: String(settings.syncE2eePassphrase || ""),
+  };
+}
+
+async function decodeRemoteDocIfEncrypted(remoteDoc) {
+  if (!remoteDoc || !isEncryptedSyncEnvelope(remoteDoc)) {
+    return { ok: true, doc: remoteDoc };
+  }
+  const { passphrase } = getE2eeConfig();
+  try {
+    const plain = await decryptSyncDocument(remoteDoc, passphrase);
+    return { ok: true, doc: plain };
+  } catch (error) {
+    return { ok: false, reason: error?.code || "e2ee_decrypt_failed" };
+  }
+}
+
 /**
  * 读取远端 SyncDocument
  */
@@ -345,10 +367,14 @@ export async function readRemoteSyncDocument() {
     }
     return { ok: false, reason: res.reason || "http_error", error: res.error, status: res.status };
   }
+  const decoded = await decodeRemoteDocIfEncrypted(res.doc);
+  if (!decoded.ok) {
+    return { ok: false, reason: decoded.reason };
+  }
   _status.lastRemoteEtag = res.etag || "";
   // epoch 由服务端在回收墓碑时递增；客户端只跟随，不自增
   if (Number.isSafeInteger(res.epoch)) _status.lastRemoteEpoch = res.epoch;
-  return { ok: true, doc: res.doc, etag: res.etag, revision: res.revision, epoch: res.epoch };
+  return { ok: true, doc: decoded.doc, etag: res.etag, revision: res.revision, epoch: res.epoch };
 }
 
 /**
@@ -357,7 +383,17 @@ export async function readRemoteSyncDocument() {
 async function writeRemoteSyncDocument(doc) {
   const transport = await getTransportAuth();
   if (!transport.baseUrl) return "no_url";
-  const res = await httpPushState(transport, doc, {
+  let payloadDoc = doc;
+  const e2ee = getE2eeConfig();
+  if (e2ee.enabled) {
+    if (!e2ee.passphrase) return "e2ee_passphrase_required";
+    try {
+      payloadDoc = await encryptSyncDocument(doc, e2ee.passphrase);
+    } catch (error) {
+      return error?.code || "e2ee_encrypt_failed";
+    }
+  }
+  const res = await httpPushState(transport, payloadDoc, {
     ifMatch: _status.lastRemoteEtag || undefined,
     // 告诉服务端本机所处的压缩代际；落后时服务端会以 409 stale_epoch 拒绝
     epoch: _status.lastRemoteEpoch || 0,
@@ -370,9 +406,16 @@ async function writeRemoteSyncDocument(doc) {
     return null;
   }
   if (res.reason === "precondition_failed") {
-    // 把远端 doc 塞回，供上层 merge 重试
+    // 把远端 doc 塞回，供上层 merge 重试（若远端为加密信封先在本地解密）
     if (res.remote?.doc) {
-      return { code: "precondition_failed", remote: res.remote, etag: res.etag, revision: res.revision };
+      const decoded = await decodeRemoteDocIfEncrypted(res.remote.doc);
+      if (!decoded.ok) return decoded.reason;
+      return {
+        code: "precondition_failed",
+        remote: { ...res.remote, doc: decoded.doc },
+        etag: res.etag,
+        revision: res.revision,
+      };
     }
     return "precondition_failed";
   }
@@ -784,11 +827,11 @@ async function pushNowImpl(reason = "manual") {
     } else {
       lastErr = typeof writeErr === "string" ? writeErr : writeErr?.code || "push_failed";
     }
-    if (lastErr === "unauthorized") {
+    if (lastErr === "unauthorized" || lastErr === "e2ee_passphrase_required" || lastErr === "e2ee_decrypt_failed") {
       _status.status = "error";
-      _status.lastError = "unauthorized";
+      _status.lastError = lastErr;
       await saveState();
-      return { ok: false, reason: "unauthorized" };
+      return { ok: false, reason: lastErr };
     }
     if (lastErr === "device_retired") {
       // 已熔断（writeRemoteSyncDocument 内处理状态与定时器）；

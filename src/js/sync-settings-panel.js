@@ -91,11 +91,15 @@ var HomepageSyncSettingsPanel = (() => {
       const intervalEl = $("settingSyncInterval");
       const urlEl = $("settingSyncServerUrl");
       const tokenEl = $("settingSyncServerToken");
+      const e2eeEnabledEl = $("settingSyncE2eeEnabled");
+      const e2eePassEl = $("settingSyncE2eePassphrase");
       if (syncEl) getData().settings.syncEnabled = !!syncEl.checked;
       getData().settings.syncTransport = "http";
       if (intervalEl) getData().settings.syncInterval = normalizeSyncInterval(intervalEl.value);
       if (urlEl) getData().settings.syncServerUrl = (urlEl.value || "").trim();
       if (tokenEl) getData().settings.syncServerToken = (tokenEl.value || "").trim();
+      if (e2eeEnabledEl) getData().settings.syncE2eeEnabled = !!e2eeEnabledEl.checked;
+      if (e2eePassEl) getData().settings.syncE2eePassphrase = String(e2eePassEl.value || "");
       return {
         enabled: !!getData().settings.syncEnabled,
         transport: "http",
@@ -418,6 +422,18 @@ var HomepageSyncSettingsPanel = (() => {
               void refreshSyncStatusLine();
               return;
             }
+            if (pull?.reason === "e2ee_passphrase_required" || pull?.reason === "e2ee_decrypt_failed") {
+              toast(
+                t(
+                  pull.reason === "e2ee_passphrase_required"
+                    ? "settings.sync.e2ee.passphraseRequired"
+                    : "settings.sync.e2ee.decryptFailed",
+                ),
+                "error",
+              );
+              void refreshSyncStatusLine();
+              return;
+            }
             if (pull?.reason === "network_error" || pull?.reason === "no_url") {
               toast(
                 t("settings.sync.testFail", {
@@ -434,6 +450,15 @@ var HomepageSyncSettingsPanel = (() => {
             } else if (res?.reason === "sync_quota_total") toast(t("settings.sync.state.quota"), "warning");
             else if (res?.reason === "unauthorized") {
               toast(t("settings.sync.unauthorized"), "error");
+            } else if (res?.reason === "e2ee_passphrase_required" || res?.reason === "e2ee_decrypt_failed") {
+              toast(
+                t(
+                  res.reason === "e2ee_passphrase_required"
+                    ? "settings.sync.e2ee.passphraseRequired"
+                    : "settings.sync.e2ee.decryptFailed",
+                ),
+                "error",
+              );
             } else if (res?.reason === "network_error" || res?.reason === "no_url") {
               const r = res?.reason || "error";
               const err = res?.error || "";

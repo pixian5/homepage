@@ -3,6 +3,7 @@ import { createAppReloadCoordinator, resolveActiveGroupId } from "./app-reload-c
 import { getBingWallpaper } from "./bing-wallpaper.js";
 import { bookmarksToHomepageData, exportNetscapeBookmarksHtml, parseNetscapeBookmarksHtml } from "./bookmark-html.js";
 import { pruneUnusedCachesQuietly } from "./cache-cleaner.js";
+import { createCommandPalette } from "./command-palette.js";
 import { createContextMenuManager } from "./context-menu.js";
 import {
   ALL_BOOKMARKS_GROUP_ID,
@@ -1185,6 +1186,72 @@ async function init() {
     deleteNodes,
     qsa,
   });
+  const commandPalette = createCommandPalette({
+    getData: () => data,
+    t,
+    openBookmark: (node) => {
+      if (node?.url) openUrl(node.url, data?.settings?.openMode || "current");
+    },
+    navigateToFolder: ({ id, rootGroupId }) => {
+      if (rootGroupId) activeGroupId = rootGroupId;
+      openFolderId = id;
+      render();
+    },
+    getActions: () => [
+      { id: "action:add", title: t("cmdk.action.add"), keywords: "add new bookmark", run: () => openAddModal() },
+      {
+        id: "action:settings",
+        title: t("cmdk.action.settings"),
+        keywords: "settings preferences",
+        run: () => settingsCtl?.openSettingsModal(),
+      },
+      {
+        id: "action:sync",
+        title: t("cmdk.action.sync"),
+        keywords: "sync push pull",
+        run: () => {
+          if (data?.settings?.syncEnabled) void pullNow("manual");
+          else settingsCtl?.openSettingsModal();
+        },
+      },
+      {
+        id: "action:dedupe",
+        title: t("settings.action.dedupeBookmarks"),
+        keywords: "dedupe duplicate clean",
+        run: () => {
+          settingsCtl?.openSettingsModal();
+          $("btnDedupeBookmarks")?.click();
+        },
+      },
+      {
+        id: "action:theme",
+        title: t("cmdk.action.toggleTheme"),
+        keywords: "theme dark light",
+        run: () => {
+          const cur = data?.settings?.theme || "system";
+          const next = cur === "dark" ? "light" : "dark";
+          if (data?.settings) {
+            data.settings.theme = next;
+            themeMgr.applyTheme();
+            queuePersist();
+          }
+        },
+      },
+      {
+        id: "action:sidebar",
+        title: t("cmdk.action.toggleSidebar"),
+        keywords: "sidebar toggle collapse",
+        run: () => {
+          if (data?.settings) {
+            data.settings.sidebarHidden = !data.settings.sidebarHidden;
+            sidebarMgr?.applySidebarState();
+            queuePersist();
+          }
+        },
+      },
+    ],
+  });
+  commandPalette.bindGlobalShortcut();
   themeMgr.applyDensity();
   themeMgr.applyTheme();
   sidebarMgr?.applySidebarState();

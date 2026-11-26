@@ -4,9 +4,11 @@
 
 ## 当前开发进度
 
-当前产品版本 **27.3.4**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
+当前产品版本 **27.3.5**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
 
 项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。
+
+- **27.3.5**：新增全局 `Cmd/Ctrl+K` 快速命令面板（`src/js/command-palette.js` + `src/styles.css` + `src/js/app.js`，支持拼音模糊与 `>` 快捷动作触发）与可选客户端 PBKDF2 + AES-256-GCM 端到端加密同步（`src/js/sync_crypto.js`，`syncE2eePassphrase` 仅存本机不同步；兼容 `src/js/sync_engine.js` 与 `scripts/sync-server.mjs` `homepage.sync.e2ee.v1` 密文信封）；补齐 8 语言文案与 4 项回归测试（单测增至 646/646），完成 Safari `27.3.5` 原生覆盖安装与双端真实冒烟/Firefox E2E 验收，见[当前开发进度](docs/20261127-0141-当前开发进度-Gemini.md)。
 
 - **27.3.4**：新增 `@media (prefers-reduced-motion: reduce)` 无障碍减动效、第三方图标服务隐私开关（`iconThirdPartyFallback` 覆盖 `icons.js`/`icon-manager.js`/`bookmark-sidebar.js`/`settings-controller.js`）、批量移动至文件夹（`selection-manager.js` + `node-ops-manager.js`）以及重复书签检测与墓碑合并清理工具（`src/js/dedupe-bookmarks.js`，同步登记 Firefox 拓扑与 PWA SW）；补齐 8 语言新文案与 7 项回归测试（单测增至 642/642），完成 Safari `27.3.4` 原生覆盖安装与双端真实冒烟/Firefox E2E 验收，见[当前开发进度](docs/20261127-0102-当前开发进度-Gemini.md)。
 - **27.3.3**：加固 `scripts/sync-server.mjs`（`Bearer` 常量时间比对、`RATE_LIMIT_RPM`/`PAIR_RATE_LIMIT_RPM` 滑动窗口限流与 `TRUST_PROXY` 控制、`ALLOWED_ORIGINS` CORS 白名单、`MAX_HISTORY_SNAPSHOTS` `.snapshots/` 写前滚动历史快照）；新增 `tests/sync-server-security.test.js`、`tests/error-bootstrap.test.js`、`tests/settings-controller.test.js` 共 12 项单测（全量增至 635/635），完成 Safari `27.3.3` 原生覆盖安装与双端真实冒烟/Firefox E2E 验收，见[当前开发进度](docs/20261127-0051-当前开发进度-Gemini.md)。
@@ -67,7 +69,7 @@
 - **26.6.1**：修复 Safari 扩展消失：新增注册自愈脚本并挂进每日体检，详见[Safari 扩展消失自愈](docs/20261103-1525-Safari扩展消失自愈-DeepSeek-V4.1-Flash.md)。
 - **26.6.0（基线）**：修复 Chrome 永久误报「同步已多次失败，自动重试已停止」：同步实际健康，根因是存储中残留一条指向已废弃浏览器 storage.sync 传输目标的僵尸队列项，它永远发不出去也清不掉；新增 filterCurrentOutbox 在读取与加载时剔除废弃目标，详见[Chrome 永久误报同步失败](docs/20261102-1725-Chrome永久误报同步失败-DeepSeek-V4.1-Flash.md)。
 
-当前单测 642 项全部通过（耗时约 11.1s），Biome 检查 0 告警，三端构建、Safari 27.3.4 原生覆盖安装验收与双端无头浏览器冒烟均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
+当前单测 646 项全部通过，Biome 检查 0 告警，三端构建、Safari 27.3.5 原生覆盖安装验收与双端无头浏览器冒烟均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
 
 ## 下一步待实现
 

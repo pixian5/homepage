@@ -212,6 +212,12 @@ var HomepageSettingsController = (() => {
             <span class="inline-label">${t("settings.sync.serverToken")}</span>
             <input id="settingSyncServerToken" type="password" class="inline-text" autocomplete="off" />
           </div>
+          <label><input id="settingSyncE2eeEnabled" type="checkbox"> ${t("settings.sync.e2ee.enable")}</label>
+          <div class="row-inline">
+            <span class="inline-label">${t("settings.sync.e2ee.passphrase")}</span>
+            <input id="settingSyncE2eePassphrase" type="password" class="inline-text" autocomplete="new-password" placeholder="${t("settings.sync.e2ee.passphrasePh")}" />
+          </div>
+          <p class="settings-sync-hint">${t("settings.sync.e2ee.hint")}</p>
           <div class="row-inline settings-sync-actions">
             <button type="button" id="btnSyncTestServer" class="icon-btn">${t("settings.sync.testServer")}</button>
             <button type="button" id="btnSyncNow" class="icon-btn">${t("settings.sync.now")}</button>
@@ -331,6 +337,10 @@ var HomepageSettingsController = (() => {
     if (urlInput) urlInput.value = getData().settings.syncServerUrl || "";
     const tokenInput = $("settingSyncServerToken");
     if (tokenInput) tokenInput.value = getData().settings.syncServerToken || "";
+    const e2eeEnabledInput = $("settingSyncE2eeEnabled");
+    if (e2eeEnabledInput) e2eeEnabledInput.checked = !!getData().settings.syncE2eeEnabled;
+    const e2eePassEl = $("settingSyncE2eePassphrase");
+    if (e2eePassEl) e2eePassEl.value = getData().settings.syncE2eePassphrase || "";
     syncPanelCtl.bindButtons();
     $("settingOpenMode").value = getData().settings.openMode || "current";
     $("settingBackup").value = getData().settings.maxBackups;
@@ -530,6 +540,8 @@ var HomepageSettingsController = (() => {
         getData().settings.syncInterval = normalizeSyncInterval($("settingSyncInterval")?.value);
         getData().settings.syncServerUrl = ($("settingSyncServerUrl")?.value || "").trim();
         getData().settings.syncServerToken = ($("settingSyncServerToken")?.value || "").trim();
+        getData().settings.syncE2eeEnabled = !!$("settingSyncE2eeEnabled")?.checked;
+        getData().settings.syncE2eePassphrase = String($("settingSyncE2eePassphrase")?.value || "");
         const serverChanged =
           prevUrl !== getData().settings.syncServerUrl || prevToken !== getData().settings.syncServerToken;
         const intervalChanged = prevInterval !== getData().settings.syncInterval;

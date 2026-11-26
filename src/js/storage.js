@@ -73,6 +73,8 @@ const DEFAULT_SETTINGS = {
   syncServerToken: "",
   /** 周期同步间隔：off | 1m | 5m | 15m | 30m | 1h | 6h | 12h | 1d */
   syncInterval: "5m",
+  syncE2eeEnabled: false,
+  syncE2eePassphrase: "",
   maxBackups: 30,
   keyboardNav: true,
   lastActiveGroupId: "",

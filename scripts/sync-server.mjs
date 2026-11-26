@@ -398,8 +398,25 @@ function hasOptionalTimestamp(record, key) {
   return record[key] === undefined || isTimestamp(record[key]);
 }
 
+function isEncryptedSyncEnvelope(doc) {
+  return !!doc && typeof doc === "object" && doc.schema === "homepage.sync.e2ee.v1" && doc.schemaVersion === 1;
+}
+
 function validateSyncDocument(doc) {
   if (!isRecord(doc)) return "invalid_doc";
+  if (isEncryptedSyncEnvelope(doc)) {
+    if (doc.alg !== "PBKDF2-SHA256+AES-256-GCM") return "invalid_e2ee_alg";
+    if (!Number.isSafeInteger(doc.iterations) || doc.iterations < 10000) return "invalid_e2ee_iterations";
+    if (typeof doc.docId !== "string" || !doc.docId.trim()) return "invalid_doc_id";
+    if (!Number.isSafeInteger(doc.revision) || doc.revision < 0) return "invalid_revision";
+    if (typeof doc.deviceId !== "string" || !doc.deviceId.trim()) return "invalid_device_id";
+    if (!isTimestamp(doc.writtenAt)) return "invalid_written_at";
+    if (typeof doc.contentHash !== "string" || doc.contentHash !== hashSyncDocument(doc)) return "invalid_content_hash";
+    for (const field of ["salt", "iv", "ciphertext"]) {
+      if (typeof doc[field] !== "string" || !doc[field].trim()) return `invalid_e2ee_${field}`;
+    }
+    return null;
+  }
   if (doc.schema !== "homepage.sync.doc.v1" || doc.schemaVersion !== 1) return "invalid_schema";
   if (typeof doc.docId !== "string" || !doc.docId.trim()) return "invalid_doc_id";
   if (!Number.isSafeInteger(doc.revision) || doc.revision < 0) return "invalid_revision";
@@ -534,6 +551,7 @@ function normalizeDeletions(input) {
  */
 function collectNewDeletions(doc, revision, previous = {}, reclaimedIds = []) {
   const next = { ...normalizeDeletions(previous) };
+  if (isEncryptedSyncEnvelope(doc)) return next;
   const reclaimed = new Set(normalizeReclaimedIds(reclaimedIds));
   const mark = (id, entity) => {
     if (!entity || typeof id !== "string" || !id) return;

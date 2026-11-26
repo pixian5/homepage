@@ -30,3 +30,8 @@
   - 构建时把 `newtab.html` 中的 `<script type="module" src="js/app.js">` 替换为 `<script src="js/app.ff.js">`
   - CSP 保持 `script-src 'self'`，依靠外部脚本而非内联脚本
   - 产物务必以 `dist/firefox` 为准加载扩展
+
+## Safari 原生覆盖安装约定
+
+- 已获用户长期授权：每次构建发布时，若 `pgrep -x Safari` 确认 Safari 未运行，可直接执行 `NO_PAUSE=1 bash dist/build-macos.command --install` 重新编译签名并覆盖安装 `/Applications/我的首页 Safari.app`，随后完成版本、签名、存储快照与 `pluginkit` 正式路径验收。
+- 安全边界保持不变：若检测到 Safari 正在运行，严禁自动退出、重启或拉起 Safari，改为仅打包并告知用户。

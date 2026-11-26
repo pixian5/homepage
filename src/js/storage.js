@@ -356,13 +356,13 @@ export async function saveData(data, useSync = false) {
   // 无扩展 API 但有 Web 回退存储（localStorage）时照常读写
   if (!api && !area) return "no_api";
   const prevLastUpdated = data.lastUpdated;
-  data.lastUpdated = nowTs();
+  data.lastUpdated = Math.max(nowTs(), (Number(prevLastUpdated) || 0) + 1);
   const payload = useSync ? sanitizeForSync(data, ICON_DATA_MAX_LENGTH) : data;
   if (useSync) {
     const size = estimateBytes(payload);
     if (size > SYNC_ITEM_QUOTA_BYTES) {
       data.settings.syncEnabled = false;
-      data.lastUpdated = nowTs();
+      data.lastUpdated = Math.max(nowTs(), (Number(data.lastUpdated) || 0) + 1);
       const localErr = await storageSetLocal(storageArea(false), { [ROOT_KEY]: data });
       if (localErr) data.lastUpdated = prevLastUpdated;
       return "sync_quota_exceeded";
@@ -370,23 +370,49 @@ export async function saveData(data, useSync = false) {
   }
   let err = await storageSetLocal(area, { [ROOT_KEY]: payload });
   if (!useSync && err && isQuotaError(err)) {
-    if (trimLocalBackups(data)) {
-      err = await storageSetLocal(area, { [ROOT_KEY]: data });
-      if (!err) return "local_trimmed_backups";
-    }
-    if (trimLocalUploadIcons(data)) {
-      err = await storageSetLocal(area, { [ROOT_KEY]: data });
-      if (!err) return "local_trimmed_icons";
-    }
-    if (trimLocalBackground(data)) {
-      err = await storageSetLocal(area, { [ROOT_KEY]: data });
-      if (!err) return "local_trimmed_background";
+    // 在副本上逐级裁剪试写：任一级成功再同步回真实数据与 Safari 稳定存储，全失败则内存零污染
+    const candidate = deepClone(data);
+    const stages = [
+      {
+        trim: () => trimLocalBackups(candidate),
+        sentinel: "local_trimmed_backups",
+        commit: () => {
+          data.backups = candidate.backups;
+        },
+      },
+      {
+        trim: () => trimLocalUploadIcons(candidate),
+        sentinel: "local_trimmed_icons",
+        commit: () => {
+          data.backups = candidate.backups;
+          data.nodes = candidate.nodes;
+        },
+      },
+      {
+        trim: () => trimLocalBackground(candidate),
+        sentinel: "local_trimmed_background",
+        commit: () => {
+          data.backups = candidate.backups;
+          data.nodes = candidate.nodes;
+          data.settings.backgroundCustom = candidate.settings.backgroundCustom;
+          data.settings.backgroundType = candidate.settings.backgroundType;
+        },
+      },
+    ];
+    for (const stage of stages) {
+      if (!stage.trim()) continue;
+      err = await storageSetLocal(area, { [ROOT_KEY]: candidate });
+      if (!err) {
+        stage.commit();
+        await writeSafariStableHomepage(data, api);
+        return stage.sentinel;
+      }
     }
   }
   if (err && useSync) {
     // 远端同步写入失败：回退本地存储并把同步开关关闭，返回 sentinel 让 UI 给出准确提示。
     data.settings.syncEnabled = false;
-    data.lastUpdated = nowTs();
+    data.lastUpdated = Math.max(nowTs(), (Number(data.lastUpdated) || 0) + 1);
     const localErr = await storageSetLocal(storageArea(false), { [ROOT_KEY]: data });
     if (localErr) data.lastUpdated = prevLastUpdated;
     return "sync_write_failed";

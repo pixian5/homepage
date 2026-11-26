@@ -395,4 +395,145 @@ describe("storage", async () => {
     assert.equal(stored[key]["https://example.com/"].attempts, 3);
     assert.equal(stored[key]["https://example.com/"].failed, true);
   });
+
+  it("saveData rolls back all in-memory trims when every quota retry fails", async () => {
+    const data = defaultData();
+    data.lastUpdated = 9000;
+    data.backups = [{ id: "b1", ts: 1, data: {} }];
+    data.nodes = {
+      n1: {
+        id: "n1",
+        type: "item",
+        title: "A",
+        url: "https://a.test/",
+        iconType: "upload",
+        iconData: "data:image/png;base64,abc",
+      },
+    };
+    data.settings.backgroundType = "custom";
+    data.settings.backgroundCustom = "data:image/jpeg;base64,bg";
+
+    const origSet = global.chrome.storage.local.set;
+    global.chrome.storage.local.set = (_obj, cb) => {
+      lastError = { message: "QUOTA_BYTES quota exceeded" };
+      cb?.();
+      lastError = null;
+      return Promise.resolve();
+    };
+    try {
+      const err = await saveData(data, false);
+      assert.match(String(err), /quota/i);
+      assert.equal(data.lastUpdated, 9000);
+      assert.equal(data.backups.length, 1);
+      assert.equal(data.nodes.n1.iconType, "upload");
+      assert.equal(data.nodes.n1.iconData, "data:image/png;base64,abc");
+      assert.equal(data.settings.backgroundType, "custom");
+      assert.equal(data.settings.backgroundCustom, "data:image/jpeg;base64,bg");
+    } finally {
+      global.chrome.storage.local.set = origSet;
+    }
+  });
+
+  it("saveData commits trimmed tier and writes Safari stable storage on quota recovery", async () => {
+    const origSet = global.chrome.storage.local.set;
+    const nativeWrites = [];
+    global.chrome.runtime.getURL = (p) => `safari-web-extension://ext/${p || ""}`;
+    global.chrome.runtime.sendNativeMessage = (_app, msg, cb) => {
+      nativeWrites.push(msg);
+      cb?.({ ok: true });
+    };
+
+    try {
+      for (const { passOnAttempt, expectedSentinel, verify } of [
+        {
+          passOnAttempt: 2,
+          expectedSentinel: "local_trimmed_backups",
+          verify: (d) => {
+            assert.deepEqual(d.backups, []);
+            assert.equal(d.nodes.n1.iconType, "upload");
+            assert.equal(d.settings.backgroundType, "custom");
+          },
+        },
+        {
+          passOnAttempt: 3,
+          expectedSentinel: "local_trimmed_icons",
+          verify: (d) => {
+            assert.deepEqual(d.backups, []);
+            assert.equal(d.nodes.n1.iconType, "auto");
+            assert.equal(d.nodes.n1.iconData, "");
+            assert.equal(d.settings.backgroundType, "custom");
+          },
+        },
+        {
+          passOnAttempt: 4,
+          expectedSentinel: "local_trimmed_background",
+          verify: (d) => {
+            assert.deepEqual(d.backups, []);
+            assert.equal(d.nodes.n1.iconType, "auto");
+            assert.equal(d.settings.backgroundType, "color");
+            assert.equal(d.settings.backgroundCustom, "");
+          },
+        },
+      ]) {
+        const data = defaultData();
+        data.backups = [{ id: "b1", ts: 1, data: {} }];
+        data.nodes = {
+          n1: {
+            id: "n1",
+            type: "item",
+            title: "A",
+            url: "https://a.test/",
+            iconType: "upload",
+            iconData: "data:image/png;base64,abc",
+          },
+        };
+        data.settings.backgroundType = "custom";
+        data.settings.backgroundCustom = "data:image/jpeg;base64,bg";
+
+        let attempt = 0;
+        nativeWrites.length = 0;
+        global.chrome.storage.local.set = (obj, cb) => {
+          attempt += 1;
+          if (attempt < passOnAttempt) {
+            lastError = { message: "QUOTA_BYTES quota exceeded" };
+            cb?.();
+            lastError = null;
+          } else {
+            Object.assign(stored, obj);
+            cb?.();
+          }
+          return Promise.resolve();
+        };
+
+        const res = await saveData(data, false);
+        assert.equal(res, expectedSentinel);
+        verify(data);
+        assert.equal(nativeWrites.length, 1);
+      }
+    } finally {
+      global.chrome.storage.local.set = origSet;
+    }
+  });
+
+  it("saveData keeps lastUpdated strictly monotonic and rolls back on write failure", async () => {
+    const data = defaultData();
+    const future = Date.now() + 3600_000;
+    data.lastUpdated = future;
+    assert.equal(await saveData(data, false), null);
+    assert.equal(data.lastUpdated, future + 1);
+
+    const origSet = global.chrome.storage.local.set;
+    global.chrome.storage.local.set = (_obj, cb) => {
+      lastError = { message: "disk_error" };
+      cb?.();
+      lastError = null;
+      return Promise.resolve();
+    };
+    try {
+      assert.equal(await saveData(data, false), "disk_error");
+      assert.equal(data.lastUpdated, future + 1);
+    } finally {
+      global.chrome.storage.local.set = origSet;
+    }
+  });
 });

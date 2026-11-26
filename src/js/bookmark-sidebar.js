@@ -15,6 +15,8 @@
       noBookmarks: "暂无书签",
       unnamed: "未命名",
       defaultGroup: "默认",
+      saved: "已保存",
+      saveFailed: "保存失败",
     },
     "zh-TW": {
       allBookmarks: "所有書籤",
@@ -23,6 +25,8 @@
       noBookmarks: "暫無書籤",
       unnamed: "未命名",
       defaultGroup: "預設",
+      saved: "已儲存",
+      saveFailed: "儲存失敗",
     },
     en: {
       allBookmarks: "All Bookmarks",
@@ -31,6 +35,8 @@
       noBookmarks: "No bookmarks",
       unnamed: "Unnamed",
       defaultGroup: "Default",
+      saved: "Saved",
+      saveFailed: "Save failed",
     },
     ja: {
       allBookmarks: "すべてのブックマーク",
@@ -39,6 +45,8 @@
       noBookmarks: "ブックマークはありません",
       unnamed: "名称未設定",
       defaultGroup: "デフォルト",
+      saved: "保存しました",
+      saveFailed: "保存に失敗しました",
     },
     ko: {
       allBookmarks: "모든 북마크",
@@ -47,6 +55,8 @@
       noBookmarks: "북마크 없음",
       unnamed: "이름 없음",
       defaultGroup: "기본",
+      saved: "저장됨",
+      saveFailed: "저장 실패",
     },
     de: {
       allBookmarks: "Alle Lesezeichen",
@@ -55,6 +65,8 @@
       noBookmarks: "Keine Lesezeichen",
       unnamed: "Unbenannt",
       defaultGroup: "Standard",
+      saved: "Gespeichert",
+      saveFailed: "Speichern fehlgeschlagen",
     },
     fr: {
       allBookmarks: "Tous les favoris",
@@ -63,6 +75,8 @@
       noBookmarks: "Aucun favori",
       unnamed: "Sans nom",
       defaultGroup: "Par defaut",
+      saved: "Enregistre",
+      saveFailed: "Echec de l'enregistrement",
     },
     es: {
       allBookmarks: "Todos los marcadores",
@@ -71,6 +85,8 @@
       noBookmarks: "Sin marcadores",
       unnamed: "Sin nombre",
       defaultGroup: "Predeterminado",
+      saved: "Guardado",
+      saveFailed: "Error al guardar",
     },
   };
   const resolveLang = (raw) => {
@@ -96,7 +112,7 @@
     const items = [];
     const groups = Array.isArray(data?.groups) ? data.groups : [];
     const seen = new Set();
-    const visit = (id, groupId, path, depth, parentId) => {
+    const visit = (id, groupId, path, folderIds, depth, parentId) => {
       if (!id || seen.has(`${groupId}:${id}`)) return;
       const node = data?.nodes?.[id];
       if (!node || node.deletedAt || node.purgedAt) return;
@@ -107,6 +123,7 @@
           title: label(node, lang),
           url: String(node.url || ""),
           path,
+          folderIds,
           groupId,
           iconType: String(node.iconType || "auto"),
           iconData: String(node.iconData || ""),
@@ -115,10 +132,13 @@
         return;
       }
       if (node.type !== "folder") return;
+      const folderId = node.id || id;
       const nextPath = [...path, label(node, lang)];
-      folders.push({ id: node.id || id, title: label(node, lang), path: nextPath, depth, groupId, parentId });
-      for (const child of Array.isArray(node.children) ? node.children : [])
-        visit(child, groupId, nextPath, depth + 1, node.id || id);
+      const nextFolderIds = [...folderIds, folderId];
+      folders.push({ id: folderId, title: label(node, lang), path: nextPath, depth, groupId, parentId });
+      for (const child of Array.isArray(node.children) ? node.children : []) {
+        visit(child, groupId, nextPath, nextFolderIds, depth + 1, folderId);
+      }
     };
     const allGroup = groups.find((group) => group?.id === ALL_GROUP_ID);
     if (allGroup) {
@@ -133,7 +153,7 @@
         group: true,
       });
       for (const id of Array.isArray(allGroup.nodes) ? allGroup.nodes : []) {
-        visit(id, allGroup.id, [allName], 1, allGroup.id);
+        visit(id, allGroup.id, [allName], [allGroup.id], 1, allGroup.id);
       }
     } else {
       for (const group of groups) {
@@ -148,7 +168,9 @@
           parentId: "",
           group: true,
         });
-        for (const id of Array.isArray(group.nodes) ? group.nodes : []) visit(id, group.id, [groupName], 1, group.id);
+        for (const id of Array.isArray(group.nodes) ? group.nodes : []) {
+          visit(id, group.id, [groupName], [group.id], 1, group.id);
+        }
       }
     }
     return { folders, items };
@@ -184,17 +206,68 @@
       #${ROOT_ID} .hp-submenu{display:none;position:absolute;top:-7px;left:100%;width:280px;padding:6px;background:#141b26fc;border:1px solid #ffffff20;border-radius:8px;box-shadow:0 12px 36px #0008;overflow:visible}
       #${ROOT_ID} .hp-right .hp-submenu{left:auto;right:100%}
       #${ROOT_ID} .hp-menu-parent:hover>.hp-submenu,#${ROOT_ID} .hp-menu-parent.hp-force-open>.hp-submenu{display:block}
+      #${ROOT_ID} .hp-status{font-size:12px;padding:6px 8px;border-radius:6px;line-height:1.3}
+      #${ROOT_ID} .hp-status-ok{background:#168048eb;color:#fff}
+      #${ROOT_ID} .hp-status-err{background:#a52828eb;color:#fff}
       #${ROOT_ID} .hp-hidden{display:none}
     `;
     (document.head || document.documentElement).appendChild(style);
   }
 
-  function sendOpen(url, settings) {
-    try {
-      api?.runtime?.sendMessage?.({ type: "homepage_open_bookmark", url, settings });
-    } catch (_) {
-      /* 页面关闭时忽略 */
+  let activeKeydownHandler = null;
+  function detachKeydown() {
+    if (activeKeydownHandler && typeof document?.removeEventListener === "function") {
+      document.removeEventListener("keydown", activeKeydownHandler);
     }
+    activeKeydownHandler = null;
+  }
+
+  function closeSidebarRoot() {
+    document.getElementById(ROOT_ID)?.remove();
+    detachKeydown();
+  }
+
+  function sendRuntimeMessage(payload) {
+    const sendMessage = api?.runtime?.sendMessage;
+    if (typeof sendMessage !== "function") return Promise.resolve({ ok: false, error: "no_runtime" });
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(value || { ok: false });
+      };
+      try {
+        const result = sendMessage.call(api.runtime, payload, (res) => {
+          if (api.runtime?.lastError) return finish({ ok: false, error: api.runtime.lastError.message });
+          finish(res || { ok: false });
+        });
+        if (typeof result?.then === "function") {
+          result.then(
+            (res) => finish(res || { ok: false }),
+            (err) => finish({ ok: false, error: err?.message || String(err) }),
+          );
+        }
+      } catch (_firstErr) {
+        try {
+          const retry = sendMessage.call(api.runtime, payload);
+          if (typeof retry?.then === "function") {
+            retry.then(
+              (res) => finish(res || { ok: false }),
+              (err) => finish({ ok: false, error: err?.message || String(err) }),
+            );
+          } else {
+            finish(retry || { ok: false });
+          }
+        } catch (err) {
+          finish({ ok: false, error: err?.message || String(err) });
+        }
+      }
+    });
+  }
+
+  function sendOpen(url, settings) {
+    void sendRuntimeMessage({ type: "homepage_open_bookmark", url, settings });
   }
 
   function logoCandidates(item) {
@@ -250,7 +323,7 @@
 
   function render(data, openSide = null, openAdd = false) {
     ensureStyle();
-    document.getElementById(ROOT_ID)?.remove();
+    closeSidebarRoot();
     const lang = resolveLang(data?.settings?.language);
     const root = document.createElement("div");
     root.id = ROOT_ID;
@@ -289,10 +362,28 @@
         close.className = "hp-close";
         close.textContent = "×";
         close.title = sbText(lang, "close");
-        close.addEventListener("click", () => panel.remove());
+        close.setAttribute("aria-label", sbText(lang, "close"));
+        close.addEventListener("click", () => {
+          panel.classList.remove("hp-open");
+          panel.remove();
+          if (!root.querySelector(".hp-side.hp-open")) closeSidebarRoot();
+        });
         head.appendChild(close);
       }
       panel.appendChild(head);
+      let statusTimer = null;
+      const statusEl = document.createElement("div");
+      statusEl.className = "hp-status hp-hidden";
+      statusEl.setAttribute("role", "status");
+      const showStatus = (ok, message) => {
+        if (statusTimer) clearTimeout(statusTimer);
+        statusEl.textContent = message;
+        statusEl.className = `hp-status ${ok ? "hp-status-ok" : "hp-status-err"}`;
+        statusTimer = setTimeout(() => {
+          statusEl.className = "hp-status hp-hidden";
+          statusTimer = null;
+        }, 2600);
+      };
       if (side === "left") {
         const addRow = document.createElement("div");
         addRow.className = `hp-menu-parent hp-has-children${openAdd ? " hp-force-open" : ""}`;
@@ -302,14 +393,18 @@
         addRow.appendChild(add);
         const addFolders = document.createElement("div");
         addFolders.className = "hp-submenu";
-        appendFolderTree(addFolders, "", (folder) => {
-          try {
-            api?.runtime?.sendMessage?.({ type: "homepage_add_bookmark_to_folder", folderId: folder.id });
-          } catch (_) {}
+        appendFolderTree(addFolders, "", async (folder) => {
+          addRow.classList.remove("hp-force-open");
+          const result = await sendRuntimeMessage({
+            type: "homepage_add_bookmark_to_folder",
+            folderId: folder.id,
+          });
+          showStatus(!!result?.ok, sbText(lang, result?.ok ? "saved" : "saveFailed"));
         });
         addRow.appendChild(addFolders);
         panel.appendChild(addRow);
       }
+      panel.appendChild(statusEl);
       const list = document.createElement("div");
       list.className = "hp-list";
       const fillList = (visibleItems) => {
@@ -342,8 +437,7 @@
       const foldersBox = document.createElement("div");
       foldersBox.className = "hp-folders";
       appendFolderTree(foldersBox, "", (folder) => {
-        const prefix = folder.path.join("\u0000");
-        fillList(items.filter((item) => item.path.join("\u0000").startsWith(prefix)));
+        fillList(items.filter((item) => item.folderIds.includes(folder.id)));
       });
       panel.appendChild(foldersBox);
       if (openSide === side) panel.classList.add("hp-open");
@@ -353,6 +447,12 @@
     const rightPanel = makeSide("right", true);
     root.append(leftPanel, rightPanel);
     document.documentElement.appendChild(root);
+    if (typeof document?.addEventListener === "function") {
+      activeKeydownHandler = (event) => {
+        if (event?.key === "Escape") closeSidebarRoot();
+      };
+      document.addEventListener("keydown", activeKeydownHandler);
+    }
   }
 
   api?.runtime?.onMessage?.addListener?.((message, _sender, sendResponse) => {

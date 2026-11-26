@@ -392,6 +392,8 @@ var HomepageSettingsFormRenderer = (() => {
     const prevUrl = s.syncServerUrl || "";
     const prevToken = s.syncServerToken || "";
     const prevInterval = normalizeSyncInterval(s.syncInterval);
+    const prevE2eeEnabled = !!s.syncE2eeEnabled;
+    const prevE2eePassphrase = String(s.syncE2eePassphrase || "");
     s.syncEnabled = $("settingSync").checked;
     s.syncTransport = "http";
     s.syncInterval = normalizeSyncInterval($("settingSyncInterval")?.value);
@@ -402,6 +404,7 @@ var HomepageSettingsFormRenderer = (() => {
     const serverChanged = prevUrl !== s.syncServerUrl || prevToken !== s.syncServerToken;
     const intervalChanged = prevInterval !== s.syncInterval;
     const connectionChanged = prevSyncEnabled !== s.syncEnabled || (s.syncEnabled && serverChanged);
+    const e2eeChanged = prevE2eeEnabled !== s.syncE2eeEnabled || prevE2eePassphrase !== s.syncE2eePassphrase;
 
     s.openMode = $("settingOpenMode").value || "current";
     const nextMaxBackups = Number($("settingBackup").value) || 0;
@@ -424,7 +427,7 @@ var HomepageSettingsFormRenderer = (() => {
       s.backgroundCustom = await readFileAsDataUrl(bgFile);
     }
 
-    return { serverChanged, intervalChanged, connectionChanged };
+    return { serverChanged, intervalChanged, connectionChanged, e2eeChanged };
   }
 
   return {

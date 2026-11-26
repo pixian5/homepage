@@ -229,4 +229,120 @@ describe("sync_crypto & end-to-end encrypted sync", () => {
     assert.equal(dataB.nodes.itm_a?.title, "隐秘资产");
     assert.equal(dataB.nodes.itm_a?.url, "https://vault.private.invalid/vault");
   });
+
+  it("migrates remote envelope plaintext <-> e2ee cleanly and blocks unauthorized overwrite on pushNow", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-e2ee-mig-"));
+    const port = await freePort();
+    const dataFile = path.join(tmpDir, "state.json");
+    const token = "e2ee-mig-token";
+    const child = spawn(process.execPath, [path.join(root, "scripts/sync-server.mjs")], {
+      env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", TOKEN: token, DATA_FILE: dataFile },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    cleanups.push({ child, tmpDir });
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      try {
+        if ((await fetch(`${baseUrl}/health`)).ok) break;
+      } catch {
+        // retry
+      }
+      await new Promise((r) => setTimeout(r, 40));
+    }
+
+    // 1. 先明文同步书签
+    const storA = makeMemoryStorage();
+    globalThis.chrome = { runtime: { lastError: null }, storage: { local: storA.area } };
+    let dataA = defaultData();
+    Object.assign(dataA.settings, {
+      syncEnabled: true,
+      syncServerUrl: baseUrl,
+      syncServerToken: token,
+      syncE2eeEnabled: false,
+      syncE2eePassphrase: "",
+    });
+    dataA.nodes.itm_mig = {
+      id: "itm_mig",
+      type: "item",
+      title: "迁移书签",
+      url: "https://migrate.private.invalid/",
+      updatedAt: Date.now(),
+      updatedBy: "",
+    };
+    dataA.groups[0].nodes.push("itm_mig");
+
+    initSyncEngine({
+      getData: () => dataA,
+      setData: (next) => {
+        dataA = next;
+      },
+      saveLocal: async () => null,
+    });
+    assert.equal((await pushNow("manual")).ok, true);
+    assert.equal((await readFile(dataFile, "utf8")).includes("迁移书签"), true);
+
+    // 2. 开启 E2EE 后书签内容未变：pullNow 不应短路而是提示 needPush，pushNow 后磁盘转成密文
+    dataA.settings.syncE2eeEnabled = true;
+    dataA.settings.syncE2eePassphrase = "MigPassphrase#2026";
+    const enablePull = await pullNow("enable");
+    assert.equal(enablePull.ok, true);
+    assert.equal(enablePull.unchanged, false);
+    assert.equal(enablePull.needPush, true);
+    assert.equal((await pushNow("enable")).ok, true);
+
+    const encryptedDiskRaw = await readFile(dataFile, "utf8");
+    assert.equal(encryptedDiskRaw.includes("homepage.sync.e2ee.v1"), true);
+    assert.equal(encryptedDiskRaw.includes("迁移书签"), false);
+
+    // 3. 关闭 E2EE 后书签内容未变：pullNow 同样返回 needPush，pushNow 后恢复明文
+    dataA.settings.syncE2eeEnabled = false;
+    const disablePull = await pullNow("enable");
+    assert.equal(disablePull.ok, true);
+    assert.equal(disablePull.needPush, true);
+    assert.equal((await pushNow("enable")).ok, true);
+    const plainAgainRaw = await readFile(dataFile, "utf8");
+    assert.equal(plainAgainRaw.includes("homepage.sync.e2ee.v1"), false);
+    assert.equal(plainAgainRaw.includes("迁移书签"), true);
+
+    // 4. 切回 E2EE 推送密文后，用无口令/错口令的新设备直接调用 pushNow 必须被预拉取安全阻断且不覆写远端密文
+    dataA.settings.syncE2eeEnabled = true;
+    assert.equal((await pullNow("enable")).needPush, true);
+    assert.equal((await pushNow("enable")).ok, true);
+    const sealedDiskRaw = await readFile(dataFile, "utf8");
+    assert.equal(sealedDiskRaw.includes("homepage.sync.e2ee.v1"), true);
+
+    const storC = makeMemoryStorage();
+    globalThis.chrome = { runtime: { lastError: null }, storage: { local: storC.area } };
+    let dataC = defaultData();
+    Object.assign(dataC.settings, {
+      syncEnabled: true,
+      syncServerUrl: baseUrl,
+      syncServerToken: token,
+      syncE2eeEnabled: false,
+      syncE2eePassphrase: "",
+    });
+    initSyncEngine({
+      getData: () => dataC,
+      setData: (next) => {
+        dataC = next;
+      },
+      saveLocal: async () => null,
+    });
+    const noPassPush = await pushNow("manual");
+    assert.equal(noPassPush.ok, false);
+    assert.equal(noPassPush.reason, "e2ee_passphrase_required");
+
+    dataC.settings.syncE2eePassphrase = "WrongSecret";
+    const wrongPassPush = await pushNow("manual");
+    assert.equal(wrongPassPush.ok, false);
+    assert.equal(wrongPassPush.reason, "e2ee_decrypt_failed");
+
+    const afterState = JSON.parse(await readFile(dataFile, "utf8"));
+    const sealedState = JSON.parse(sealedDiskRaw);
+    assert.equal(afterState.revision, sealedState.revision);
+    assert.equal(afterState.doc?.schema, "homepage.sync.e2ee.v1");
+    assert.equal(afterState.doc?.contentHash, sealedState.doc?.contentHash);
+    assert.equal(afterState.doc?.ciphertext, sealedState.doc?.ciphertext);
+  });
 });

@@ -214,10 +214,17 @@ describe("command-palette", () => {
     input.dispatch("keydown", { key: "Enter" });
     assert.deepEqual(navigatedFolders, [{ id: "fld_dev", rootGroupId: "grp_all" }]);
 
-    // Escape 关闭
+    // Escape 关闭并阻断事件冒泡
     palette.open();
     assert.equal(palette.isOpen(), true);
-    input.dispatch("keydown", { key: "Escape" });
+    let stopped = false;
+    input.dispatch("keydown", {
+      key: "Escape",
+      stopPropagation: () => {
+        stopped = true;
+      },
+    });
     assert.equal(palette.isOpen(), false);
+    assert.equal(stopped, true);
   });
 });

@@ -19,6 +19,10 @@ export function createKeyboardNavigator(options) {
 
   function handleKeydown(e) {
     if (!doc) return;
+    const cmdkOverlay = doc.getElementById?.("commandPaletteOverlay");
+    if (cmdkOverlay && !cmdkOverlay.classList?.contains("hidden")) {
+      return;
+    }
     const elements = getElements();
     const data = getData();
     const { activeGroupId, openFolderId } = getState();

@@ -75,6 +75,29 @@
         "新增落盘",
       );
       checks.push("新增书签与安全文本渲染");
+      {
+        document.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true, cancelable: true }),
+        );
+        await waitFor(() => {
+          const ov = document.getElementById("commandPaletteOverlay");
+          return ov && !ov.classList.contains("hidden");
+        }, "Cmd/Ctrl+K 命令面板打开");
+        const cmdInput = document.getElementById("commandPaletteInput");
+        if (!cmdInput) throw new Error("缺少命令面板输入框 #commandPaletteInput");
+        cmdInput.value = "mysq";
+        cmdInput.dispatchEvent(new Event("input", { bubbles: true }));
+        await waitFor(
+          () => (document.getElementById("commandPaletteList")?.textContent || "").includes("冒烟书签 <安全文本>"),
+          "命令面板拼音检索命中新增书签",
+        );
+        cmdInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        await waitFor(
+          () => document.getElementById("commandPaletteOverlay")?.classList.contains("hidden"),
+          "Escape 关闭命令面板",
+        );
+        checks.push("Cmd/Ctrl+K 命令面板检索与关闭");
+      }
       tile().dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 }));
       await waitFor(() => !document.querySelector("#contextMenu").classList.contains("hidden"), "右键菜单");
       const remove = [...document.querySelectorAll("#contextMenu button")].find(

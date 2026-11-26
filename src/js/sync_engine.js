@@ -276,6 +276,7 @@ export async function readRemoteSyncDocument() {
     }
     return { ok: false, reason: res.reason || "http_error", error: res.error, status: res.status };
   }
+  const wasEncrypted = isEncryptedSyncEnvelope(res.doc);
   const decoded = await decodeRemoteDocIfEncrypted(res.doc);
   if (!decoded.ok) {
     return { ok: false, reason: decoded.reason };
@@ -283,7 +284,7 @@ export async function readRemoteSyncDocument() {
   _status.lastRemoteEtag = res.etag || "";
   // epoch 由服务端在回收墓碑时递增；客户端只跟随，不自增
   if (Number.isSafeInteger(res.epoch)) _status.lastRemoteEpoch = res.epoch;
-  return { ok: true, doc: decoded.doc, etag: res.etag, revision: res.revision, epoch: res.epoch };
+  return { ok: true, doc: decoded.doc, etag: res.etag, revision: res.revision, epoch: res.epoch, wasEncrypted };
 }
 
 /**
@@ -415,7 +416,16 @@ export async function pullNow(reason = "manual") {
       _status.lastRemoteRevision = Number(remote.doc.revision) || _status.lastRemoteRevision || 0;
       if (remote.etag) _status.lastRemoteEtag = remote.etag;
       await saveState();
-      return { ok: true, merged: false, unchanged: true, reason };
+      const e2ee = getE2eeConfig();
+      const encryptionMismatch =
+        Boolean(remote.wasEncrypted) !== Boolean(e2ee.enabled) && (!e2ee.enabled || Boolean(e2ee.passphrase));
+      return {
+        ok: true,
+        merged: false,
+        unchanged: !encryptionMismatch,
+        ...(encryptionMismatch ? { needPush: true } : {}),
+        reason,
+      };
     }
 
     return applyRemoteDoc(remote.doc, deviceId, reason);
@@ -615,6 +625,18 @@ async function pushNowImpl(reason = "manual") {
   if (remote.reason === "device_retired") {
     return { ok: false, reason: "device_retired" };
   }
+  // E2EE 解密失败/缺少口令或鉴权失效时禁止跳过预拉取直接覆盖云端（防止明文覆写云端密文或覆盖他人修改）
+  if (
+    !remote.ok &&
+    (remote.reason === "e2ee_passphrase_required" ||
+      remote.reason === "e2ee_decrypt_failed" ||
+      remote.reason === "unauthorized")
+  ) {
+    _status.status = "error";
+    _status.lastError = remote.reason;
+    await saveState();
+    return { ok: false, reason: remote.reason };
+  }
   if (remote.ok && remote.doc) {
     if (remote.doc.docId && _status.docId && remote.doc.docId !== _status.docId) {
       _status.status = "need_setup";
@@ -651,7 +673,9 @@ async function pushNowImpl(reason = "manual") {
   // 内容与远端完全一致、且没有待推送项时，不再写新 revision。
   // 否则多设备会「拉取 → 落盘 → 再推送」互相推高版本号：
   // 每台设备每次打开页面都 +1，其它设备下次加载必然判「有较新数据」，提示和流量都被放大。
-  if (latestRemote?.doc && isContentEqualToRemote(_getData(), latestRemote.doc, _status.docId)) {
+  const e2ee = getE2eeConfig();
+  const encryptionMatches = Boolean(latestRemote?.wasEncrypted) === Boolean(e2ee.enabled);
+  if (latestRemote?.doc && encryptionMatches && isContentEqualToRemote(_getData(), latestRemote.doc, _status.docId)) {
     const pending = await readOutboxItems();
     if (!pending.length) {
       _status.status = "idle";

@@ -215,7 +215,7 @@ var HomepageSettingsController = (() => {
         }
         state.settingsSaving = true;
         try {
-          const { intervalChanged, connectionChanged } = await applySettingsFormToData({
+          const { intervalChanged, connectionChanged, e2eeChanged } = await applySettingsFormToData({
             $,
             qsa,
             elements,
@@ -235,13 +235,18 @@ var HomepageSettingsController = (() => {
           applyTheme();
           applyStaticI18n();
           await persistData();
-          if (connectionChanged) {
+          const e2eeSyncTrigger = Boolean(
+            getData().settings.syncEnabled &&
+              e2eeChanged &&
+              (!getData().settings.syncE2eeEnabled || getData().settings.syncE2eePassphrase),
+          );
+          if (connectionChanged || e2eeSyncTrigger) {
             cancelScheduledPush();
             await onSyncEnabledChanged(getData().settings.syncEnabled);
           } else if (getData().settings.syncEnabled && intervalChanged) {
             refreshSyncInterval();
           }
-          if (intervalChanged || connectionChanged) void syncPanelCtl.refreshSyncStatusLine();
+          if (intervalChanged || connectionChanged || e2eeSyncTrigger) void syncPanelCtl.refreshSyncStatusLine();
           render();
           loadBackground();
           if (toastOnSave) toast(t("settings.saved"));

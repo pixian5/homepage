@@ -175,4 +175,43 @@ describe("keyboard-navigator", () => {
 
     assert.equal(deleted, false);
   });
+
+  test("ignores Escape, slash, and Delete when command palette overlay is open", () => {
+    let folderClosed = false;
+    let deleted = false;
+    let searchFocused = false;
+    const tile1 = createMockElement("div", { dataset: { id: "node_1" } });
+    const navigator = createKeyboardNavigator({
+      getData: () => ({ settings: { keyboardNav: true } }),
+      getState: () => ({ activeGroupId: "grp_all", openFolderId: "fld_1" }),
+      getElements: () => ({
+        modalOverlay: createMockElement("div", { hidden: true }),
+        topSearch: {
+          focus: () => {
+            searchFocused = true;
+          },
+        },
+        grid: createMockElement("div"),
+      }),
+      closeFolder: () => {
+        folderClosed = true;
+      },
+      deleteNodes: () => {
+        deleted = true;
+      },
+      qsa: () => [tile1],
+      doc: {
+        activeElement: tile1,
+        getElementById: (id) => (id === "commandPaletteOverlay" ? createMockElement("div", { hidden: false }) : null),
+      },
+    });
+
+    navigator.handleKeydown({ key: "Escape", target: createMockElement("input") });
+    navigator.handleKeydown({ key: "/", target: createMockElement("div"), preventDefault: () => {} });
+    navigator.handleKeydown({ key: "Delete", target: tile1, preventDefault: () => {} });
+
+    assert.equal(folderClosed, false);
+    assert.equal(searchFocused, false);
+    assert.equal(deleted, false);
+  });
 });

@@ -206,12 +206,14 @@ var HomepageCommandPalette = (() => {
         inputEl.addEventListener("keydown", (e) => {
           if (e.key === "ArrowDown") {
             e.preventDefault();
+            e.stopPropagation?.();
             if (visible.length) {
               activeIndex = (activeIndex + 1) % visible.length;
               renderRows();
             }
           } else if (e.key === "ArrowUp") {
             e.preventDefault();
+            e.stopPropagation?.();
             if (visible.length) {
               activeIndex = (activeIndex - 1 + visible.length) % visible.length;
               renderRows();
@@ -219,20 +221,24 @@ var HomepageCommandPalette = (() => {
           } else if (e.key === "Home") {
             if (visible.length) {
               e.preventDefault();
+              e.stopPropagation?.();
               activeIndex = 0;
               renderRows();
             }
           } else if (e.key === "End") {
             if (visible.length) {
               e.preventDefault();
+              e.stopPropagation?.();
               activeIndex = visible.length - 1;
               renderRows();
             }
           } else if (e.key === "Enter") {
             e.preventDefault();
+            e.stopPropagation?.();
             executeActive();
           } else if (e.key === "Escape") {
             e.preventDefault();
+            e.stopPropagation?.();
             close();
           }
         });
@@ -358,11 +364,13 @@ var HomepageCommandPalette = (() => {
       const handler = (e) => {
         if ((e.metaKey || e.ctrlKey) && !e.altKey && String(e.key || "").toLowerCase() === "k") {
           e.preventDefault();
+          e.stopPropagation?.();
           toggle();
           return;
         }
         if (isOpen && e.key === "Escape") {
           e.preventDefault();
+          e.stopPropagation?.();
           close();
         }
       };

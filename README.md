@@ -4,9 +4,11 @@
 
 ## 当前开发进度
 
-当前产品版本 **27.3.6**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
+当前产品版本 **27.3.7**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
 
 项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。
+
+- **27.3.7**：修复 E2EE 明文↔密文形态迁移被 `isContentEqualToRemote` 短路的问题及无/错口令设备 `pushNow()` 预拉取阶段误覆写云端密文的风险（`sync_engine.js`、`settings-form-renderer.js`、`settings-controller.js`）；修复 `Cmd/Ctrl+K` 命令面板开启期间与 `keyboard-navigator` 的按键穿透（`command-palette.js`、`keyboard-navigator.js`）；补齐对应回归单测（单测增至 656/656）并将 Chrome/Firefox 真实浏览器冒烟扩充至 8/8（新增 `Cmd/Ctrl+K` 拼音检索与关闭），完成 Safari `27.3.7` 原生覆盖安装与 Firefox 离线 E2E 验收，见[当前开发进度](docs/20261127-0219-当前开发进度-Gemini.md)。
 
 - **27.3.6**：完成 P2 热点模块拆分重构——拆出 `src/js/icon-candidates.js`（`icons.js` 883→629 行）、`src/js/sync_state_store.js`（`sync_engine.js` 1215→1099 行，并将本地扩展存储读写统一收口至 `callExtensionApi`）、`src/js/settings-form-renderer.js`（`settings-controller.js` 721→318 行，消除 45 个模块级可变依赖）与 `src/js/app-actions.js`（`app.js` 1375→1300 行），同步登记 `scripts/firefox-modules.json` 与 `src/sw.js` 并新增 8 项回归测试（单测增至 654/654）；完成 Safari `27.3.6` 原生覆盖安装、Chrome/Firefox 双端 7/7 冒烟与 Firefox 离线 E2E 验收，见[当前开发进度](docs/20261127-0148-当前开发进度-Gemini.md)。
 
@@ -71,7 +73,7 @@
 - **26.6.1**：修复 Safari 扩展消失：新增注册自愈脚本并挂进每日体检，详见[Safari 扩展消失自愈](docs/20261103-1525-Safari扩展消失自愈-DeepSeek-V4.1-Flash.md)。
 - **26.6.0（基线）**：修复 Chrome 永久误报「同步已多次失败，自动重试已停止」：同步实际健康，根因是存储中残留一条指向已废弃浏览器 storage.sync 传输目标的僵尸队列项，它永远发不出去也清不掉；新增 filterCurrentOutbox 在读取与加载时剔除废弃目标，详见[Chrome 永久误报同步失败](docs/20261102-1725-Chrome永久误报同步失败-DeepSeek-V4.1-Flash.md)。
 
-当前单测 654 项全部通过，Biome 检查 0 告警，三端构建、Safari 27.3.6 原生覆盖安装验收与双端无头浏览器冒烟均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
+当前单测 656 项全部通过，Biome 检查 0 告警，三端构建、Safari 27.3.7 原生覆盖安装验收与双端无头浏览器 8/8 冒烟均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
 
 ## 下一步待实现
 

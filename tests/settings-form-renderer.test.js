@@ -106,6 +106,7 @@ describe("settings-form-renderer", () => {
     });
 
     assert.equal(flags.connectionChanged, true);
+    assert.equal(flags.e2eeChanged, true);
     assert.equal(data.settings.syncE2eeEnabled, true);
     assert.equal(data.settings.syncE2eePassphrase, "secret-pass");
     assert.equal(data.settings.iconThirdPartyFallback, false);

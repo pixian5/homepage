@@ -2,27 +2,17 @@
  * 同步引擎：local 权威 + HTTP 服务器推送/拉取 + merge
  */
 
-import { getLastError, isLocalTrimWarning, storageArea } from "./shared-utils.js";
+import { isLocalTrimWarning } from "./shared-utils.js";
 import { decryptSyncDocument, encryptSyncDocument, isEncryptedSyncEnvelope } from "./sync_crypto.js";
 import { createSyncDeviceAuth } from "./sync_device_auth.js";
 import { httpConfirmSyncState, httpPairDevice, httpPullState, httpPushState } from "./sync_http_transport.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
 import { mergeHomepage } from "./sync_merge.js";
 import {
-  isSyncOutboxReady,
-  normalizeSyncOutbox,
-  removeSyncOutbox,
-  SYNC_OUTBOX_KEY,
-  SYNC_OUTBOX_TARGET,
-  upsertSyncOutbox,
-} from "./sync_outbox.js";
-import {
   HOMEPAGE_SCHEMA_VERSION,
   normalizeSyncInterval,
-  SYNC_OUTBOX_MAX_ATTEMPTS,
   SYNC_PUSH_DEBOUNCE_MS,
   SYNC_REVISION_RETRY,
-  SYNC_STATE_KEY,
   syncBytesBudgetLevel,
   syncIntervalToMs,
 } from "./sync_policy.js";
@@ -32,10 +22,16 @@ import {
   syncDocumentToHomepageShape,
   toSyncDocument,
 } from "./sync_projection.js";
+import {
+  clearOutboxRecord,
+  enqueueOutboxRecord,
+  readOutboxItems,
+  readOutboxSummary,
+  readPendingOutboxItem,
+  readSyncStateAndCleanOutbox,
+  writeSyncStateRecord,
+} from "./sync_state_store.js";
 
-function areaLocal() {
-  return storageArea(false);
-}
 const deviceAuth = createSyncDeviceAuth({
   getData: () => _getData(),
   saveLocal: (next) => _saveLocal(next),
@@ -68,44 +64,6 @@ async function dropStaleDeviceCredentials() {
 
 async function markDeviceRetired() {
   return deviceAuth.markDeviceRetired();
-}
-
-function storageGetKeys(area, keys) {
-  return new Promise((resolve) => {
-    try {
-      const result = area.get(keys, (res) => {
-        if (getLastError()) return resolve({ ok: false, error: getLastError().message, value: {} });
-        resolve({ ok: true, value: res || {} });
-      });
-      if (result && typeof result.then === "function") {
-        result.then(
-          (res) => resolve({ ok: true, value: res || {} }),
-          (e) => resolve({ ok: false, error: e?.message || String(e), value: {} }),
-        );
-      }
-    } catch (e) {
-      resolve({ ok: false, error: e?.message || String(e), value: {} });
-    }
-  });
-}
-
-function storageSetObj(area, obj) {
-  return new Promise((resolve) => {
-    try {
-      const result = area.set(obj, () => {
-        const err = getLastError();
-        resolve(err ? err.message || String(err) : null);
-      });
-      if (result && typeof result.then === "function") {
-        result.then(
-          () => resolve(null),
-          (e) => resolve(e?.message || String(e)),
-        );
-      }
-    } catch (e) {
-      resolve(e?.message || String(e));
-    }
-  });
 }
 
 /** @type {object} */
@@ -217,43 +175,8 @@ export function getSyncStatus() {
   };
 }
 
-/**
- * 读取 outbox 概况（只读，不改状态）。
- * 供同步异常提示条判断「自动重试是否已放弃」，不触发任何重试动作。
- * @returns {Promise<Array<{targetKey: string, attempts: number, maxAttempts: number, lastError: string, nextRetryAtMs: number}>>}
- */
-/**
- * 只保留当前传输目标的队列项。
- *
- * 历史坑：早期同步走浏览器 `storage.sync`，目标键是 `storage.sync|homepage`；
- * 改成自建 HTTP 服务后目标变成 `http-server|homepage`。
- * 旧目标那条记录 forever 发不出去，`clearOutboxSuccess()` 按新目标清理也清不到它，
- * 于是它的 attempts 一直停在 12，提示条就永久显示「自动重试已停止」——
- * 明明当前同步一切正常。这里在读取与加载时直接丢弃废弃目标的记录。
- *
- * @param {any[]} list
- * @returns {any[]}
- */
-function filterCurrentOutbox(list) {
-  return (Array.isArray(list) ? list : []).filter((item) => item.targetKey === SYNC_OUTBOX_TARGET);
-}
-
 export async function getOutboxSummary() {
-  const local = areaLocal();
-  if (!local) return [];
-  try {
-    const got = await storageGetKeys(local, [SYNC_OUTBOX_KEY]);
-    const list = filterCurrentOutbox(normalizeSyncOutbox(got.value?.[SYNC_OUTBOX_KEY]));
-    return list.map((item) => ({
-      targetKey: item.targetKey,
-      attempts: Number(item.attempts || 0),
-      maxAttempts: SYNC_OUTBOX_MAX_ATTEMPTS,
-      lastError: String(item.lastError || ""),
-      nextRetryAtMs: Number(item.nextRetryAtMs || 0),
-    }));
-  } catch {
-    return [];
-  }
+  return readOutboxSummary();
 }
 
 /**
@@ -267,48 +190,34 @@ export async function reloadSyncState() {
 }
 
 async function loadState() {
-  const local = areaLocal();
-  if (!local) return;
-  const got = await storageGetKeys(local, [SYNC_STATE_KEY, SYNC_OUTBOX_KEY]);
-  const st = got.value?.[SYNC_STATE_KEY];
-  if (st && typeof st === "object") {
+  const st = await readSyncStateAndCleanOutbox();
+  if (st) {
     _status = { ..._status, ...st };
     // 恢复冲突标记：只要状态仍是 need_setup 就构造占位远端文档，
     // 让「解决冲突」按钮可用；真正内容在 resolve 时重新拉取。
-    // 老状态可能没有 conflictRemoteDocId，此时 docId 留空，由 resolve 现场识别。
     if (_status.status === "need_setup") {
       _pendingConflictRemote = { docId: _status.conflictRemoteDocId || "" };
     }
   }
-  // 顺手清掉废弃传输目标留下的僵尸队列项（否则提示条会永久误报「自动重试已停止」）
-  const rawOutbox = normalizeSyncOutbox(got.value?.[SYNC_OUTBOX_KEY]);
-  const kept = filterCurrentOutbox(rawOutbox);
-  if (kept.length !== rawOutbox.length) {
-    await storageSetObj(local, { [SYNC_OUTBOX_KEY]: kept });
-  }
 }
 
 async function saveState() {
-  const local = areaLocal();
-  if (!local) return;
-  await storageSetObj(local, {
-    [SYNC_STATE_KEY]: {
-      docId: _status.docId,
-      status: _status.status,
-      lastPullAt: _status.lastPullAt,
-      lastPushAt: _status.lastPushAt,
-      lastError: _status.lastError,
-      lastRemoteRevision: _status.lastRemoteRevision,
-      lastRemoteEtag: _status.lastRemoteEtag || "",
-      // epoch 必须持久化：页面重建后若跳过预拉取直接推送，仍要带上正确代际
-      lastRemoteEpoch: _status.lastRemoteEpoch || 0,
-      bytesEstimate: _status.bytesEstimate,
-      transport: getTransportConfig().mode,
-      // 冲突上下文必须持久化：新标签页/刷新后内存会重建，
-      // 否则 UI 显示“需要处理冲突”，但「解决冲突」找不到待处理文档而无法执行。
-      conflictLocalDocId: _status.conflictLocalDocId || "",
-      conflictRemoteDocId: _status.conflictRemoteDocId || "",
-    },
+  await writeSyncStateRecord({
+    docId: _status.docId,
+    status: _status.status,
+    lastPullAt: _status.lastPullAt,
+    lastPushAt: _status.lastPushAt,
+    lastError: _status.lastError,
+    lastRemoteRevision: _status.lastRemoteRevision,
+    lastRemoteEtag: _status.lastRemoteEtag || "",
+    // epoch 必须持久化：页面重建后若跳过预拉取直接推送，仍要带上正确代际
+    lastRemoteEpoch: _status.lastRemoteEpoch || 0,
+    bytesEstimate: _status.bytesEstimate,
+    transport: getTransportConfig().mode,
+    // 冲突上下文必须持久化：新标签页/刷新后内存会重建，
+    // 否则 UI 显示“需要处理冲突”，但「解决冲突」找不到待处理文档而无法执行。
+    conflictLocalDocId: _status.conflictLocalDocId || "",
+    conflictRemoteDocId: _status.conflictRemoteDocId || "",
   });
 }
 
@@ -655,16 +564,6 @@ async function confirmRemoteRevision(revision, deviceId) {
 }
 
 /**
- * 推送本地投影（可在 pull 的 enqueue 内调用，勿再包 enqueue）
- */
-/** 读取待推送队列（推送前判断有没有必须发出去的本地改动） */
-async function readOutboxItems() {
-  const got = await storageGetKeys(areaLocal(), [SYNC_OUTBOX_KEY]);
-  if (!got.ok) return [];
-  return normalizeSyncOutbox(got.value?.[SYNC_OUTBOX_KEY]);
-}
-
-/**
  * 本地内容是否与远端那份完全一致。
  *
  * 不能直接比 contentHash：哈希覆盖整份文档，包含 deviceId / revision / writtenAt，
@@ -882,23 +781,11 @@ export async function pushNow(reason = "manual") {
 }
 
 async function enqueueOutbox(doc, error) {
-  const local = areaLocal();
-  if (!local) return;
-  const got = await storageGetKeys(local, [SYNC_OUTBOX_KEY]);
-  const next = upsertSyncOutbox(got.value?.[SYNC_OUTBOX_KEY], {
-    targetKey: SYNC_OUTBOX_TARGET,
-    payload: doc,
-    error,
-  });
-  await storageSetObj(local, { [SYNC_OUTBOX_KEY]: next });
+  await enqueueOutboxRecord(doc, error);
 }
 
 async function clearOutboxSuccess() {
-  const local = areaLocal();
-  if (!local) return;
-  const got = await storageGetKeys(local, [SYNC_OUTBOX_KEY]);
-  const next = removeSyncOutbox(got.value?.[SYNC_OUTBOX_KEY], SYNC_OUTBOX_TARGET);
-  await storageSetObj(local, { [SYNC_OUTBOX_KEY]: next });
+  await clearOutboxRecord();
 }
 
 /**
@@ -929,19 +816,16 @@ export async function flushOutbox() {
   if (!data?.settings?.syncEnabled) return { ok: true, skipped: true };
   // 退役熔断未解除前不消费 outbox：重试永远 403，只会徒增请求
   if (_status.status === "device_retired") return { ok: false, reason: "device_retired" };
-  const local = areaLocal();
-  if (!local) return { ok: false, reason: "no_local" };
-  const got = await storageGetKeys(local, [SYNC_OUTBOX_KEY]);
-  const list = normalizeSyncOutbox(got.value?.[SYNC_OUTBOX_KEY]);
-  const item = list.find((x) => x.targetKey === SYNC_OUTBOX_TARGET);
-  if (!item) return { ok: true, empty: true };
-  if (!isSyncOutboxReady(item)) return { ok: true, wait: true };
-  if (item.attempts >= SYNC_OUTBOX_MAX_ATTEMPTS) {
-    _status.status = "error";
-    _status.lastError = item.lastError || "outbox_exhausted";
-    await saveState();
-    return { ok: false, reason: "outbox_exhausted" };
+  const check = await readPendingOutboxItem();
+  if (!check.ok) {
+    if (check.reason === "outbox_exhausted") {
+      _status.status = "error";
+      _status.lastError = check.lastError || "outbox_exhausted";
+      await saveState();
+    }
+    return { ok: false, reason: check.reason };
   }
+  if (!check.ready) return { ok: true, ...(check.empty ? { empty: true } : { wait: true }) };
   return pushNow("outbox");
 }
 

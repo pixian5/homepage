@@ -4,9 +4,11 @@
 
 ## 当前开发进度
 
-当前产品版本 **27.3.5**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
+当前产品版本 **27.3.6**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
 
 项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。
+
+- **27.3.6**：完成 P2 热点模块拆分重构——拆出 `src/js/icon-candidates.js`（`icons.js` 883→629 行）、`src/js/sync_state_store.js`（`sync_engine.js` 1215→1099 行，并将本地扩展存储读写统一收口至 `callExtensionApi`）、`src/js/settings-form-renderer.js`（`settings-controller.js` 721→318 行，消除 45 个模块级可变依赖）与 `src/js/app-actions.js`（`app.js` 1375→1300 行），同步登记 `scripts/firefox-modules.json` 与 `src/sw.js` 并新增 8 项回归测试（单测增至 654/654）；完成 Safari `27.3.6` 原生覆盖安装、Chrome/Firefox 双端 7/7 冒烟与 Firefox 离线 E2E 验收，见[当前开发进度](docs/20261127-0148-当前开发进度-Gemini.md)。
 
 - **27.3.5**：新增全局 `Cmd/Ctrl+K` 快速命令面板（`src/js/command-palette.js` + `src/styles.css` + `src/js/app.js`，支持拼音模糊与 `>` 快捷动作触发）与可选客户端 PBKDF2 + AES-256-GCM 端到端加密同步（`src/js/sync_crypto.js`，`syncE2eePassphrase` 仅存本机不同步；兼容 `src/js/sync_engine.js` 与 `scripts/sync-server.mjs` `homepage.sync.e2ee.v1` 密文信封）；补齐 8 语言文案与 4 项回归测试（单测增至 646/646），完成 Safari `27.3.5` 原生覆盖安装与双端真实冒烟/Firefox E2E 验收，见[当前开发进度](docs/20261127-0141-当前开发进度-Gemini.md)。
 
@@ -69,14 +71,14 @@
 - **26.6.1**：修复 Safari 扩展消失：新增注册自愈脚本并挂进每日体检，详见[Safari 扩展消失自愈](docs/20261103-1525-Safari扩展消失自愈-DeepSeek-V4.1-Flash.md)。
 - **26.6.0（基线）**：修复 Chrome 永久误报「同步已多次失败，自动重试已停止」：同步实际健康，根因是存储中残留一条指向已废弃浏览器 storage.sync 传输目标的僵尸队列项，它永远发不出去也清不掉；新增 filterCurrentOutbox 在读取与加载时剔除废弃目标，详见[Chrome 永久误报同步失败](docs/20261102-1725-Chrome永久误报同步失败-DeepSeek-V4.1-Flash.md)。
 
-当前单测 646 项全部通过，Biome 检查 0 告警，三端构建、Safari 27.3.5 原生覆盖安装验收与双端无头浏览器冒烟均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
+当前单测 654 项全部通过，Biome 检查 0 告警，三端构建、Safari 27.3.6 原生覆盖安装验收与双端无头浏览器冒烟均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
 
 ## 下一步待实现
 
-- **按需注入与 Safari 原生安装验收**：✅ 已完成（27.2.3）——三端 Manifest 已移除静态 `<all_urls>` `content_scripts` 并完成 `popup.js` 动态注入兼容性加固；Safari 在未运行状态下完成 `27.2.3` 编译安装、签名校验、存储快照核验及 `pluginkit` 正式路径登记（[开发进度](docs/20261123-2115-当前开发进度-Gemini.md)、[前置条件规范](docs/20261120-2055-下一步待实现-Opus-5.md)）。
+- **按需注入与 Safari 原生安装验收**：✅ 已完成（27.2.3）——三端 Manifest 已移除静态 `<all_urls>` `content_scripts` 并完成 `popup.js` 动态注入兼容性加固；Safari 在未运行状态下完成编译安装、签名校验、存储快照核验及 `pluginkit` 正式路径登记（[开发进度](docs/20261123-2115-当前开发进度-Gemini.md)、[前置条件规范](docs/20261120-2055-下一步待实现-Opus-5.md)）。
 
 - **P3 生态开放**：✅ 已完成——localStorage 回退（26.8.3）+ PWA Manifest 与 Service Worker 离线闭环（26.9.0）。
-- **app.js 瘦身**：✅ 编辑弹窗与 openMode 菜单已分别抽离为 modal-manager.js（26.7.4）与 open-mode-manager.js（26.9.0），app.js 现为 1233 行；后续可按实际热点继续拆分。
+- **热点模块瘦身**：✅ 已完成阶段拆解——除原有 `modal-manager.js`/`open-mode-manager.js` 等解耦模块外，27.3.6 已进一步拆出 `icon-candidates.js`、`sync_state_store.js`、`settings-form-renderer.js` 与 `app-actions.js`，统一扩展存储调用并消除设置控制器模块级可变依赖（[开发进度](docs/20261127-0148-当前开发进度-Gemini.md)）。
 - **运维常态化**：`bash scripts/setup-tombstone-reclaim.sh install --force --hour 03:30 --token <TOKEN>` 一键挂每日 launchd 回收（已支持，可在真实服务器启用）。
 
 （原 P0「代码审查发现的缺陷」已在 26.7.5 全部闭环修复，并经独立复核验证：背景恢复无损通道、图标保持 128px 压缩、多音字双向命中（重庆 cq/zq 均可搜）、setState 回滚与最近分组切组恢复、跳字子序列匹配；复核中补齐了构建遗漏的 Safari 扩展登记。详见[代码审查及其复核记录](docs/20261104-0006-代码审查-核心架构解耦与拼音搜索-GLM-5.3.md)。）

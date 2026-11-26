@@ -1,3 +1,4 @@
+import { buildCommandPaletteActions, showBatchMoveModal } from "./app-actions.js";
 import { bindAppDomEvents } from "./app-events-binder.js";
 import { createAppReloadCoordinator, resolveActiveGroupId } from "./app-reload-coordinator.js";
 import { getBingWallpaper } from "./bing-wallpaper.js";
@@ -9,7 +10,6 @@ import {
   ALL_BOOKMARKS_GROUP_ID,
   canMoveNodeToFolder,
   cloneDataSnapshot,
-  collectNodeSubtreeIds,
   createItemNode,
   dedupeData,
   ensureAllBookmarksGroup,
@@ -504,69 +504,22 @@ function moveNodesToContainer(ids, targetContainerId) {
   return nodeOpsManager.moveNodesToContainer(ids, targetContainerId);
 }
 
-function collectBatchMoveTargets(selectedIds) {
-  const blocked = new Set();
-  for (const id of selectedIds) {
-    for (const subId of collectNodeSubtreeIds(data, id)) blocked.add(subId);
-  }
-  const targets = [];
-  const root = getRootGroup();
-  if (root) {
-    targets.push({ id: root.id, label: t("batchMove.rootContainer"), depth: 0 });
-  }
-  const walkFolder = (folderId, depth) => {
-    const folder = data?.nodes?.[folderId];
-    if (folder?.type !== "folder" || folder.deletedAt || folder.purgedAt) return;
-    if (!blocked.has(folder.id)) {
-      targets.push({ id: folder.id, label: folder.title || t("folder.defaultTitle"), depth });
-    }
-    for (const childId of folder.children || []) {
-      walkFolder(childId, depth + 1);
-    }
-  };
-  for (const group of data?.groups || []) {
-    if (!group || (!isAllBookmarksGroup(group) && group.id !== root?.id)) {
-      targets.push({ id: group.id, label: group.title || group.name || t("group.default"), depth: 0 });
-    }
-    for (const childId of group?.nodes || []) {
-      walkFolder(childId, 1);
-    }
-  }
-  return targets;
-}
-
 function openBatchMoveModal(ids, onMoved) {
-  const targets = collectBatchMoveTargets(ids);
-  if (!targets.length) {
-    toast(t("batchMove.emptyTargets"), "warning");
-    return;
-  }
-  const buttonsHtml = targets
-    .map(
-      (item) =>
-        html`<button type="button" class="icon-btn batch-move-target" data-target-id="${item.id}" style="text-align:left;padding-left:${12 + item.depth * 18}px">${item.label}</button>`,
-    )
-    .join("");
-  const modalHtml = html`
-    <h2>${t("batchMove.title", { count: ids.length })}</h2>
-    <div class="section" style="display:flex;flex-direction:column;gap:6px;max-height:320px;overflow:auto">${rawHtml(buttonsHtml)}</div>
-    <div class="actions"><button id="btnBatchMoveCancel" class="icon-btn">${t("common.cancel")}</button></div>
-  `;
-  openModal(modalHtml);
-  $("btnBatchMoveCancel")?.addEventListener("click", closeModal);
-  qsa(".batch-move-target", elements.modal).forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const targetId = btn.dataset.targetId;
-      const targetLabel = btn.textContent || "";
-      const res = moveNodesToContainer(ids, targetId);
-      await closeModal();
-      if (res?.movedCount > 0) {
-        onMoved?.();
-        toast(t("batchMove.moved", { count: res.movedCount, target: targetLabel }));
-      } else {
-        toast(t("batchMove.noneMoved"), "warning");
-      }
-    });
+  showBatchMoveModal({
+    ids,
+    onMoved,
+    data,
+    getRootGroup,
+    t,
+    toast,
+    html,
+    rawHtml,
+    openModal,
+    closeModal,
+    elements,
+    $,
+    qsa,
+    moveNodesToContainer,
   });
 }
 
@@ -1197,37 +1150,15 @@ async function init() {
       openFolderId = id;
       render();
     },
-    getActions: () => [
-      { id: "action:add", title: t("cmdk.action.add"), keywords: "add new bookmark", run: () => openAddModal() },
-      {
-        id: "action:settings",
-        title: t("cmdk.action.settings"),
-        keywords: "settings preferences",
-        run: () => settingsCtl?.openSettingsModal(),
-      },
-      {
-        id: "action:sync",
-        title: t("cmdk.action.sync"),
-        keywords: "sync push pull",
-        run: () => {
-          if (data?.settings?.syncEnabled) void pullNow("manual");
-          else settingsCtl?.openSettingsModal();
-        },
-      },
-      {
-        id: "action:dedupe",
-        title: t("settings.action.dedupeBookmarks"),
-        keywords: "dedupe duplicate clean",
-        run: () => {
-          settingsCtl?.openSettingsModal();
-          $("btnDedupeBookmarks")?.click();
-        },
-      },
-      {
-        id: "action:theme",
-        title: t("cmdk.action.toggleTheme"),
-        keywords: "theme dark light",
-        run: () => {
+    getActions: () =>
+      buildCommandPaletteActions({
+        t,
+        openAddModal,
+        openSettingsModal: () => settingsCtl?.openSettingsModal(),
+        getData: () => data,
+        pullNow,
+        clickDedupeButton: () => $("btnDedupeBookmarks")?.click(),
+        toggleTheme: () => {
           const cur = data?.settings?.theme || "system";
           const next = cur === "dark" ? "light" : "dark";
           if (data?.settings) {
@@ -1236,20 +1167,14 @@ async function init() {
             queuePersist();
           }
         },
-      },
-      {
-        id: "action:sidebar",
-        title: t("cmdk.action.toggleSidebar"),
-        keywords: "sidebar toggle collapse",
-        run: () => {
+        toggleSidebar: () => {
           if (data?.settings) {
             data.settings.sidebarHidden = !data.settings.sidebarHidden;
             sidebarMgr?.applySidebarState();
             queuePersist();
           }
         },
-      },
-    ],
+      }),
   });
   commandPalette.bindGlobalShortcut();
   themeMgr.applyDensity();

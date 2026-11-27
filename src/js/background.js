@@ -10,10 +10,11 @@ import { nextSyncTimestamp } from "./sync_policy.js";
 import { initVisitTrackingInBackground } from "./visit-history.js";
 
 const BING_API_URL = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1";
-const RESTRICTED_TAB_URL_RE = /^(?:chrome|edge|about|safari-web-extension):/i;
+const RESTRICTED_TAB_URL_RE =
+  /^(?:chrome|chrome-extension|moz-extension|edge|about|safari-web-extension|devtools|view-source):/i;
 let _bookmarkWriteChain = Promise.resolve();
 
-function isWebTabUrl(url) {
+export function isWebTabUrl(url) {
   return !RESTRICTED_TAB_URL_RE.test(String(url || ""));
 }
 

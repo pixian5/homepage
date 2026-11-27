@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { addBookmarkToFolderInData } from "../src/js/background.js";
+import { addBookmarkToFolderInData, isWebTabUrl } from "../src/js/background.js";
 
 function sampleData() {
   return {
@@ -222,5 +222,18 @@ describe("background addBookmarkToFolderInData", () => {
       if (realBrowser === undefined) delete globalThis.browser;
       else globalThis.browser = realBrowser;
     }
+  });
+
+  it("isWebTabUrl rejects extension internal and restricted browser protocols", () => {
+    assert.equal(isWebTabUrl("https://example.com"), true);
+    assert.equal(isWebTabUrl("http://127.0.0.1:8080/page"), true);
+
+    assert.equal(isWebTabUrl("chrome-extension://abc/newtab.html"), false);
+    assert.equal(isWebTabUrl("moz-extension://abc/newtab.html"), false);
+    assert.equal(isWebTabUrl("safari-web-extension://abc/newtab.html"), false);
+    assert.equal(isWebTabUrl("chrome://settings"), false);
+    assert.equal(isWebTabUrl("about:blank"), false);
+    assert.equal(isWebTabUrl("devtools://devtools/bundled/inspector.html"), false);
+    assert.equal(isWebTabUrl("view-source:https://example.com"), false);
   });
 });

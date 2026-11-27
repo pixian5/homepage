@@ -11,7 +11,7 @@
  * 扩展环境自带打包资源，Service Worker 无意义且会干扰调试。
  */
 
-const CACHE_VERSION = "homepage-pwa-v2";
+const CACHE_VERSION = "homepage-pwa-v3";
 
 /** 预缓存清单：页面外壳 + 样式 + 前端模块（与 scripts/firefox-modules.json 的 app 链路对应） */
 const PRECACHE_URLS = [
@@ -122,6 +122,8 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return; // 只接管同源静态资源，不碰同步服务器与壁纸 API
+  if (url.pathname.startsWith("/v1/") || url.pathname === "/health") return;
+  if (request.headers?.has?.("Authorization")) return;
 
   event.respondWith(
     (async () => {

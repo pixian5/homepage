@@ -78,7 +78,7 @@ describe("sw.js cache manifest & strategy", () => {
         match: async () => null,
         put: async () => {},
       }),
-      keys: async () => ["homepage-pwa-v0", "homepage-pwa-v1", "homepage-pwa-v2", "unrelated-cache"],
+      keys: async () => ["homepage-pwa-v0", "homepage-pwa-v1", "homepage-pwa-v2", "homepage-pwa-v3", "unrelated-cache"],
       delete: async (name) => {
         handlers.deletedCaches = handlers.deletedCaches || [];
         handlers.deletedCaches.push(name);
@@ -129,9 +129,13 @@ describe("sw.js cache manifest & strategy", () => {
     let activateDone;
     handlers.activate({ waitUntil: (p) => (activateDone = p) });
     await activateDone;
-    assert.deepEqual(handlers.deletedCaches, ["homepage-pwa-v0", "homepage-pwa-v1"], "只清旧版本缓存，不碰无关缓存");
+    assert.deepEqual(
+      handlers.deletedCaches,
+      ["homepage-pwa-v0", "homepage-pwa-v1", "homepage-pwa-v2"],
+      "只清旧版本缓存，不碰无关缓存",
+    );
 
-    // fetch：非 GET 与跨源请求不接管
+    // fetch：非 GET、跨源及同源同步/鉴权接口均不接管
     let responded = null;
     const fetchEvent = (request) => ({
       request,
@@ -144,6 +148,18 @@ describe("sw.js cache manifest & strategy", () => {
     assert.equal(responded, null, "POST 不接管");
     handlers.fetch(fetchEvent({ method: "GET", url: "https://sync.example.com/state" }));
     assert.equal(responded, null, "跨源（同步服务器）不接管");
+    handlers.fetch(fetchEvent({ method: "GET", url: "http://127.0.0.1:8899/v1/sync/state" }));
+    assert.equal(responded, null, "同源 /v1/ 同步接口不接管");
+    handlers.fetch(fetchEvent({ method: "GET", url: "http://127.0.0.1:8899/health" }));
+    assert.equal(responded, null, "同源 /health 健康检查不接管");
+    handlers.fetch(
+      fetchEvent({
+        method: "GET",
+        url: "http://127.0.0.1:8899/custom-sync",
+        headers: new Headers({ Authorization: "Bearer tok" }),
+      }),
+    );
+    assert.equal(responded, null, "携带 Authorization 头的请求不接管");
 
     // 同源 GET 且离线（fetch reject）：导航请求回退 newtab.html 外壳
     const cacheWithShell = {

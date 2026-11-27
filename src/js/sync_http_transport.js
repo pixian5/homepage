@@ -136,6 +136,7 @@ export async function httpPushState(cfg, doc, opts = {}) {
       } catch (_e) {
         remote = null;
       }
+      const epoch = Number(res.headers.get("X-Sync-Epoch") || remote?.epoch);
       return {
         ok: false,
         reason: "precondition_failed",
@@ -143,6 +144,7 @@ export async function httpPushState(cfg, doc, opts = {}) {
         remote,
         etag: res.headers.get("ETag") || remote?.etag || "",
         revision: Number(remote?.revision) || 0,
+        epoch: Number.isSafeInteger(epoch) ? epoch : undefined,
       };
     }
     if (res.status === 401) return { ok: false, reason: "unauthorized", status: 401 };

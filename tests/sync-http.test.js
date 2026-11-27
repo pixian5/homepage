@@ -314,4 +314,47 @@ describe("sync_http_transport + server", () => {
     assert.equal(current.ok, true);
     assert.equal(current.doc.docId, "doc_snap_v1");
   });
+
+  it("returns epoch on 200/412 PUT responses and clears idempotency cache across epoch transitions", async () => {
+    const first = await httpPushState({ baseUrl: BASE, token: TOKEN }, makeDoc("doc_epoch_base"));
+    assert.equal(first.ok, true);
+    assert.equal(Number.isSafeInteger(first.epoch), true);
+
+    const idemKey = `idem-before-restore-${Date.now()}`;
+    const second = await httpPushState({ baseUrl: BASE, token: TOKEN }, makeDoc("doc_epoch_idem"), {
+      ifMatch: first.etag,
+      epoch: first.epoch,
+      idempotencyKey: idemKey,
+    });
+    assert.equal(second.ok, true);
+    assert.equal(second.epoch, first.epoch);
+
+    // 412 冲突响应同样应携带服务端当前 epoch
+    const conflict = await httpPushState({ baseUrl: BASE, token: TOKEN }, makeDoc("doc_epoch_stale_etag"), {
+      ifMatch: '"stale-etag"',
+      epoch: second.epoch,
+    });
+    assert.equal(conflict.ok, false);
+    assert.equal(conflict.reason, "precondition_failed");
+    assert.equal(conflict.status, 412);
+    assert.equal(conflict.epoch, second.epoch);
+
+    // 快照回滚推进 epoch 后，同一 idempotencyKey + 旧 epoch 重放不得命中旧 200 缓存，应返回 409 stale_epoch
+    const snaps = await httpGetSnapshots({ baseUrl: BASE, token: TOKEN });
+    assert.equal(snaps.ok, true);
+    assert.ok(snaps.snapshots.length >= 1);
+    const restored = await httpRestoreSnapshot({ baseUrl: BASE, token: TOKEN }, snaps.snapshots[0].id);
+    assert.equal(restored.ok, true);
+    assert.ok(restored.epoch > second.epoch);
+
+    const replayed = await httpPushState({ baseUrl: BASE, token: TOKEN }, makeDoc("doc_epoch_idem"), {
+      ifMatch: first.etag,
+      epoch: second.epoch,
+      idempotencyKey: idemKey,
+    });
+    assert.equal(replayed.ok, false);
+    assert.equal(replayed.reason, "stale_epoch");
+    assert.equal(replayed.status, 409);
+    assert.equal(replayed.epoch, restored.epoch);
+  });
 });

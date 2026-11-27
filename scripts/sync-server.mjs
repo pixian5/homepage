@@ -668,17 +668,28 @@ function readBody(req, limit = 2 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    let settled = false;
     req.on("data", (c) => {
+      if (settled) return;
       size += c.length;
       if (size > limit) {
+        settled = true;
         reject(new Error("body_too_large"));
         req.destroy();
         return;
       }
       chunks.push(c);
     });
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    req.on("error", reject);
+    req.on("end", () => {
+      if (settled) return;
+      settled = true;
+      resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+    req.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    });
   });
 }
 
@@ -1073,6 +1084,7 @@ const server = createServer(async (req, res) => {
         return { status: 500, body: { error: "save_failed" }, headers: {} };
       }
       state = nextState;
+      idempotency.clear();
       return {
         status: 200,
         body: {
@@ -1227,6 +1239,7 @@ const server = createServer(async (req, res) => {
         return { status: 500, body: { error: "save_failed" }, headers: {} };
       }
       state = nextState;
+      idempotency.clear();
       return {
         status: 200,
         body: {
@@ -1336,12 +1349,14 @@ const server = createServer(async (req, res) => {
           body: {
             error: "precondition_failed",
             revision: state.revision,
+            epoch: state.epoch || 0,
             etag: state.etag,
             doc: state.doc,
           },
           headers: {
             ETag: state.etag,
             "X-Sync-Revision": String(state.revision),
+            "X-Sync-Epoch": String(state.epoch || 0),
           },
         };
       }
@@ -1378,12 +1393,14 @@ const server = createServer(async (req, res) => {
       const body = {
         ok: true,
         revision: state.revision,
+        epoch: state.epoch || 0,
         etag: state.etag,
         updatedAt: state.updatedAt,
       };
       const headers = {
         ETag: state.etag,
         "X-Sync-Revision": String(state.revision),
+        "X-Sync-Epoch": String(state.epoch || 0),
       };
       const cached = { status: 200, body, headers, at: Date.now() };
       if (idem) {

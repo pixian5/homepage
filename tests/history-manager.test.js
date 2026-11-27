@@ -287,4 +287,98 @@ describe("createHistoryManager.addHistoryToShortcuts", () => {
     assert.equal(data.groups[0].nodes.length, 1);
     assert.equal(calls.icons, 1);
   });
+
+  it("openAddToGroupModal falls back container labels and prevents duplicate concurrent saves", async () => {
+    let openedHtml = "";
+    let closedCount = 0;
+    let resolvePersist = null;
+    const prevDocument = globalThis.document;
+    const byId = new Map();
+
+    const makeBtn = (id) => {
+      const btn = {
+        id,
+        disabled: false,
+        listeners: {},
+        addEventListener(ev, fn) {
+          this.listeners[ev] = fn;
+        },
+        click() {
+          return this.listeners.click?.();
+        },
+      };
+      byId.set(id, btn);
+      return btn;
+    };
+
+    try {
+      const selectEl = { value: "grp_all" };
+      byId.set("addHistoryGroup", selectEl);
+      const cancelBtn = makeBtn("btnAddHistoryCancel");
+      const saveBtn = makeBtn("btnAddHistorySave");
+      assert.ok(cancelBtn);
+
+      globalThis.document = {
+        getElementById: (id) => byId.get(id) || null,
+      };
+
+      const { deps, calls, data } = makeDeps({
+        getRootContainers: () => [
+          { id: "grp_all", title: "全部兜底标题", systemAllGroup: true, nodes: [] },
+          { id: "fld_work", name: "工作兜底名称", type: "folder", children: [] },
+        ],
+        html: (strings, ...values) =>
+          strings.reduce(
+            (acc, part, idx) =>
+              acc + part + (idx < values.length ? (values[idx]?.raw ?? String(values[idx] ?? "")) : ""),
+            "",
+          ),
+        openModal: (html) => {
+          openedHtml = String(html);
+        },
+        closeModal: () => {
+          closedCount += 1;
+        },
+        setPlacementList: (container, list) => {
+          container.nodes = list;
+        },
+        persistData: () => {
+          calls.persist += 1;
+          return new Promise((resolve) => {
+            resolvePersist = resolve;
+          });
+        },
+      });
+      data.groups[0].nodes = [];
+
+      const manager = createHistoryManager(deps);
+      manager.openAddToGroupModal({ title: "Docs", url: "https://docs.example.com/" });
+
+      assert.match(openedHtml, /<option value="grp_all">全部兜底标题<\/option>/);
+      assert.match(openedHtml, /<option value="fld_work">工作兜底名称<\/option>/);
+
+      // 连续触发两次保存（模拟双击），在首次持久化完成前第二次应被互斥锁拦截
+      const firstClick = saveBtn.click();
+      assert.equal(saveBtn.disabled, true);
+      const secondClick = saveBtn.click();
+      assert.equal(calls.persist, 1);
+
+      resolvePersist({ ok: false, error: "quota" });
+      await Promise.all([firstClick, secondClick]);
+      assert.equal(saveBtn.disabled, false);
+      assert.equal(closedCount, 0);
+
+      // 失败解锁后可再次点击保存成功
+      deps.persistData = async () => {
+        calls.persist += 1;
+        return { ok: true };
+      };
+      await saveBtn.click();
+      assert.equal(calls.persist, 2);
+      assert.equal(closedCount, 1);
+      assert.equal(data.groups[0].nodes.length, 1);
+    } finally {
+      globalThis.document = prevDocument;
+    }
+  });
 });

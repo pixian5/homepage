@@ -249,7 +249,10 @@ var HomepageHistoryManager = (() => {
       const options = deps.rawHtml(
         deps
           .getRootContainers()
-          .map((g) => deps.html`<option value="${g.id}">${deps.isAllBookmarksGroup(g) ? g.name : g.title}</option>`)
+          .map(
+            (g) =>
+              deps.html`<option value="${g.id}">${deps.isAllBookmarksGroup(g) ? g.name || g.title || "" : g.title || g.name || ""}</option>`,
+          )
           .join(""),
       );
       const modalHtml = deps.html`
@@ -268,10 +271,21 @@ var HomepageHistoryManager = (() => {
       const select = document.getElementById("addHistoryGroup");
       if (preferred && select) select.value = preferred;
       document.getElementById("btnAddHistoryCancel")?.addEventListener("click", () => deps.closeModal?.());
-      document.getElementById("btnAddHistorySave")?.addEventListener("click", async () => {
-        const groupId = select?.value || "";
-        const saved = await addHistoryToShortcuts(node, groupId);
-        if (saved) deps.closeModal?.();
+      const saveBtn = document.getElementById("btnAddHistorySave");
+      let saving = false;
+      saveBtn?.addEventListener("click", async () => {
+        if (saving) return;
+        saving = true;
+        if ("disabled" in saveBtn) saveBtn.disabled = true;
+        let saved = false;
+        try {
+          const groupId = select?.value || "";
+          saved = Boolean(await addHistoryToShortcuts(node, groupId));
+          if (saved) deps.closeModal?.();
+        } finally {
+          saving = false;
+          if (!saved && "disabled" in saveBtn) saveBtn.disabled = false;
+        }
       });
     }
 

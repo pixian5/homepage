@@ -50,6 +50,7 @@ import {
   RECENT_GROUP_ID,
   readFileAsDataUrl,
   registerServiceWorkerIfNeeded,
+  storageArea,
 } from "./shared-utils.js";
 import { createSidebarManager } from "./sidebar-manager.js";
 import {
@@ -1158,9 +1159,15 @@ async function init() {
       if (node?.url) openUrl(node.url, data?.settings?.openMode || "current");
     },
     navigateToFolder: ({ id, rootGroupId }) => {
-      if (rootGroupId) activeGroupId = rootGroupId;
-      openFolderId = id;
-      render();
+      const target = data?.nodes?.[id];
+      if (target?.type !== "folder" || target.deletedAt || target.purgedAt) return;
+      if (rootGroupId) {
+        const rootGroup = Array.isArray(data?.groups) ? data.groups.find((g) => g.id === rootGroupId) : null;
+        if (!rootGroup || (!rootGroup.deletedAt && !rootGroup.purgedAt)) {
+          activeGroupId = rootGroupId;
+        }
+      }
+      openFolder(id);
     },
     getActions: () =>
       buildCommandPaletteActions({
@@ -1212,7 +1219,7 @@ async function init() {
     pushNow,
     flushOutbox,
     openSettingsModal: () => settingsCtl?.openSettingsModal(),
-    getStorage: () => getChromeApi()?.storage?.local,
+    getStorage: () => storageArea(false),
     t: (k, vars) => t(k, vars),
     render,
   });
@@ -1268,8 +1275,8 @@ function bindEvents() {
       },
       touchPlacementContainer,
       getRootGroup,
-      showTooltip: (text, x, y) => tooltipMgr?.show?.(text, x, y),
-      hideTooltip: () => tooltipMgr?.hide?.(),
+      showTooltip: (text, x, y) => tooltipMgr?.showTooltip?.(text, x, y),
+      hideTooltip: () => tooltipMgr?.hideTooltip?.(),
       closeContextMenu,
       getActiveGroup,
       getFolderPlacementContainer,

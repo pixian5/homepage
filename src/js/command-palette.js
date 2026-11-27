@@ -167,6 +167,7 @@ var HomepageCommandPalette = (() => {
         overlayEl.setAttribute("role", "dialog");
         overlayEl.setAttribute("aria-modal", "true");
         overlayEl.setAttribute("aria-hidden", "true");
+        overlayEl.setAttribute("inert", "");
 
         const dialog = doc.createElement("div");
         dialog.className = "cmdk-dialog";
@@ -340,6 +341,7 @@ var HomepageCommandPalette = (() => {
       isOpen = true;
       overlayEl.classList.remove("hidden");
       overlayEl.setAttribute("aria-hidden", "false");
+      overlayEl.removeAttribute?.("inert");
       refreshList();
       inputEl.focus?.();
     }
@@ -349,6 +351,7 @@ var HomepageCommandPalette = (() => {
       isOpen = false;
       overlayEl.classList.add("hidden");
       overlayEl.setAttribute("aria-hidden", "true");
+      overlayEl.setAttribute("inert", "");
       previousFocus?.focus?.();
       previousFocus = null;
     }

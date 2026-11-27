@@ -254,4 +254,44 @@ describe("app-events-binder", () => {
     assert.equal(persisted, true);
     assert.equal(rendered, true);
   });
+
+  it("keeps tooltip visible when mouseout stays within the same [data-tooltip] container", () => {
+    const doc = createMockElement("doc");
+    const tooltipEvents = [];
+    const tooltipBtn = {
+      getAttribute: (name) => (name === "data-tooltip" ? "工具提示" : null),
+      closest: (sel) => (sel === "[data-tooltip]" ? tooltipBtn : null),
+    };
+    const childIcon = {
+      closest: (sel) => (sel === "[data-tooltip]" ? tooltipBtn : null),
+    };
+    const outsideEl = {
+      closest: () => null,
+    };
+
+    bindAppDomEvents({
+      elements: {},
+      getData: () => ({}),
+      getState: () => ({ activeGroupId: "g1", openFolderId: null, settingsOpen: false }),
+      setState: () => {},
+      actions: {
+        showTooltip: (text, x, y) => tooltipEvents.push({ type: "show", text, x, y }),
+        hideTooltip: () => tooltipEvents.push({ type: "hide" }),
+      },
+      managers: {},
+      constants: { recentGroupId: "__recent__" },
+      t: (k) => k,
+      doc,
+    });
+
+    doc.trigger("mouseover", { target: childIcon, clientX: 12, clientY: 24 });
+    // 从子图标移动到同按钮内另一个区域时不触发 hideTooltip
+    doc.trigger("mouseout", { target: childIcon, relatedTarget: tooltipBtn });
+    assert.deepEqual(tooltipEvents, [{ type: "show", text: "工具提示", x: 12, y: 24 }]);
+
+    // 离开整个按钮到达外部元素或窗口外时隐藏 tooltip
+    doc.trigger("mouseout", { target: tooltipBtn, relatedTarget: outsideEl });
+    doc.trigger("mouseout", { target: tooltipBtn, relatedTarget: null });
+    assert.equal(tooltipEvents.filter((e) => e.type === "hide").length, 2);
+  });
 });

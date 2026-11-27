@@ -55,6 +55,9 @@ function createFakePaletteDom() {
     setAttribute(k, v) {
       this.attributes[k] = String(v);
     }
+    removeAttribute(k) {
+      delete this.attributes[k];
+    }
     getAttribute(k) {
       return this.attributes[k];
     }
@@ -214,9 +217,12 @@ describe("command-palette", () => {
     input.dispatch("keydown", { key: "Enter" });
     assert.deepEqual(navigatedFolders, [{ id: "fld_dev", rootGroupId: "grp_all" }]);
 
-    // Escape 关闭并阻断事件冒泡
+    // Escape 关闭并阻断事件冒泡，且同步 inert 无障碍状态
     palette.open();
     assert.equal(palette.isOpen(), true);
+    const overlay = byId.get("commandPaletteOverlay");
+    assert.equal(overlay.getAttribute("aria-hidden"), "false");
+    assert.equal(overlay.getAttribute("inert"), undefined);
     let stopped = false;
     input.dispatch("keydown", {
       key: "Escape",
@@ -225,6 +231,8 @@ describe("command-palette", () => {
       },
     });
     assert.equal(palette.isOpen(), false);
+    assert.equal(overlay.getAttribute("aria-hidden"), "true");
+    assert.equal(overlay.getAttribute("inert"), "");
     assert.equal(stopped, true);
   });
 });

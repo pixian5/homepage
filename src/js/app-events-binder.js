@@ -172,6 +172,7 @@ export function bindAppDomEvents({
     doc.addEventListener("mouseout", (e) => {
       const target = e.target?.closest?.("[data-tooltip]");
       if (!target) return;
+      if (e.relatedTarget?.closest?.("[data-tooltip]") === target) return;
       actions?.hideTooltip?.();
     });
   }

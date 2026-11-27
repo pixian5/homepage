@@ -76,6 +76,31 @@
       );
       checks.push("新增书签与安全文本渲染");
       {
+        const badHoverRules = [];
+        for (const sheet of document.styleSheets) {
+          let rules = [];
+          try {
+            rules = [...(sheet.cssRules || [])];
+          } catch {
+            continue;
+          }
+          for (const rule of rules) {
+            const sel = rule.selectorText || "";
+            if (!sel.includes(":hover")) continue;
+            if (
+              (sel.includes(".tile") || sel.includes(".icon-btn")) &&
+              (rule.style?.transform || rule.style?.translate)
+            ) {
+              badHoverRules.push(`${sel} -> ${rule.style.transform || rule.style.translate}`);
+            }
+          }
+        }
+        if (badHoverRules.length) {
+          throw new Error(`检测到可能引起悬停跳动的位移样式：${badHoverRules.join("；")}`);
+        }
+        checks.push("卡片与按钮 :hover 零位移校验");
+      }
+      {
         document.dispatchEvent(
           new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true, cancelable: true }),
         );

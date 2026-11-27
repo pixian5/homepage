@@ -261,12 +261,19 @@ body {
   justify-content: center;
   cursor: pointer;
   transition:
-    transform 0.15s ease,
-    background 0.2s ease;
+    box-shadow 0.15s ease-out,
+    scale 0.15s ease-out,
+    border-color 0.2s ease,
+    background-color 0.2s ease;
 }
 .icon-btn:hover {
-  transform: translateY(-1px);
   background: var(--control-hover, rgba(33, 42, 58, 0.9));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .icon-btn:active {
+    scale: 0.97;
+  }
 }
 .icon-btn.danger {
   border-color: rgba(255, 107, 107, 0.6);
@@ -348,14 +355,21 @@ body {
   position: relative;
   cursor: pointer;
   transition:
+    box-shadow 0.18s ease-out,
+    scale 0.15s ease-out,
     transform 0.18s ease,
-    border 0.2s ease,
-    background 0.2s ease;
+    border-color 0.2s ease,
+    background-color 0.2s ease;
 }
 .tile:hover {
-  transform: translateY(-4px);
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.22);
   background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .tile:not(.touch-dragging):active {
+    scale: 0.97;
+  }
 }
 .tile.selected {
   outline: 2px solid rgba(255, 120, 120, 0.6);

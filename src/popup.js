@@ -633,3 +633,5 @@ if (typeof document !== "undefined" && document.getElementById("popupBookmarkLis
     document.body?.classList?.remove("hidden");
   });
 }
+
+export { applyPopupI18n, init as initPopup, renderPopupBookmarks, showPopupError };

@@ -1206,3 +1206,65 @@ body.sync-banner-open .app{padding-top:var(--sync-banner-height,0px);}
     scroll-behavior: auto !important;
   }
 }
+
+/* 窄屏、小窗口与独立 PWA 移动端响应式适配 */
+@media (max-width: 768px) {
+  .app {
+    padding: 14px 14px 18px;
+  }
+  .topbar {
+    height: auto;
+    min-height: var(--topbar-height);
+    gap: 10px;
+  }
+  .top-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+  }
+  .top-search {
+    grid-column: auto;
+    width: 100%;
+    max-width: 100%;
+    order: 1;
+  }
+  .top-search input {
+    width: 100%;
+    max-width: none;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .toolbar {
+    grid-column: auto;
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    order: 2;
+  }
+  .modal {
+    width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
+    max-height: 88vh;
+    padding: 18px 16px;
+  }
+  .cmdk-dialog {
+    width: calc(100vw - 24px);
+    max-height: 78vh;
+  }
+}
+
+@media (max-width: 520px) {
+  .app {
+    padding: 10px 10px 14px;
+  }
+  .toolbar {
+    gap: 6px;
+    justify-content: center;
+  }
+  .toolbar .icon-btn {
+    flex: 1 1 auto;
+    padding: 0 10px;
+    font-size: 0.92rem;
+  }
+}

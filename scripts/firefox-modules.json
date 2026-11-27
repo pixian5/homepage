@@ -45,6 +45,7 @@
     "sync_http_transport.js",
     "sync_device_auth.js",
     "sync_state_store.js",
+    "sync_conflict_resolver.js",
     "sync_engine.js",
     "sync-banner.js",
     "sync-startup-coordinator.js",

@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { containsAllChars, getPinyinInitials, isSubsequence, matchesSearchQuery } from "../src/js/pinyin-match.js";
+import {
+  containsAllChars,
+  getCharPinyins,
+  getPinyinFullVariants,
+  getPinyinInitials,
+  isSubsequence,
+  matchesSearchQuery,
+} from "../src/js/pinyin-match.js";
 
 test("getPinyinInitials extracts initials for Chinese characters accurately", () => {
   assert.equal(getPinyinInitials("百度"), "bd");
@@ -53,4 +60,28 @@ test("matchesSearchQuery supports exact text, url substring, and fuzzy pinyin", 
   assert.ok(!matchesSearchQuery("哔哩哔哩", "https://bilibili.com", "tx"));
   // 空关键词全匹配
   assert.ok(matchesSearchQuery("百度", "https://baidu.com", ""));
+});
+
+test("getCharPinyins and getPinyinFullVariants support full pinyin and polyphones", () => {
+  assert.deepEqual(getCharPinyins("百"), ["bai"]);
+  assert.deepEqual(getCharPinyins("重"), ["chong", "zhong"]);
+  assert.deepEqual(getCharPinyins("A"), ["a"]);
+
+  assert.deepEqual(getPinyinFullVariants("冒烟书签"), ["maoyanshuqian"]);
+  assert.deepEqual(getPinyinFullVariants("重庆地图"), ["chongqingditu", "zhongqingditu"]);
+  assert.deepEqual(getPinyinFullVariants("GitHub中文"), ["githubzhongwen"]);
+});
+
+test("matchesSearchQuery supports full pinyin matching alongside initials", () => {
+  assert.ok(matchesSearchQuery("冒烟书签", "https://example.com", "maoyan"));
+  assert.ok(matchesSearchQuery("冒烟书签", "https://example.com", "maoyanshuqian"));
+  assert.ok(matchesSearchQuery("冒烟书签", "https://example.com", "mysq"));
+
+  assert.ok(matchesSearchQuery("重庆地图", "https://map.example.com", "chongqing"));
+  assert.ok(matchesSearchQuery("重庆地图", "https://map.example.com", "zhongqing"));
+  assert.ok(matchesSearchQuery("设置", "https://example.com/settings", "shezhi"));
+  assert.ok(matchesSearchQuery("百度", "https://baidu.com", "baidu"));
+  assert.ok(matchesSearchQuery("网易云音乐", "https://music.163.com", "wangyiyun"));
+
+  assert.ok(!matchesSearchQuery("冒烟书签", "https://example.com", "tengxun"));
 });

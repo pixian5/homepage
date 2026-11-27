@@ -3,6 +3,7 @@
  */
 
 import { isLocalTrimWarning } from "./shared-utils.js";
+import { createSyncConflictResolver } from "./sync_conflict_resolver.js";
 import { decryptSyncDocument, encryptSyncDocument, isEncryptedSyncEnvelope } from "./sync_crypto.js";
 import { createSyncDeviceAuth } from "./sync_device_auth.js";
 import { httpConfirmSyncState, httpPairDevice, httpPullState, httpPushState } from "./sync_http_transport.js";
@@ -1012,186 +1013,38 @@ export async function flushOutbox() {
  * 启用时初始化状态并尝试首同步
  */
 
+const conflictResolver = createSyncConflictResolver({
+  enqueue,
+  getData: () => _getData(),
+  getStatus: () => _status,
+  getPendingConflictRemote: () => _pendingConflictRemote,
+  setPendingConflictRemote: (val) => {
+    _pendingConflictRemote = val;
+  },
+  saveState,
+  readRemoteSyncDocument,
+  writeRemoteSyncDocument,
+  applyConflictLocalState,
+  pushNowImpl,
+  getOrCreateDeviceId,
+  createDocId,
+  toSyncDocument,
+  hashSyncDocument,
+  mergeHomepage,
+  syncDocumentToHomepageShape,
+  HOMEPAGE_SCHEMA_VERSION,
+});
+
 /**
  * 解决 docId 冲突。
  * @param {"merge"|"local"|"remote"} choice
  */
 export async function resolveDocConflict(choice) {
-  return enqueue(async () => {
-    let remote = _pendingConflictRemote;
-    if (!remote) {
-      // 老版本写入的状态可能只有 need_setup 而没有冲突上下文；
-      // 只要云端确实与本机 docId 不同，就现场恢复上下文，而不是让按钮点了没反应。
-      if (_status.status !== "need_setup") {
-        return { ok: false, reason: "no_conflict" };
-      }
-      const current = await readRemoteSyncDocument();
-      if (!current.ok) return { ok: false, reason: current.reason || "remote_unavailable" };
-      if (!_status.docId || current.doc.docId === _status.docId) {
-        // 云端已经不是冲突文档了，清掉过期状态
-        _status.status = "idle";
-        _status.lastError = "";
-        await saveState();
-        return { ok: false, reason: "no_conflict" };
-      }
-      remote = current.doc;
-      _pendingConflictRemote = remote;
-      _status.conflictRemoteDocId = remote.docId;
-      _status.conflictLocalDocId = _status.docId;
-      await saveState();
-    }
-    // 状态从存储恢复时只有 docId（占位对象），没有节点/分组内容。
-    // merge/remote 分支都需要完整远端文档，这里重新拉取一次。
-    if (!Array.isArray(remote.nodes) && !Array.isArray(remote.groups)) {
-      const fresh = await readRemoteSyncDocument();
-      if (!fresh.ok) {
-        return { ok: false, reason: fresh.reason || "remote_unavailable" };
-      }
-      if (remote.docId && fresh.doc.docId !== remote.docId) {
-        // 云端在这期间又被换成了第三个文档，保持冲突状态让用户重新判断
-        _pendingConflictRemote = fresh.doc;
-        _status.conflictRemoteDocId = fresh.doc.docId;
-        await saveState();
-        return { ok: false, reason: "doc_conflict" };
-      }
-      // remote.docId 为空表示老状态没有记录，直接采用现场拉到的文档
-
-      remote = fresh.doc;
-      _pendingConflictRemote = remote;
-    }
-    const deviceId = await getOrCreateDeviceId();
-    const local = _getData();
-
-    if (choice === "local") {
-      // 本机覆盖云端：采用本机 docId 强制推送
-      const localDocId = _status.conflictLocalDocId || _status.docId || createDocId();
-      _status.docId = localDocId;
-      // 提高 revision 盖过远端
-      const remoteRead = await readRemoteSyncDocument();
-      let base = 0;
-      if (remoteRead.ok) base = Number(remoteRead.doc.revision) || 0;
-      const doc = toSyncDocument(local, {
-        deviceId,
-        docId: _status.docId,
-        revision: base + 1,
-        writtenAt: Date.now(),
-      });
-      doc.contentHash = hashSyncDocument(doc);
-      const err = await writeRemoteSyncDocument(doc);
-      if (err) {
-        const errorCode = typeof err === "string" ? err : err?.code || "push_failed";
-        if (typeof err === "object" && err?.remote?.doc) {
-          _pendingConflictRemote = err.remote.doc;
-          _status.conflictRemoteDocId = err.remote.doc.docId || _status.conflictRemoteDocId;
-          if (err.etag) _status.lastRemoteEtag = err.etag;
-        }
-        _status.conflictLocalDocId = localDocId;
-        _status.status = "need_setup";
-        _status.lastError = errorCode;
-        await saveState();
-        return { ok: false, reason: errorCode };
-      }
-      _pendingConflictRemote = null;
-      delete _status.conflictRemoteDocId;
-      delete _status.conflictLocalDocId;
-      _status.lastPushAt = Date.now();
-      _status.lastRemoteRevision = doc.revision;
-      _status.status = "idle";
-      // 冲突已解决，必须清掉 doc_conflict，否则状态栏会一直显示上一次的错误
-      _status.lastError = "";
-      await saveState();
-      return { ok: true, choice: "local" };
-    }
-
-    if (choice === "remote") {
-      // 云端替换本机：接受远端 docId，强制应用远端（绕过 docId 检查）
-      // 重要：remote 可能是 loadState 恢复出的占位对象（只有 docId），
-      // 必须重新拉取完整文档，否则会用空对象覆盖本地。
-      let forceDoc = { ...remote };
-      if (!Array.isArray(forceDoc.nodes) || !Array.isArray(forceDoc.groups)) {
-        const fresh = await readRemoteSyncDocument();
-        if (!fresh.ok) {
-          return { ok: false, reason: fresh.reason || "remote_unavailable" };
-        }
-        forceDoc = fresh.doc;
-        _status.lastRemoteEtag = fresh.etag || _status.lastRemoteEtag;
-      }
-      // 临时清空 local doc 绑定后 apply
-      const merged = mergeHomepage(
-        {
-          schemaVersion: HOMEPAGE_SCHEMA_VERSION,
-          settings: { ...(local.settings || {}) },
-          groups: [],
-          nodes: {},
-          backups: local.backups || [],
-          lastUpdated: 0,
-        },
-        forceDoc,
-        { deviceId, now: Date.now() },
-      );
-      let nextState;
-      let mergedStats;
-      if (!merged.ok) {
-        const shape = syncDocumentToHomepageShape(forceDoc);
-        nextState = {
-          schemaVersion: HOMEPAGE_SCHEMA_VERSION,
-          settings: {
-            ...(local.settings || {}),
-            ...(shape.settings || {}),
-            backgroundCustom: local.settings?.backgroundCustom || shape.settings?.backgroundCustom || "",
-            syncEnabled: true,
-          },
-          groups: shape.groups,
-          nodes: shape.nodes,
-          backups: local.backups || [],
-          lastUpdated: Date.now(),
-        };
-        mergedStats = { applied: true, choice: "remote" };
-      } else {
-        merged.state.settings = {
-          ...merged.state.settings,
-          backgroundCustom: local.settings?.backgroundCustom || merged.state.settings?.backgroundCustom || "",
-          syncEnabled: true,
-        };
-        nextState = merged.state;
-        mergedStats = { ...merged.stats, choice: "remote" };
-      }
-      const committed = await applyConflictLocalState(nextState, forceDoc.docId, mergedStats);
-      if (!committed.ok) return committed;
-      _status.status = "idle";
-      _status.lastError = "";
-      _status.lastPullAt = Date.now();
-      _status.lastRemoteRevision = Number(forceDoc.revision) || 0;
-      await saveState();
-      // 再推一次确认
-      await pushNowImpl("resolve_remote");
-      return { ok: true, choice: "remote" };
-    }
-
-    // merge：两侧并集，docId 采用远端（已有云）并 push
-    const merged = mergeHomepage(local, remote, { deviceId, now: Date.now() });
-    if (!merged.ok) {
-      // 若因 empty 等失败，仍尝试以 placements 并集：放宽 — 用远端 docId 强制 merge 忽略 doc check already done
-      return { ok: false, reason: merged.reason || "merge_failed" };
-    }
-    const committed = await applyConflictLocalState(merged.state, remote.docId, { ...merged.stats, choice: "merge" });
-    if (!committed.ok) return committed;
-    _status.status = "idle";
-    _status.lastError = "";
-    _status.lastPullAt = Date.now();
-    await saveState();
-    await pushNowImpl("resolve_merge");
-    return { ok: true, choice: "merge" };
-  });
+  return conflictResolver.resolveDocConflict(choice);
 }
 
 export function getPendingConflict() {
-  if (!_pendingConflictRemote) return null;
-  return {
-    localDocId: _status.conflictLocalDocId || _status.docId,
-    remoteDocId: _status.conflictRemoteDocId || _pendingConflictRemote.docId,
-    remoteRevision: _pendingConflictRemote.revision,
-  };
+  return conflictResolver.getPendingConflict();
 }
 
 export async function onSyncEnabledChanged(enabled) {

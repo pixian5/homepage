@@ -58,32 +58,36 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
 
   let importInFlight = false;
 
-  /** 导出/手动展示前清除顶层与历史备份中的同步明文凭据，避免 Token 与 E2EE 口令泄漏 */
+  const SYNC_SECRET_KEYS = ["syncServerToken", "syncE2eePassphrase", "syncDeviceSecret", "syncDeviceSecretUrl"];
+
+  function clearSettingsSyncSecrets(settings) {
+    if (!settings || typeof settings !== "object") return;
+    for (const key of SYNC_SECRET_KEYS) {
+      if (Object.hasOwn(settings, key) || settings[key]) {
+        settings[key] = "";
+      }
+    }
+  }
+
+  /** 导出/手动展示前清除顶层与历史备份中的同步明文凭据，避免 Token、设备密钥与 E2EE 口令泄漏 */
   function sanitizeDataForExport(source) {
     const copy = cloneDataSnapshot(source || {});
-    if (copy?.settings && typeof copy.settings === "object") {
-      copy.settings.syncServerToken = "";
-      copy.settings.syncE2eePassphrase = "";
-    }
+    clearSettingsSyncSecrets(copy?.settings);
     if (Array.isArray(copy?.backups)) {
       for (const entry of copy.backups) {
-        if (entry?.data?.settings && typeof entry.data.settings === "object") {
-          entry.data.settings.syncServerToken = "";
-          entry.data.settings.syncE2eePassphrase = "";
-        }
+        clearSettingsSyncSecrets(entry?.data?.settings);
       }
     }
     return copy;
   }
 
-  /** 导入脱敏导出包或恢复旧备份时，若目标缺少凭据则保留当前本机的同步 Token 与 E2EE 口令 */
+  /** 导入脱敏导出包或恢复旧备份时，若目标缺少凭据则保留当前本机的同步 Token、设备私钥与 E2EE 口令 */
   function preserveLocalSyncSecrets(targetSettings, currentSettings) {
     if (!targetSettings || !currentSettings) return;
-    if (!targetSettings.syncServerToken && currentSettings.syncServerToken) {
-      targetSettings.syncServerToken = currentSettings.syncServerToken;
-    }
-    if (!targetSettings.syncE2eePassphrase && currentSettings.syncE2eePassphrase) {
-      targetSettings.syncE2eePassphrase = currentSettings.syncE2eePassphrase;
+    for (const key of SYNC_SECRET_KEYS) {
+      if (!targetSettings[key] && currentSettings[key]) {
+        targetSettings[key] = currentSettings[key];
+      }
     }
   }
 

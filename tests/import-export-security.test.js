@@ -165,6 +165,8 @@ describe("import-export sync secret hygiene & bundle metadata", () => {
     data.settings.syncServerToken = "top-secret-token";
     data.settings.syncE2eeEnabled = true;
     data.settings.syncE2eePassphrase = "top-secret-e2ee-passphrase";
+    data.settings.syncDeviceSecret = "top-secret-device-key";
+    data.settings.syncDeviceSecretUrl = "https://sync.example.com";
     data.backups = [
       {
         id: "bak_legacy",
@@ -175,6 +177,8 @@ describe("import-export sync secret hygiene & bundle metadata", () => {
             ...defaultSettings(),
             syncServerToken: "legacy-token-in-backup",
             syncE2eePassphrase: "legacy-pass-in-backup",
+            syncDeviceSecret: "legacy-device-in-backup",
+            syncDeviceSecretUrl: "https://sync.example.com",
           },
         },
       },
@@ -193,12 +197,17 @@ describe("import-export sync secret hygiene & bundle metadata", () => {
     assert.equal(parsed.settings.syncServerUrl, "https://sync.example.com");
     assert.equal(parsed.settings.syncServerToken, "");
     assert.equal(parsed.settings.syncE2eePassphrase, "");
+    assert.equal(parsed.settings.syncDeviceSecret, "");
+    assert.equal(parsed.settings.syncDeviceSecretUrl, "");
     assert.equal(parsed.backups[0].data.settings.syncServerToken, "");
     assert.equal(parsed.backups[0].data.settings.syncE2eePassphrase, "");
+    assert.equal(parsed.backups[0].data.settings.syncDeviceSecret, "");
+    assert.equal(parsed.backups[0].data.settings.syncDeviceSecretUrl, "");
 
     // 内存原对象不受影响
     assert.equal(data.settings.syncServerToken, "top-secret-token");
     assert.equal(data.settings.syncE2eePassphrase, "top-secret-e2ee-passphrase");
+    assert.equal(data.settings.syncDeviceSecret, "top-secret-device-key");
   });
 
   it("redacts sync secrets in openManualExportModal fallback when clipboard denies access", async () => {
@@ -223,6 +232,8 @@ describe("import-export sync secret hygiene & bundle metadata", () => {
     data.settings.syncServerToken = "current-master-token";
     data.settings.syncE2eeEnabled = true;
     data.settings.syncE2eePassphrase = "rotated-passphrase";
+    data.settings.syncDeviceSecret = "paired-device-secret";
+    data.settings.syncDeviceSecretUrl = "https://sync.example.com";
     const snap = createBackupSnapshot(data);
     snap.data.settings.fontSize = 19;
     data.backups = [snap];
@@ -233,6 +244,8 @@ describe("import-export sync secret hygiene & bundle metadata", () => {
     await ctx.$("__backupRestoreBtn").click();
     assert.equal(ctx.getData().settings.fontSize, 19);
     assert.equal(ctx.getData().settings.syncServerToken, "current-master-token");
+    assert.equal(ctx.getData().settings.syncE2eePassphrase, "rotated-passphrase");
+    assert.equal(ctx.getData().settings.syncDeviceSecret, "paired-device-secret");
     assert.equal(ctx.getData().settings.syncE2eePassphrase, "rotated-passphrase");
 
     // 替换导入脱敏 JSON 时也保留当前本机凭据

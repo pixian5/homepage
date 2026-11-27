@@ -276,4 +276,29 @@ describe("i18n-manager applyStaticI18n", () => {
     manager.applyStaticI18n();
     assert.equal(checkEl.childNodes[0].nodeValue, " 不再提示");
   });
+
+  it("resolves every static t() key used across src/js/*.js in all 8 supported languages", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { APP_SUPPORTED_LANGUAGES, translateAppText } = await import("../src/js/app-i18n.js");
+    const jsDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../src/js");
+    const keyMatches = new Set();
+    for (const file of fs.readdirSync(jsDir)) {
+      if (!file.endsWith(".js") || file === "app-i18n.js" || file === "popup-i18n.js") continue;
+      const text = fs.readFileSync(path.join(jsDir, file), "utf8");
+      for (const m of text.matchAll(/\bt\(\s*["']([a-zA-Z0-9_.-]+)["']/g)) {
+        keyMatches.add(m[1]);
+      }
+    }
+    assert.ok(keyMatches.size >= 200);
+    const missing = [];
+    for (const { code } of APP_SUPPORTED_LANGUAGES) {
+      for (const key of keyMatches) {
+        if (translateAppText(code, key) === key) {
+          missing.push(`${code}:${key}`);
+        }
+      }
+    }
+    assert.deepEqual(missing, []);
+  });
 });

@@ -518,4 +518,49 @@ describe("sync_crypto & end-to-end encrypted sync", () => {
       globalThis.fetch = realFetch;
     }
   });
+
+  it("encrypts outbox payload in storage when pushNow fails under E2EE", async () => {
+    const stor = makeMemoryStorage();
+    globalThis.chrome = { runtime: { lastError: null }, storage: { local: stor.area } };
+    let data = defaultData();
+    Object.assign(data.settings, {
+      syncEnabled: true,
+      syncServerUrl: "http://127.0.0.1:1",
+      syncServerToken: "tok",
+      syncE2eeEnabled: true,
+      syncE2eePassphrase: "OutboxSecret#99",
+    });
+    data.nodes.itm_secret_outbox = {
+      id: "itm_secret_outbox",
+      type: "item",
+      title: "机密发件箱书签标题",
+      url: "https://secret-outbox.example/private",
+      updatedAt: Date.now(),
+      updatedBy: "",
+    };
+    data.groups[0].nodes.push("itm_secret_outbox");
+
+    initSyncEngine({
+      getData: () => data,
+      setData: (next) => {
+        data = next;
+      },
+      saveLocal: async () => null,
+    });
+
+    const failed = await pushNow("manual");
+    assert.equal(failed.ok, false);
+
+    const stored = await stor.area.get("homepage_sync_outbox");
+    const outbox = stored.homepage_sync_outbox;
+    assert.ok(Array.isArray(outbox) && outbox.length === 1);
+    const payload = outbox[0].payload;
+    assert.equal(isEncryptedSyncEnvelope(payload), true);
+    const serialized = JSON.stringify(payload);
+    assert.equal(serialized.includes("机密发件箱书签标题"), false);
+    assert.equal(serialized.includes("secret-outbox.example"), false);
+
+    const decrypted = await decryptSyncDocument(payload, "OutboxSecret#99");
+    assert.equal(decrypted.nodes[0].title, "机密发件箱书签标题");
+  });
 });

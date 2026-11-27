@@ -313,6 +313,7 @@ async function writeRemoteSyncDocument(doc) {
   });
   if (res.ok) {
     _status.lastRemoteEtag = res.etag || _status.lastRemoteEtag;
+    if (Number.isSafeInteger(res.epoch)) _status.lastRemoteEpoch = res.epoch;
     if (res.revision) doc.revision = res.revision;
     return null;
   }
@@ -326,6 +327,7 @@ async function writeRemoteSyncDocument(doc) {
         remote: { ...res.remote, doc: decoded.doc },
         etag: res.etag,
         revision: res.revision,
+        epoch: res.epoch,
       };
     }
     return "precondition_failed";
@@ -738,9 +740,10 @@ async function pushNowImpl(reason = "manual") {
       const remoteDoc = writeErr.remote?.doc;
       if (remoteDoc) {
         baseRevision = Number(writeErr.remote.revision || remoteDoc.revision) || baseRevision;
-        // 412 响应携带服务端最新 etag，必须立即采纳；
-        // 否则后续重试仍带旧 If-Match，只会一次次再 412 直到重试耗尽
+        // 412 响应携带服务端最新 etag / epoch，必须立即采纳；
+        // 否则后续重试仍带旧 If-Match / X-Sync-Epoch，只会一次次再 412/409 直到重试耗尽
         if (writeErr.etag) _status.lastRemoteEtag = writeErr.etag;
+        if (Number.isSafeInteger(writeErr.epoch)) _status.lastRemoteEpoch = writeErr.epoch;
         const applied = await applyRemoteDoc(remoteDoc, deviceId, "push_412_pull");
         if (!applied.ok) {
           lastErr = applied.reason || "merge_failed";
@@ -788,15 +791,26 @@ async function pushNowImpl(reason = "manual") {
 
   _status.status = "error";
   _status.lastError = lastErr || "push_failed";
-  await enqueueOutbox(
-    toSyncDocument(_getData(), {
-      deviceId,
-      docId: _status.docId,
-      revision: baseRevision + 1,
-      writtenAt: Date.now(),
-    }),
-    lastErr,
-  );
+  const outboxDoc = toSyncDocument(_getData(), {
+    deviceId,
+    docId: _status.docId,
+    revision: baseRevision + 1,
+    writtenAt: Date.now(),
+  });
+  let outboxPayload = outboxDoc;
+  const outboxE2ee = getE2eeConfig();
+  if (outboxE2ee.enabled) {
+    if (outboxE2ee.passphrase) {
+      try {
+        outboxPayload = await encryptSyncDocument(outboxDoc, outboxE2ee.passphrase);
+      } catch (_err) {
+        outboxPayload = { schema: "homepage.sync.e2ee.v1", docId: outboxDoc.docId, encrypted: true };
+      }
+    } else {
+      outboxPayload = { schema: "homepage.sync.e2ee.v1", docId: outboxDoc.docId, encrypted: true };
+    }
+  }
+  await enqueueOutbox(outboxPayload, lastErr);
   await saveState();
   return { ok: false, reason: lastErr || "push_failed" };
 }

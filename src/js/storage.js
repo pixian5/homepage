@@ -696,10 +696,13 @@ export function createBackupSnapshot(data) {
   const snapshotData = deepClone(data || {});
   // 备份快照不携带历史备份，避免递归膨胀导致存储清空
   snapshotData.backups = [];
-  // 备份快照不留存明文同步凭据，防止通过快照/导出泄漏
+  // 备份快照不留存明文同步凭据与设备私钥，防止通过快照/导出泄漏
   if (snapshotData.settings && typeof snapshotData.settings === "object") {
-    snapshotData.settings.syncServerToken = "";
-    snapshotData.settings.syncE2eePassphrase = "";
+    for (const key of ["syncServerToken", "syncE2eePassphrase", "syncDeviceSecret", "syncDeviceSecretUrl"]) {
+      if (Object.hasOwn(snapshotData.settings, key) || snapshotData.settings[key]) {
+        snapshotData.settings[key] = "";
+      }
+    }
   }
   return {
     id: `bak_${nowTs()}`,

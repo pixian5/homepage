@@ -108,12 +108,14 @@ jobs:
           "$FIREFOX_E2E_BINARY" --version
           npm run test:browser-smoke -- firefox
 
-      - name: Run Firefox persistence and sync UI E2E
+      - name: Run Firefox persistence and sync E2E
         env:
           FIREFOX_E2E_BINARY: ${{ steps.firefox.outputs.firefox-path }}
         run: |
           npm run test:firefox-persistence
           npm run test:firefox-sync-ui
+          npm run test:firefox-sync-flows
+          npm run test:firefox-sync-errors
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

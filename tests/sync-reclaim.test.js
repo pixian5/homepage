@@ -415,4 +415,76 @@ describe("墓碑回涌防御（reclaimedIds）", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("refuses destructive reclaim on E2EE envelopes without corrupting ciphertext", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "homepage-reclaim-e2ee."));
+    const dataFile = path.join(tempDir, "state.json");
+    const server = await startServer(dataFile, TOKEN);
+    const cfg = { baseUrl: server.baseUrl, token: TOKEN };
+    try {
+      // 先明文写入一条删除记录使 deletions 非空
+      const deleted = baseDoc("dev_a", "doc_e2ee_reclaim", 1, {
+        nodes: [
+          {
+            id: "n_old",
+            type: "item",
+            title: "旧书签",
+            url: "https://old.test/",
+            updatedAt: 2,
+            updatedBy: "dev_a",
+            deletedAt: 2,
+          },
+        ],
+      });
+      assert.equal((await httpPushState(cfg, deleted, { idempotencyKey: "e1" })).ok, true);
+
+      // 切换推送 E2EE 密文信封
+      const pulled = await httpPullState(cfg);
+      const envelope = {
+        schema: "homepage.sync.e2ee.v1",
+        schemaVersion: 1,
+        alg: "PBKDF2-SHA256+AES-256-GCM",
+        iterations: 150000,
+        docId: "doc_e2ee_reclaim",
+        revision: pulled.revision + 1,
+        deviceId: "dev_a",
+        writtenAt: Date.now(),
+        salt: "c2FsdA==",
+        iv: "aXYxMjM0NTY3ODkw",
+        ciphertext: "Y2lwaGVydGV4dA==",
+        contentHash: "",
+      };
+      envelope.contentHash = hashSyncDocument(envelope);
+      assert.equal((await httpPushState(cfg, envelope, { ifMatch: pulled.etag, idempotencyKey: "e2" })).ok, true);
+
+      const health = await (await fetch(`${server.baseUrl}/health`)).json();
+      assert.equal(health.encrypted, true);
+      assert.equal(health.reclaimCandidatesCount, 0);
+      assert.ok(health.snapshotCount >= 1);
+
+      const dryRunRes = await api(server.baseUrl, TOKEN, "/v1/sync/reclaim", {
+        method: "POST",
+        body: JSON.stringify({ dryRun: true }),
+      });
+      assert.equal(dryRunRes.status, 200);
+      assert.equal(dryRunRes.body.encrypted, true);
+      assert.equal(dryRunRes.body.candidateCount, 0);
+
+      const forceRes = await api(server.baseUrl, TOKEN, "/v1/sync/reclaim", {
+        method: "POST",
+        body: JSON.stringify({ dryRun: false, confirm: "RECLAIM" }),
+      });
+      assert.equal(forceRes.status, 409);
+      assert.equal(forceRes.body.error, "reclaim_unsupported_for_e2ee");
+
+      const afterPulled = await httpPullState(cfg);
+      assert.equal(afterPulled.doc.schema, "homepage.sync.e2ee.v1");
+      assert.equal(afterPulled.doc.nodes, undefined);
+      assert.equal(afterPulled.doc.groups, undefined);
+      assert.equal(afterPulled.doc.placements, undefined);
+    } finally {
+      await stopServer(server.child);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

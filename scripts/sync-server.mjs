@@ -319,19 +319,35 @@ async function loadFromDisk() {
   console.log("[sync-server] no existing state");
 }
 
+async function listSnapshotFilenames() {
+  try {
+    const dir = path.join(path.dirname(DATA_FILE), ".snapshots");
+    const prefix = `${path.basename(DATA_FILE)}.`;
+    const entries = await readdir(dir);
+    return entries.filter((name) => name.startsWith(prefix) && name.endsWith(".json")).sort();
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn("[sync-server] snapshot listing failed:", error?.message || error);
+    }
+    return [];
+  }
+}
+
+async function countHistorySnapshots() {
+  return (await listSnapshotFilenames()).length;
+}
+
 async function rotateHistorySnapshot() {
   if (MAX_HISTORY_SNAPSHOTS <= 0) return;
   try {
     const dir = path.join(path.dirname(DATA_FILE), ".snapshots");
-    const baseName = path.basename(DATA_FILE);
-    const prefix = `${baseName}.`;
+    const prefix = `${path.basename(DATA_FILE)}.`;
     await mkdir(dir, { recursive: true });
     snapshotSeq = (snapshotSeq + 1) % 10000;
     const stamp = `${String(Date.now()).padStart(15, "0")}-${String(snapshotSeq).padStart(4, "0")}`;
     const snapPath = path.join(dir, `${prefix}${stamp}.json`);
     await copyFile(DATA_FILE, snapPath);
-    const entries = await readdir(dir);
-    const matching = entries.filter((name) => name.startsWith(prefix) && name.endsWith(".json")).sort();
+    const matching = await listSnapshotFilenames();
     const overflow = matching.length - MAX_HISTORY_SNAPSHOTS;
     if (overflow > 0) {
       await Promise.all(matching.slice(0, overflow).map((name) => rm(path.join(dir, name), { force: true })));
@@ -574,7 +590,7 @@ function collectNewDeletions(doc, revision, previous = {}, reclaimedIds = []) {
  * 且设备确认的 epoch 与当前 epoch 一致（旧代际的确认不算数）。
  */
 function computeReclaimCandidates(snapshot) {
-  if (!snapshot) return [];
+  if (!snapshot || isEncryptedSyncEnvelope(snapshot.doc)) return [];
   const epoch = snapshot.epoch || 0;
   const devices = Object.values(snapshot.devices || {});
   if (!devices.length) return [];
@@ -675,6 +691,7 @@ const server = createServer(async (req, res) => {
       ok: true,
       service: "homepage-sync",
       hasState: !!state,
+      encrypted: isEncryptedSyncEnvelope(state?.doc),
       // 客户端可据此区分：open 时可留空 Token；true 时需填与启动 TOKEN 一致
       authRequired: !!TOKEN,
       // 便于判断「服务活着但数据停滞」：revision/updatedAt 是否在推进
@@ -682,6 +699,7 @@ const server = createServer(async (req, res) => {
       updatedAt: state?.updatedAt ?? null,
       epoch: state?.epoch ?? 0,
       deviceCount: state ? Object.keys(state.devices || {}).length : 0,
+      snapshotCount: await countHistorySnapshots(),
       // 墓碑与可回收计数：前端健康度仪表盘直接展示，无需另拉设备表
       tombstoneCount: state ? Object.keys(state.deletions || {}).length : 0,
       reclaimCandidatesCount: state ? computeReclaimCandidates(state).length : 0,
@@ -968,6 +986,33 @@ const server = createServer(async (req, res) => {
       Number.isSafeInteger(body?.maxCandidates) && body.maxCandidates >= 0 ? body.maxCandidates : null;
     const result = await enqueueWrite(async () => {
       if (!state) return { status: 409, body: { error: "no_state" }, headers: {} };
+      if (isEncryptedSyncEnvelope(state.doc)) {
+        if (dryRun) {
+          return {
+            status: 200,
+            body: {
+              ok: true,
+              dryRun: true,
+              encrypted: true,
+              candidates: [],
+              candidateCount: 0,
+              epoch: state.epoch || 0,
+              revision: state.revision,
+            },
+            headers: {},
+          };
+        }
+        return {
+          status: 409,
+          body: {
+            error: "reclaim_unsupported_for_e2ee",
+            encrypted: true,
+            epoch: state.epoch || 0,
+            revision: state.revision,
+          },
+          headers: {},
+        };
+      }
       const candidates = computeReclaimCandidates(state);
       if (dryRun) {
         return {

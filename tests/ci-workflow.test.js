@@ -32,6 +32,8 @@ describe("CI 浏览器冒烟配置", () => {
       assert.match(ci, /node scripts\/bundle-firefox\.mjs/);
       assert.match(ci, /npm run test:firefox-persistence/);
       assert.match(ci, /npm run test:firefox-sync-ui/);
+      assert.match(ci, /npm run test:firefox-sync-flows/);
+      assert.match(ci, /npm run test:firefox-sync-errors/);
     });
   });
 

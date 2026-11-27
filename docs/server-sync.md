@@ -158,5 +158,8 @@ curl -sS -X POST "$SYNC_URL/v1/sync/reclaim" \
   -d '{"dryRun":false,"confirm":"RECLAIM","maxCandidates":10}'
 ```
 
+> **E2EE 端到端加密模式边界**：服务端无法解析密文信封（`homepage.sync.e2ee.v1`）内的节点与删除状态。当云端当前为 E2EE 密文时，`GET /health` 会返回 `"encrypted": true` 与 `"reclaimCandidatesCount": 0`（以及 `.snapshots/` 快照数 `"snapshotCount"`）；`POST /v1/sync/reclaim` 执行实操（`dryRun: false`）将返回 HTTP `409 reclaim_unsupported_for_e2ee` 以保护密文信封结构完整，E2EE 模式下墓碑过期清理由客户端 `pruneSyncTombstones` 承担。
+
+
 缺少 `confirm: "RECLAIM"` 会被拒绝；候选数超过 `maxCandidates` 也会被拒绝。回收成功后
 epoch 递增，所有设备必须重新确认新基线。未完成人工核对前不要自动化调用真实回收。

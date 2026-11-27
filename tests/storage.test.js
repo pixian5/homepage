@@ -118,11 +118,21 @@ describe("storage", async () => {
     assert.ok(Array.isArray(data.backups));
   });
 
-  it("createBackupSnapshot removes backups recursively", () => {
+  it("createBackupSnapshot removes backups recursively and strips sync secrets", () => {
     const data = defaultData();
     data.backups = [{ id: "old" }];
+    data.settings.language = "en";
+    data.settings.fontSize = 18;
+    data.settings.syncServerToken = "secret-token";
+    data.settings.syncE2eePassphrase = "secret-passphrase";
     const snapshot = createBackupSnapshot(data);
     assert.equal(snapshot.data.backups.length, 0);
+    assert.equal(snapshot.data.settings.syncServerToken, "");
+    assert.equal(snapshot.data.settings.syncE2eePassphrase, "");
+    assert.equal(snapshot.data.settings.language, "en");
+    assert.equal(snapshot.data.settings.fontSize, 18);
+    assert.equal(data.settings.syncServerToken, "secret-token");
+    assert.equal(data.settings.syncE2eePassphrase, "secret-passphrase");
     assert.ok(snapshot.id.startsWith("bak_"));
     assert.ok(snapshot.ts > 0);
   });

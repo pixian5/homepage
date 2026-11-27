@@ -58,6 +58,35 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
 
   let importInFlight = false;
 
+  /** 导出/手动展示前清除顶层与历史备份中的同步明文凭据，避免 Token 与 E2EE 口令泄漏 */
+  function sanitizeDataForExport(source) {
+    const copy = cloneDataSnapshot(source || {});
+    if (copy?.settings && typeof copy.settings === "object") {
+      copy.settings.syncServerToken = "";
+      copy.settings.syncE2eePassphrase = "";
+    }
+    if (Array.isArray(copy?.backups)) {
+      for (const entry of copy.backups) {
+        if (entry?.data?.settings && typeof entry.data.settings === "object") {
+          entry.data.settings.syncServerToken = "";
+          entry.data.settings.syncE2eePassphrase = "";
+        }
+      }
+    }
+    return copy;
+  }
+
+  /** 导入脱敏导出包或恢复旧备份时，若目标缺少凭据则保留当前本机的同步 Token 与 E2EE 口令 */
+  function preserveLocalSyncSecrets(targetSettings, currentSettings) {
+    if (!targetSettings || !currentSettings) return;
+    if (!targetSettings.syncServerToken && currentSettings.syncServerToken) {
+      targetSettings.syncServerToken = currentSettings.syncServerToken;
+    }
+    if (!targetSettings.syncE2eePassphrase && currentSettings.syncE2eePassphrase) {
+      targetSettings.syncE2eePassphrase = currentSettings.syncE2eePassphrase;
+    }
+  }
+
   /**
    * 将持久化等待期间发生的外部并发原地编辑（新增/修改/删除节点、分组、设置）合并回回滚基线，
    * 避免导入写盘失败回滚时顺带抹掉用户在保存窗口期内的正常编辑。
@@ -188,7 +217,7 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
 
   async function exportJsonToClipboard() {
     try {
-      const payload = JSON.stringify(getData(), null, 2);
+      const payload = JSON.stringify(sanitizeDataForExport(getData()), null, 2);
       await navigator.clipboard.writeText(payload);
       toast(t("settings.export.clipboardOk"), "success");
     } catch (err) {
@@ -199,7 +228,7 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
 
   function openManualExportModal() {
     void leaveSettingsForSubpanel();
-    const payload = JSON.stringify(getData(), null, 2);
+    const payload = JSON.stringify(sanitizeDataForExport(getData()), null, 2);
     const modalHtml = html`
       <h2>${t("settings.export.title")}</h2>
       <div class="section">
@@ -257,6 +286,7 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
         await commitImport(() => {
           pushBackup();
           if (mode === "replace") {
+            preserveLocalSyncSecrets(repairedIncoming.settings, getData()?.settings);
             setData(repairedIncoming);
             resetSettingsClockBaseline?.(getData());
             resetPlacementClockBaseline?.(getData());
@@ -456,6 +486,7 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
         // 恢复前先做运行时 schema 校验，避免损坏的备份快照原样进入运行态
         const restoredData = repairHomepageData(cloneDataSnapshot(backup.data), defaultSettings());
         restoredData.backups = backupsBeforeRestore;
+        preserveLocalSyncSecrets(restoredData.settings, getData()?.settings);
         // 恢复后对所有节点 URL 做协议白名单校验，丢弃危险协议
         if (restoredData?.nodes) {
           for (const id of Object.keys(restoredData.nodes)) {
@@ -518,14 +549,18 @@ export function createImportExport(ctx, refreshSyncStatusLine) {
       await runWithButtonState($("btnSyncExportBundle"), t("settings.sync.exporting"), async () => {
         try {
           const deviceId = await getOrCreateDeviceId();
+          const st = typeof getSyncStatus === "function" ? getSyncStatus() : {};
           const bundle = exportSyncBundle(getData(), {
             deviceId,
-            docId: createDocId(),
-            platform: /firefox/i.test(navigator.userAgent)
-              ? "firefox"
-              : /safari/i.test(navigator.userAgent) && !/chrome|crios|android/i.test(navigator.userAgent)
-                ? "safari"
-                : "chrome",
+            docId: st?.docId || createDocId(),
+            platform:
+              typeof detectExtensionPlatform === "function"
+                ? detectExtensionPlatform()
+                : /firefox/i.test(navigator.userAgent)
+                  ? "firefox"
+                  : /safari/i.test(navigator.userAgent) && !/chrome|crios|android/i.test(navigator.userAgent)
+                    ? "safari"
+                    : "chrome",
           });
           await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
           toast(t("settings.sync.exportOk"));

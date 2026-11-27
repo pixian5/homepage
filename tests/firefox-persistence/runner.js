@@ -94,9 +94,13 @@
         exportText,
         checks: ["新增书签落盘", "字号设置落盘", "导出 JSON"],
       });
-      // 改字号到 13，制造一个可回滚的差异
+      // 改字号到 13，制造一个可回滚的差异，并等待旧基线快照及 IndexedDB WAL 稳定落盘
       setField("settingFontSize", "13");
-      await waitFor(async () => (await load()).fontSize === 13, "字号改动落盘");
+      await waitFor(async () => {
+        const s = await load();
+        return s.fontSize === 13 && s.data?.backups?.some((entry) => entry?.data?.settings?.fontSize === 22);
+      }, "字号改动与快照落盘");
+      await new Promise((resolve) => setTimeout(resolve, 350));
       report.backupRestoreReady = true;
     } else if (config.phase === "verify") {
       const state = await load();
@@ -107,8 +111,14 @@
       click("#btnBackupManage");
       await waitFor(() => document.querySelector("[data-backup]"), "备份列表");
       // 选择与当前字号不同的已知快照，并检查持久化结果，而不是只检查按钮存在。
-      const target = state.data.backups.find((entry) => entry.data.settings.fontSize === 22);
-      if (!target || state.fontSize !== 13) throw new Error("缺少用于验证字号回滚的快照或基线");
+      const backups = Array.isArray(state.data?.backups) ? state.data.backups : [];
+      const target = backups.find((entry) => entry?.data?.settings?.fontSize === 22);
+      if (!target || state.fontSize !== 13) {
+        const backupFontSizes = backups.map((entry) => entry?.data?.settings?.fontSize);
+        throw new Error(
+          `缺少用于验证字号回滚的快照或基线 (fontSize=${state.fontSize}, backups=${JSON.stringify(backupFontSizes)})`,
+        );
+      }
       click(`[data-backup="${target.id}"] .backup-restore`);
       await waitFor(async () => (await load()).fontSize === 22, "恢复备份后字号落盘");
       const restored = await load();

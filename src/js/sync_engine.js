@@ -900,12 +900,43 @@ export async function rotateE2eePassphrase({ oldPassphrase, newPassphrase } = {}
       }
       if (pushRes.reason === "precondition_failed" && pushRes.remote?.doc && attempt === 0) {
         if (pushRes.etag) _status.lastRemoteEtag = pushRes.etag;
+        if (Number.isSafeInteger(pushRes.epoch)) _status.lastRemoteEpoch = pushRes.epoch;
         const retryDecoded = await decodeWithOldSecret(pushRes.remote.doc);
         if (!retryDecoded.ok) return { ok: false, reason: retryDecoded.reason };
         baseRevision = Number(pushRes.revision || retryDecoded.doc?.revision) || baseRevision;
         const applied = await applyRemoteDoc(retryDecoded.doc, deviceId, "e2ee_rotate_412");
         if (!applied.ok) return applied;
         continue;
+      }
+      if (pushRes.reason === "stale_epoch" && attempt === 0) {
+        if (Number.isSafeInteger(pushRes.epoch)) _status.lastRemoteEpoch = pushRes.epoch;
+        const retryPull = await httpPullState(await getTransportAuth());
+        if (retryPull.ok) {
+          if (retryPull.etag) _status.lastRemoteEtag = retryPull.etag;
+          if (Number.isSafeInteger(retryPull.epoch)) _status.lastRemoteEpoch = retryPull.epoch;
+          const retryDecoded = await decodeWithOldSecret(retryPull.doc);
+          if (!retryDecoded.ok) {
+            _status.status = "error";
+            _status.lastError = retryDecoded.reason;
+            await saveState();
+            return { ok: false, reason: retryDecoded.reason };
+          }
+          baseRevision = Number(retryDecoded.doc?.revision || retryPull.revision) || baseRevision;
+          if (!isContentEqualToRemote(_getData(), retryDecoded.doc, _status.docId)) {
+            const applied = await applyRemoteDoc(retryDecoded.doc, deviceId, "e2ee_rotate_stale_epoch");
+            if (!applied.ok) return applied;
+          }
+          continue;
+        }
+        if (retryPull.reason === "no_remote") {
+          baseRevision = 0;
+          _status.lastRemoteEtag = "";
+          continue;
+        }
+        _status.status = retryPull.reason === "device_retired" ? "device_retired" : "error";
+        _status.lastError = retryPull.reason || "pull_failed";
+        await saveState();
+        return { ok: false, reason: retryPull.reason || "pull_failed", error: retryPull.error };
       }
       if (pushRes.reason === "device_retired") await markDeviceRetired();
       _status.status = pushRes.reason === "device_retired" ? "device_retired" : "error";

@@ -4,9 +4,11 @@
 
 ## 当前开发进度
 
-当前产品版本 **27.4.1**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
+当前产品版本 **27.4.2**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
 
 项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。
+
+- **27.4.2**：脱敏 `src/js/storage.js` `createBackupSnapshot` 与 `src/js/import-export.js` JSON 剪贴板/手动导出中的 `syncServerToken` 与 `syncE2eePassphrase`（含历史 `backups` 内嵌设置），并在恢复历史备份与 `replace` 导入时保留本机现行凭据（`preserveLocalSyncSecrets`）；对齐 `#btnSyncExportBundle` 复用 `getSyncStatus().docId` 与 `detectExtensionPlatform()`；在 `src/js/sync_engine.js` 为 `rotateE2eePassphrase` 补齐 `409 stale_epoch` 自动重拉合并与重试；加固 `tests/firefox-persistence/runner.js` 落盘稳定窗口并新增 `tests/import-export-security.test.js`、`tests/sync-e2ee.test.js` `stale_epoch` 与 `tests/storage.test.js` 用例（单测增至 678/678）；完成 Safari `27.4.2` 原生覆盖安装、Chrome/Firefox 双端真实冒烟与 4 套 Firefox E2E 验收，见[当前开发进度](docs/20261127-1047-当前开发进度-Gemini.md)。
 
 - **27.4.1**：修复 `sync-settings-panel.js` 将 `{ url }` 传给 `sync_http_transport.js`（期望 `{ baseUrl }`）导致的设备列表、退役及云端快照接口失效契约失配（新增 `toTransportConfig` 与 `syncHttpResolveBaseUrl`）；修复 `openSyncConflictModal` 失败后按钮永久锁死并为 `#btnSyncSnapshots` 补充防重入状态锁；消除 `src/js/bookmark-sidebar.js` 最后 1 处 `innerHTML` 兼容 Trusted Types；补齐 `tests/sync-conflict-resolver.test.js` 等 10 项单测（673/673 全通）并更新 `docs/server-sync.md`；因 `pgrep -x Safari` 检测到 Safari 运行中，按规范仅完成三端打包与双端冒烟/Firefox E2E 验收，见[当前开发进度](docs/20261127-1037-当前开发进度-Gemini.md)。
 
@@ -81,7 +83,7 @@
 - **26.6.1**：修复 Safari 扩展消失：新增注册自愈脚本并挂进每日体检，详见[Safari 扩展消失自愈](docs/20261103-1525-Safari扩展消失自愈-DeepSeek-V4.1-Flash.md)。
 - **26.6.0（基线）**：修复 Chrome 永久误报「同步已多次失败，自动重试已停止」：同步实际健康，根因是存储中残留一条指向已废弃浏览器 storage.sync 传输目标的僵尸队列项，它永远发不出去也清不掉；新增 filterCurrentOutbox 在读取与加载时剔除废弃目标，详见[Chrome 永久误报同步失败](docs/20261102-1725-Chrome永久误报同步失败-DeepSeek-V4.1-Flash.md)。
 
-当前单测 673 项全部通过，Biome 检查 0 告警，三端打包（Safari 运行中故未执行覆盖安装）、双端无头浏览器冒烟与 4 套 Firefox E2E 测试套件均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
+当前单测 678 项全部通过，Biome 检查 0 告警，三端构建、Safari 27.4.2 原生覆盖安装验收、双端无头浏览器冒烟与 4 套 Firefox E2E 测试套件均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
 
 ## 下一步待实现
 

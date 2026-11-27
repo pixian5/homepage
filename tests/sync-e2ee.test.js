@@ -413,4 +413,109 @@ describe("sync_crypto & end-to-end encrypted sync", () => {
     const restored = await decryptSyncDocument(onDisk.doc, "NewPassphrase#2");
     assert.equal(restored.nodes[0].title, "口令轮换书签");
   });
+
+  it("retries E2EE passphrase rotation automatically when server returns stale_epoch", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-e2ee-epoch-"));
+    const port = await freePort();
+    const dataFile = path.join(tmpDir, "state.json");
+    const token = "e2ee-epoch-token";
+    const child = spawn(process.execPath, [path.join(root, "scripts/sync-server.mjs")], {
+      env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", TOKEN: token, DATA_FILE: dataFile },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    cleanups.push({ child, tmpDir });
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      try {
+        if ((await fetch(`${baseUrl}/health`)).ok) break;
+      } catch {
+        // retry
+      }
+      await new Promise((r) => setTimeout(r, 40));
+    }
+
+    const stor = makeMemoryStorage();
+    globalThis.chrome = { runtime: { lastError: null }, storage: { local: stor.area } };
+    let data = defaultData();
+    Object.assign(data.settings, {
+      syncEnabled: true,
+      syncServerUrl: baseUrl,
+      syncServerToken: token,
+      syncE2eeEnabled: true,
+      syncE2eePassphrase: "OldPassphrase#1",
+    });
+    data.nodes.itm_e1 = {
+      id: "itm_e1",
+      type: "item",
+      title: "epoch 书签一",
+      url: "https://epoch1.example/",
+      updatedAt: Date.now(),
+      updatedBy: "",
+    };
+    data.groups[0].nodes.push("itm_e1");
+
+    initSyncEngine({
+      getData: () => data,
+      setData: (next) => {
+        data = next;
+      },
+      saveLocal: async () => null,
+    });
+    assert.equal((await pushNow("manual")).ok, true);
+
+    data.nodes.itm_e2 = {
+      id: "itm_e2",
+      type: "item",
+      title: "epoch 书签二",
+      url: "https://epoch2.example/",
+      updatedAt: Date.now() + 10,
+      updatedBy: "",
+    };
+    data.groups[0].nodes.push("itm_e2");
+    assert.equal((await pushNow("manual")).ok, true);
+
+    const snapListRes = await fetch(`${baseUrl}/v1/sync/snapshots`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const { snapshots } = await snapListRes.json();
+    assert.ok(snapshots.length >= 1);
+
+    const realFetch = globalThis.fetch;
+    let restoredInjected = false;
+    globalThis.fetch = async (input, init = {}) => {
+      const url = typeof input === "string" ? input : input?.url || "";
+      const method = String(init?.method || "GET").toUpperCase();
+      const idemKey = String(init?.headers?.["Idempotency-Key"] || "");
+      if (!restoredInjected && method === "PUT" && url.includes("/v1/sync/state") && idemKey.startsWith("rotate:")) {
+        restoredInjected = true;
+        // 在首次口令轮换 PUT 到达前触发一次快照回滚，使服务端 epoch 推进从而返回真实 409 stale_epoch
+        const restoreRes = await realFetch(`${baseUrl}/v1/sync/snapshots/restore`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ id: snapshots[0].id, confirm: "RESTORE" }),
+        });
+        assert.equal(restoreRes.ok, true);
+      }
+      return realFetch(input, init);
+    };
+
+    try {
+      const okRotate = await rotateE2eePassphrase({
+        oldPassphrase: "OldPassphrase#1",
+        newPassphrase: "NewPassphrase#2",
+      });
+      assert.equal(okRotate.ok, true, JSON.stringify(okRotate));
+      assert.equal(restoredInjected, true);
+      assert.equal(data.settings.syncE2eePassphrase, "NewPassphrase#2");
+
+      const onDisk = JSON.parse(await readFile(dataFile, "utf8"));
+      assert.ok(onDisk.epoch >= 1);
+      await assert.rejects(() => decryptSyncDocument(onDisk.doc, "OldPassphrase#1"));
+      const decrypted = await decryptSyncDocument(onDisk.doc, "NewPassphrase#2");
+      assert.ok(decrypted.nodes.some((n) => n.id === "itm_e1"));
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
 });

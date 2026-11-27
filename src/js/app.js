@@ -1077,7 +1077,12 @@ async function init() {
     },
     saveLocal: async (next) => {
       pruneSyncTombstones(next);
-      return saveData(next, false);
+      persistenceCoordinator?.setSuppressStorageUntil?.(Date.now() + STORAGE_SUPPRESS_MS * 4);
+      try {
+        return await saveData(next, false);
+      } finally {
+        persistenceCoordinator?.setSuppressStorageUntil?.(Date.now() + STORAGE_SUPPRESS_MS * 4);
+      }
     },
     createSafetySnapshot: async () => {
       try {
@@ -1091,6 +1096,7 @@ async function init() {
       if (stats?.applied) {
         resetSettingsClockBaseline(data);
         resetPlacementClockBaseline(data);
+        syncBackupBaseline(data);
         if (stats.remoteNewer || stats.choice === "remote") {
           // 频率限制：多设备互相推送时不至于每次刷新都弹
           toastSyncMergedOnce();
@@ -1122,7 +1128,12 @@ async function init() {
   const deduped = dedupeData(data);
   const languageInitialized = ensureLanguageSetting();
   if (deduped || languageInitialized) {
-    await saveData(data, false);
+    persistenceCoordinator?.setSuppressStorageUntil?.(Date.now() + STORAGE_SUPPRESS_MS * 4);
+    try {
+      await saveData(data, false);
+    } finally {
+      persistenceCoordinator?.setSuppressStorageUntil?.(Date.now() + STORAGE_SUPPRESS_MS * 4);
+    }
   }
   syncBackupBaseline(data);
   resetSettingsClockBaseline(data);

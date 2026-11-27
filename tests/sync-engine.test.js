@@ -7,8 +7,10 @@ import { afterEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   cancelScheduledPush,
+  ensureDevicePairing,
   getOutboxSummary,
   initSyncEngine,
+  isContentEqualToRemote,
   isRemoteUpdateFromAnotherDevice,
   pullNow,
   pushNow,
@@ -16,7 +18,7 @@ import {
 } from "../src/js/sync_engine.js";
 import { httpHealth, httpPullState, httpPushState } from "../src/js/sync_http_transport.js";
 import { _setDeviceIdForTests } from "../src/js/sync_ids.js";
-import { hashSyncDocument } from "../src/js/sync_projection.js";
+import { hashSyncDocument, toSyncDocument } from "../src/js/sync_projection.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -1175,6 +1177,135 @@ describe("sync_engine convergence after pull", () => {
       assert.equal(pushed.ok, true);
       const final = await httpPullState({ baseUrl, token });
       assert.equal(final.doc.nodes[0].title, "Local newer", "推上去之后服务端应与本地一致");
+    } finally {
+      delete globalThis.chrome;
+      _setDeviceIdForTests("");
+      await stopServer(child);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("short-circuits pullNow when legacy remoteDoc only differs in node/object key ordering", async () => {
+    const port = 33000 + (process.pid % 2000);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const token = "sync-engine-legacy-order-token";
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-legacy-order."));
+    const child = spawn(process.execPath, [path.join(root, "scripts", "sync-server.mjs")], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HOST: "127.0.0.1",
+        TOKEN: token,
+        DATA_FILE: path.join(tempDir, "state.json"),
+      },
+      stdio: "ignore",
+    });
+    const store = {};
+    globalThis.chrome = {
+      runtime: { lastError: null },
+      storage: {
+        local: {
+          get(keys, callback) {
+            const out = {};
+            for (const key of Array.isArray(keys) ? keys : [keys])
+              if (key in store) out[key] = structuredClone(store[key]);
+            callback(out);
+          },
+          set(obj, callback) {
+            for (const [k, v] of Object.entries(obj)) store[k] = structuredClone(v);
+            callback?.();
+          },
+        },
+        sync: { get: (_k, cb) => cb?.({}), set: (_o, cb) => cb?.() },
+      },
+    };
+
+    try {
+      await waitForHealth(baseUrl, token);
+      let data = {
+        schemaVersion: 2,
+        settings: { syncEnabled: true, syncServerUrl: baseUrl, syncServerToken: token, syncInterval: "off" },
+        groups: [
+          {
+            id: "grp_all",
+            name: "全部",
+            order: -1,
+            nodes: ["itm_178740"],
+            updatedAt: 200,
+            updatedBy: "dev_legacy",
+            systemAllGroup: true,
+          },
+        ],
+        nodes: {
+          itm_178602: {
+            id: "itm_178602",
+            type: "item",
+            title: "Deleted",
+            url: "https://deleted.test/",
+            iconType: "auto",
+            updatedAt: 100,
+            deletedAt: 100,
+            updatedBy: "dev_legacy",
+          },
+          itm_178740: {
+            id: "itm_178740",
+            type: "item",
+            title: "Live",
+            url: "https://live.test/",
+            iconType: "auto",
+            updatedAt: 200,
+            updatedBy: "dev_legacy",
+          },
+        },
+        backups: [],
+        lastUpdated: 200,
+      };
+
+      const legacyDoc = toSyncDocument(data, {
+        deviceId: "dev_legacy",
+        docId: "doc_legacy_order",
+        revision: 1,
+        writtenAt: 500,
+      });
+      // 模拟旧客户端上传的未排序 nodes 与倒序 settings 键
+      legacyDoc.nodes = [...legacyDoc.nodes].reverse();
+      legacyDoc.settings = Object.fromEntries(Object.entries(legacyDoc.settings).reverse());
+      legacyDoc.contentHash = hashSyncDocument(legacyDoc);
+
+      assert.equal(isContentEqualToRemote(data, legacyDoc, "doc_legacy_order"), true);
+
+      const writeRes = await httpPushState({ baseUrl, token }, legacyDoc);
+      assert.equal(writeRes.ok, true);
+
+      store.homepage_sync_state = { docId: "doc_legacy_order", lastRemoteRevision: 0 };
+      let saveLocalCalls = 0;
+      let onMergedCalls = 0;
+      _setDeviceIdForTests("dev_local");
+      initSyncEngine({
+        getData: () => data,
+        setData: (next) => {
+          data = next;
+        },
+        saveLocal: async () => {
+          saveLocalCalls += 1;
+          return null;
+        },
+        onMerged: async () => {
+          onMergedCalls += 1;
+        },
+      });
+
+      await ensureDevicePairing();
+      saveLocalCalls = 0;
+      onMergedCalls = 0;
+
+      const pulled = await pullNow("interval");
+      assert.equal(pulled.ok, true);
+      assert.equal(pulled.unchanged, true);
+      assert.equal(pulled.merged, false);
+      assert.equal(saveLocalCalls, 0);
+      assert.equal(onMergedCalls, 0);
     } finally {
       delete globalThis.chrome;
       _setDeviceIdForTests("");

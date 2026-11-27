@@ -4,10 +4,11 @@
 
 ## 当前开发进度
 
-当前产品版本 **27.4.9**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
+当前产品版本 **27.5.0**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
 
 项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。
 
+- **27.5.0**：根治同步启用下网格约 12Hz 反复重建导致的图标闪跳与悬停重置——在 [sync_projection.js](src/js/sync_projection.js) 对 `groups`/`nodes`/`placements` 按确定性码点顺序投影并新增 `canonicalizeSyncDocument` 兼容历史未排序云端快照（保留 `hashSyncDocument` 协议兼容）；在 [sync_engine.js](src/js/sync_engine.js) `isContentEqualToRemote` 补齐规范化语义等价比对以短路无意义合并；在 [sync_merge.js](src/js/sync_merge.js) 按确定性键序构建 `mergedNodes`；为 [app.js](src/js/app.js) `saveLocal` 与初始化保存补齐 `setSuppressStorageUntil` 回声抑制并在 `onMerged` 同步备份基线；在 [sync-startup-coordinator.js](src/js/sync-startup-coordinator.js) 跳过 `unchanged` 且无推送的首拉重绘；扩展 4 个测试文件（单测增至 708/708），以用户真实 Chrome 数据无头复测全部 36 组悬停探针实现 `gridRebuild: 0`、`detached: 0`、`imgSrc: 0` 且静置 2 秒存储零写回；因 Safari 运行中仅完成三端打包，通过 Chrome/Firefox 双端冒烟与 4 套 Firefox E2E 验收，见[当前开发进度](docs/20261127-2117-当前开发进度-Gemini.md)。
 - **27.4.9**：修复 [styles.css](src/styles.css) 中 `.tile:hover`（`translateY(-4px)`）与 `.icon-btn:hover`（`translateY(-1px)`）导致的边缘悬停命中区自激跳动，改用不偏移热区的 `box-shadow` 抬升阴影并在 `@media (prefers-reduced-motion: no-preference)` 下补充 `.tile:not(.touch-dragging):active`/`.icon-btn:active` 按压缩放（`scale: 0.97`）；新增 [tests/hover-stability.test.js](tests/hover-stability.test.js) 并在 [tests/browser-smoke/runner.js](tests/browser-smoke/runner.js) 补充运行时 `:hover` 零位移检测（无头 Chromium 实时采样 20 帧零跳动，单测增至 704/704）；因 Safari 运行中仅完成三端打包，通过 Chrome/Firefox 双端冒烟与 4 套 Firefox E2E 验收，见[当前开发进度](docs/20261127-2033-当前开发进度-Gemini.md)。
 - **27.4.8**：修复 [app.js](src/js/app.js) 传入 `bindAppDomEvents` 的工具提示回调误调 `tooltipMgr?.show?.`/`hide?.`（应为 `showTooltip`/`hideTooltip`）及 [app-events-binder.js](src/js/app-events-binder.js) `mouseout` 子元素移动误隐藏问题；修复 `Cmd/Ctrl + K` 命令面板跳转文件夹仅设 `openFolderId` 而未调用 `openFolder(id)` 导致 `#folderOverlay` 仍隐藏且 `inert` 的问题，并在 [command-palette.js](src/js/command-palette.js) 同步开关期 `inert` 属性；为 `startSyncOnLaunch` 接入 `storageArea(false)` 使 Web/PWA 模式下关闭同步横幅可持久化；在 [history-manager.js](src/js/history-manager.js) 为 `#btnAddHistorySave` 增加异步并发防重入锁及分组名称兜底；新增/扩展 4 个测试文件（单测增至 702/702）；因 Safari 运行中仅完成三端打包，通过 Chrome/Firefox 双端冒烟与 4 套 Firefox E2E 验收，见[当前开发进度](docs/20261127-1913-当前开发进度-Gemini.md)。
 - **27.4.7**：修复 [sync-banner.js](src/js/sync-banner.js) 重试 `refresh()` 后被旧占位文案覆盖问题；在 [theme-manager.js](src/js/theme-manager.js) 移除 `setBackground` 的 `url(...)` 正则绕过、`backgroundOverlayStrength` `NaN` 兜底为 `0` 并为 `doLoadBackground` 补充 `finally` loading 清理；加固 [app-reload-coordinator.js](src/js/app-reload-coordinator.js)、[sidebar-manager.js](src/js/sidebar-manager.js)、[open-mode-manager.js](src/js/open-mode-manager.js)、[touch-drag-manager.js](src/js/touch-drag-manager.js) 与 [selection-manager.js](src/js/selection-manager.js) 的墓碑过滤、协议安全、`callExtensionApi` 异步兼容、多指取消长按及空网格守卫；扩展 7 个测试文件（单测增至 698/698）；因 Safari 运行中仅完成三端打包，通过 Chrome/Firefox 双端冒烟与 4 套 Firefox E2E 验收，见[当前开发进度](docs/20261127-1817-当前开发进度-Gemini.md)。
@@ -92,7 +93,7 @@
 - **26.6.1**：修复 Safari 扩展消失：新增注册自愈脚本并挂进每日体检，详见[Safari 扩展消失自愈](docs/20261103-1525-Safari扩展消失自愈-DeepSeek-V4.1-Flash.md)。
 - **26.6.0（基线）**：修复 Chrome 永久误报「同步已多次失败，自动重试已停止」：同步实际健康，根因是存储中残留一条指向已废弃浏览器 storage.sync 传输目标的僵尸队列项，它永远发不出去也清不掉；新增 filterCurrentOutbox 在读取与加载时剔除废弃目标，详见[Chrome 永久误报同步失败](docs/20261102-1725-Chrome永久误报同步失败-DeepSeek-V4.1-Flash.md)。
 
-当前单测 704 项全部通过，Biome 检查 0 告警，三端打包（Safari 运行中故未覆盖安装）、双端无头浏览器冒烟与 4 套 Firefox E2E 测试套件均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
+当前单测 708 项全部通过，Biome 检查 0 告警，三端打包（Safari 运行中故未覆盖安装）、双端无头浏览器冒烟与 4 套 Firefox E2E 测试套件均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
 
 ## 下一步待实现
 

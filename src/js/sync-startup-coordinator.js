@@ -69,14 +69,17 @@ export function startSyncOnLaunch({
   const startPromise = (async () => {
     try {
       const pull = typeof pullNow === "function" ? await pullNow("init") : null;
+      let pushed = false;
       if (pull?.needPush && typeof pushNow === "function") {
         await pushNow("init_need_push");
+        pushed = true;
       }
       // 离线时由本地变更产生的待发送项仍可在打开页面后重试。
-      if (typeof flushOutbox === "function") {
-        await flushOutbox();
+      const flushed = typeof flushOutbox === "function" ? await flushOutbox() : null;
+      const outboxChanged = Boolean(flushed && !flushed.empty && !flushed.wait && !flushed.skipped);
+      if (pushed || outboxChanged || !pull?.unchanged) {
+        render?.();
       }
-      render?.();
     } catch (e) {
       console.warn("init sync failed", e);
     } finally {

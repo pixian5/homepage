@@ -28,6 +28,33 @@ function truncateTitle(title) {
   return t.slice(0, SYNC_TITLE_MAX_CHARS);
 }
 
+function compareSyncKey(a, b) {
+  const left = projAsStr(a);
+  const right = projAsStr(b);
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
+function sortPlainObjectKeys(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => sortPlainObjectKeys(item));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) {
+    return value;
+  }
+  const sorted = {};
+  for (const key of Object.keys(value).sort(compareSyncKey)) {
+    const next = value[key];
+    if (next === undefined) continue;
+    sorted[key] = sortPlainObjectKeys(next);
+  }
+  return sorted;
+}
+
 export function collectPlacementSnapshot(data) {
   const snapshot = {};
   for (const group of data?.groups || []) {
@@ -249,6 +276,16 @@ export function toSyncDocument(data, ctx) {
     });
   }
 
+  groups.sort((a, b) => compareSyncKey(a.id, b.id));
+  nodes.sort((a, b) => compareSyncKey(a.id, b.id));
+  placements.sort(
+    (a, b) =>
+      compareSyncKey(a.parentKind, b.parentKind) ||
+      compareSyncKey(a.parentId, b.parentId) ||
+      a.index - b.index ||
+      compareSyncKey(a.nodeId, b.nodeId),
+  );
+
   const doc = {
     schema: SYNC_DOC_SCHEMA,
     schemaVersion: 1,
@@ -281,6 +318,35 @@ export function hashSyncDocument(doc) {
     h = Math.imul(h, 16777619);
   }
   return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+/**
+ * 生成规范化同步文档副本用于内容等价比对：
+ * 对 groups/nodes/placements 数组排序，并对所有纯对象键递归按码点排序，
+ * 兼容旧客户端或服务端存储的未排序快照，避免键序差异导致误判不一致。
+ * 注意：绝不能替换 hashSyncDocument 原逻辑，以免破坏服务端与恢复脚本校验。
+ * @param {object} doc
+ * @returns {object}
+ */
+export function canonicalizeSyncDocument(doc) {
+  if (!doc || typeof doc !== "object") return doc;
+  const next = { ...doc, contentHash: "" };
+  if (Array.isArray(doc.groups)) {
+    next.groups = [...doc.groups].sort((a, b) => compareSyncKey(a?.id, b?.id));
+  }
+  if (Array.isArray(doc.nodes)) {
+    next.nodes = [...doc.nodes].sort((a, b) => compareSyncKey(a?.id, b?.id));
+  }
+  if (Array.isArray(doc.placements)) {
+    next.placements = [...doc.placements].sort(
+      (a, b) =>
+        compareSyncKey(a?.parentKind, b?.parentKind) ||
+        compareSyncKey(a?.parentId, b?.parentId) ||
+        projAsNum(a?.index) - projAsNum(b?.index) ||
+        compareSyncKey(a?.nodeId, b?.nodeId),
+    );
+  }
+  return sortPlainObjectKeys(next);
 }
 
 /**

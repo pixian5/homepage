@@ -103,4 +103,37 @@ describe("sync-startup-coordinator", () => {
     await res.startPromise;
     assert.equal(bannerRefreshed, true);
   });
+
+  it("skips redundant render on launch when initial pull is unchanged and outbox is empty", async () => {
+    let renderCount = 0;
+    let bannerRefreshed = false;
+    const mockBanner = {
+      start: async () => {},
+      refresh: async () => {
+        bannerRefreshed = true;
+      },
+    };
+
+    const res = startSyncOnLaunch({
+      settings: { syncEnabled: true },
+      refreshSyncInterval: () => {},
+      pullNow: async () => ({ ok: true, merged: false, unchanged: true }),
+      pushNow: async () => {
+        throw new Error("should not push");
+      },
+      flushOutbox: async () => ({ ok: true, empty: true }),
+      openSettingsModal: () => {},
+      getStorage: () => null,
+      t: (k) => k,
+      render: () => {
+        renderCount += 1;
+      },
+      bannerFactory: () => mockBanner,
+    });
+
+    assert.ok(res);
+    await res.startPromise;
+    assert.equal(renderCount, 0);
+    assert.equal(bannerRefreshed, true);
+  });
 });

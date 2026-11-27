@@ -18,6 +18,7 @@ import {
   syncIntervalToMs,
 } from "./sync_policy.js";
 import {
+  canonicalizeSyncDocument,
   estimateSyncProjectionBytes,
   hashSyncDocument,
   syncDocumentToHomepageShape,
@@ -599,7 +600,10 @@ export function isContentEqualToRemote(data, remoteDoc, docId) {
       revision: Number(remoteDoc.revision) || 0,
       writtenAt,
     });
-    return localDoc.contentHash === remoteDoc.contentHash;
+    if (localDoc.contentHash === remoteDoc.contentHash) return true;
+    return (
+      hashSyncDocument(canonicalizeSyncDocument(localDoc)) === hashSyncDocument(canonicalizeSyncDocument(remoteDoc))
+    );
   } catch {
     return false;
   }

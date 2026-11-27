@@ -367,7 +367,7 @@ export function mergeHomepage(localData, remoteDoc, ctx = {}) {
   ]);
 
   const mergedNodes = {};
-  for (const id of nodeIds) {
+  for (const id of [...nodeIds].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
     const l = localShape.nodes?.[id] || localShape._tombstoneNodes?.[id];
     const r = remoteShape.nodes?.[id] || remoteShape._tombstoneNodes?.[id];
     const m = mergeNode(l, r);

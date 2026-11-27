@@ -878,4 +878,107 @@ describe("mergeSettingsByClock convergence", () => {
     }
     assert.deepEqual(onChrome.state.groups[0].nodes, onFirefox.state.groups[0].nodes);
   });
+
+  it("produces deterministic projection order and returns applied=false when only node/folder key order differs", () => {
+    const liveFolder1 = {
+      id: "fld_b",
+      type: "folder",
+      title: "Folder B",
+      children: ["itm_live_1"],
+      updatedAt: 2000,
+      updatedBy: "dev_a",
+    };
+    const liveFolder2 = {
+      id: "fld_a",
+      type: "folder",
+      title: "Folder A",
+      children: ["itm_live_2"],
+      updatedAt: 2000,
+      updatedBy: "dev_a",
+    };
+    const tombItem = {
+      id: "itm_178602",
+      type: "item",
+      title: "Old Deleted",
+      url: "https://deleted.example/",
+      iconType: "auto",
+      updatedAt: 1500,
+      deletedAt: 1500,
+      updatedBy: "dev_a",
+    };
+    const liveItem1 = {
+      id: "itm_live_1",
+      type: "item",
+      title: "Live 1",
+      url: "https://one.example/",
+      iconType: "auto",
+      updatedAt: 2000,
+      titleUpdatedAt: 2000,
+      urlUpdatedAt: 2000,
+      updatedBy: "dev_a",
+    };
+    const liveItem2 = {
+      id: "itm_live_2",
+      type: "item",
+      title: "Live 2",
+      url: "https://two.example/",
+      iconType: "auto",
+      updatedAt: 2000,
+      titleUpdatedAt: 2000,
+      urlUpdatedAt: 2000,
+      updatedBy: "dev_a",
+    };
+
+    // 模拟 LevelDB 键名字母序反序列化：墓碑 itm_178602 排在存活节点之前
+    const alphaOrdered = baseData({
+      groups: [
+        { id: "grp_all", name: "全部", order: -1, nodes: ["fld_b", "fld_a"], updatedAt: 2000, updatedBy: "dev_a" },
+      ],
+      nodes: {
+        fld_a: liveFolder2,
+        fld_b: liveFolder1,
+        itm_178602: tombItem,
+        itm_live_1: liveItem1,
+        itm_live_2: liveItem2,
+      },
+      lastUpdated: 2000,
+    });
+
+    // 模拟内存中先存活后墓碑的插入顺序
+    const liveFirstOrdered = baseData({
+      groups: [
+        { id: "grp_all", name: "全部", order: -1, nodes: ["fld_b", "fld_a"], updatedAt: 2000, updatedBy: "dev_a" },
+      ],
+      nodes: {
+        itm_live_2: liveItem2,
+        fld_b: liveFolder1,
+        itm_live_1: liveItem1,
+        fld_a: liveFolder2,
+        itm_178602: tombItem,
+      },
+      lastUpdated: 2000,
+    });
+
+    const docA = toSyncDocument(alphaOrdered, { deviceId: "dev_a", docId: "doc_order", revision: 5, writtenAt: 3000 });
+    const docB = toSyncDocument(liveFirstOrdered, {
+      deviceId: "dev_a",
+      docId: "doc_order",
+      revision: 5,
+      writtenAt: 3000,
+    });
+
+    assert.equal(docA.contentHash, docB.contentHash);
+    assert.deepEqual(
+      docA.nodes.map((n) => n.id),
+      docB.nodes.map((n) => n.id),
+    );
+    assert.deepEqual(
+      docA.placements.map((p) => `${p.parentKind}:${p.parentId}:${p.index}:${p.nodeId}`),
+      docB.placements.map((p) => `${p.parentKind}:${p.parentId}:${p.index}:${p.nodeId}`),
+    );
+
+    const merged = mergeHomepage(alphaOrdered, docB, { deviceId: "dev_a", now: 3000 });
+    assert.equal(merged.ok, true);
+    assert.equal(merged.stats.applied, false);
+  });
 });

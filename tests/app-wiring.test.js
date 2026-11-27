@@ -27,4 +27,12 @@ describe("app.js wiring contracts", () => {
     );
     assert.match(appSource, /startSyncOnLaunch\(\{[\s\S]*getStorage:\s*\(\)\s*=>\s*storageArea\(false\)/);
   });
+
+  it("suppresses storage self-echo around initSyncEngine saveLocal writes", () => {
+    const appSource = fs.readFileSync(path.join(REPO_ROOT, "src/js/app.js"), "utf8");
+    assert.match(
+      appSource,
+      /initSyncEngine\(\{[\s\S]*saveLocal:\s*async\s*\(next\)\s*=>\s*\{[\s\S]*setSuppressStorageUntil[\s\S]*saveData\(next,\s*false\)/,
+    );
+  });
 });

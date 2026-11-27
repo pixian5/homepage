@@ -249,4 +249,101 @@ describe("sync-server security & snapshots", () => {
     }
     assert.deepEqual(revisions, [2, 3]);
   });
+
+  it("lists snapshots (master-only) and restores atomically with validation and epoch bump", async () => {
+    const srv = await startIsolatedServer({
+      TOKEN: "restore-token",
+      MAX_HISTORY_SNAPSHOTS: "3",
+    });
+    cleanups.push(srv);
+
+    const docWithTitle = (rev, title) => {
+      const base = makeDoc(rev);
+      base.nodes = [
+        { id: `n_${rev}`, type: "item", title, url: `https://${rev}.example/`, updatedAt: rev, updatedBy: "dev_sec" },
+      ];
+      base.placements = [
+        {
+          nodeId: `n_${rev}`,
+          parentKind: "group",
+          parentId: "grp_all",
+          index: 0,
+          updatedAt: rev,
+          updatedBy: "dev_sec",
+        },
+      ];
+      base.contentHash = hashSyncDocument(base);
+      return base;
+    };
+
+    for (const [rev, title] of [
+      [1, "First"],
+      [2, "Second"],
+      [3, "Third"],
+    ]) {
+      const putRes = await fetch(`${srv.baseUrl}/v1/sync/state`, {
+        method: "PUT",
+        headers: { Authorization: "Bearer restore-token", "Content-Type": "application/json" },
+        body: JSON.stringify(docWithTitle(rev, title)),
+      });
+      assert.equal(putRes.status, 200);
+    }
+
+    // 鉴权与入参防护检查
+    assert.equal((await fetch(`${srv.baseUrl}/v1/sync/snapshots`)).status, 401);
+
+    const listRes = await fetch(`${srv.baseUrl}/v1/sync/snapshots`, {
+      headers: { Authorization: "Bearer restore-token" },
+    });
+    assert.equal(listRes.status, 200);
+    const listBody = await listRes.json();
+    assert.equal(listBody.ok, true);
+    assert.equal(listBody.snapshots.length, 2);
+    const targetSnap = listBody.snapshots.find((s) => s.revision === 1);
+    assert.ok(targetSnap);
+    assert.equal(targetSnap.encrypted, false);
+
+    // 路径穿越、缺 confirm 与不存在的快照必须被安全拒绝
+    const traversal = await fetch(`${srv.baseUrl}/v1/sync/snapshots/restore`, {
+      method: "POST",
+      headers: { Authorization: "Bearer restore-token", "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "../state.json", confirm: "RESTORE" }),
+    });
+    assert.equal(traversal.status, 400);
+    assert.equal((await traversal.json()).error, "invalid_snapshot_id");
+
+    const noConfirm = await fetch(`${srv.baseUrl}/v1/sync/snapshots/restore`, {
+      method: "POST",
+      headers: { Authorization: "Bearer restore-token", "Content-Type": "application/json" },
+      body: JSON.stringify({ id: targetSnap.id }),
+    });
+    assert.equal(noConfirm.status, 400);
+
+    const missing = await fetch(`${srv.baseUrl}/v1/sync/snapshots/restore`, {
+      method: "POST",
+      headers: { Authorization: "Bearer restore-token", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: targetSnap.id.replace(/\d+-\d+\.json$/, "999999999999999-9999.json"),
+        confirm: "RESTORE",
+      }),
+    });
+    assert.equal(missing.status, 404);
+
+    // 回滚到 revision=1 快照
+    const restoreRes = await fetch(`${srv.baseUrl}/v1/sync/snapshots/restore`, {
+      method: "POST",
+      headers: { Authorization: "Bearer restore-token", "Content-Type": "application/json" },
+      body: JSON.stringify({ id: targetSnap.id, confirm: "RESTORE" }),
+    });
+    assert.equal(restoreRes.status, 200);
+    const restoreBody = await restoreRes.json();
+    assert.equal(restoreBody.ok, true);
+    assert.equal(restoreBody.revision, 4);
+    assert.equal(restoreBody.epoch, 1);
+
+    const stateAfter = await (
+      await fetch(`${srv.baseUrl}/v1/sync/state`, { headers: { Authorization: "Bearer restore-token" } })
+    ).json();
+    assert.equal(stateAfter.doc.nodes[0].title, "First");
+  });
 });

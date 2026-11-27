@@ -4,9 +4,11 @@
 
 ## 当前开发进度
 
-当前产品版本 **27.3.8**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
+当前产品版本 **27.3.9**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
 
 项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。
+
+- **27.3.9**：在 `scripts/sync-server.mjs` 新增 master-only 历史快照查询（`GET /v1/sync/snapshots`）与原子回滚（`POST /v1/sync/snapshots/restore`，先转存现状、再恢复并递增 `revision`/`epoch`）；在 `sync_engine.js` 实现 E2EE 口令安全轮换闭环（`rotateE2eePassphrase`），并在设置面板与 8 语言词典接入「更换口令」与「云端快照」交互及云端加解密/快照数健康显示（单测增至 659/659）；完成 Safari `27.3.9` 原生覆盖安装与全量双端冒烟验收，见[当前开发进度](docs/20261127-1021-当前开发进度-Gemini.md)。
 
 - **27.3.8**：在 `scripts/sync-server.mjs` 新增 E2EE 密文信封墓碑回收守卫（`computeReclaimCandidates` 返回空、`POST /v1/sync/reclaim` 实操返回 `409 reclaim_unsupported_for_e2ee`）并在 `/health` 暴露 `encrypted` 与 `snapshotCount`；将 `test:firefox-sync-flows` 与 `test:firefox-sync-errors` 离线同步 E2E 接入 `.github/workflows/ci.yml` 与 `tests/ci-workflow.test.js` 守卫（单测增至 657/657）；完成 Safari `27.3.8` 原生覆盖安装与全量双端冒烟验收，见[当前开发进度](docs/20261127-1016-当前开发进度-Gemini.md)。
 
@@ -75,7 +77,7 @@
 - **26.6.1**：修复 Safari 扩展消失：新增注册自愈脚本并挂进每日体检，详见[Safari 扩展消失自愈](docs/20261103-1525-Safari扩展消失自愈-DeepSeek-V4.1-Flash.md)。
 - **26.6.0（基线）**：修复 Chrome 永久误报「同步已多次失败，自动重试已停止」：同步实际健康，根因是存储中残留一条指向已废弃浏览器 storage.sync 传输目标的僵尸队列项，它永远发不出去也清不掉；新增 filterCurrentOutbox 在读取与加载时剔除废弃目标，详见[Chrome 永久误报同步失败](docs/20261102-1725-Chrome永久误报同步失败-DeepSeek-V4.1-Flash.md)。
 
-当前单测 657 项全部通过，Biome 检查 0 告警，三端构建、Safari 27.3.8 原生覆盖安装验收与双端无头浏览器 8/8 冒烟均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
+当前单测 659 项全部通过，Biome 检查 0 告警，三端构建、Safari 27.3.9 原生覆盖安装验收与双端无头浏览器 8/8 冒烟均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
 
 ## 下一步待实现
 

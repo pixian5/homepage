@@ -174,11 +174,13 @@ var HomepageSettingsFormRenderer = (() => {
           <div class="row-inline">
             <span class="inline-label">${t("settings.sync.e2ee.passphrase")}</span>
             <input id="settingSyncE2eePassphrase" type="password" class="inline-text" autocomplete="new-password" placeholder="${t("settings.sync.e2ee.passphrasePh")}" />
+            <button type="button" id="btnSyncRotateE2ee" class="icon-btn">${t("settings.sync.e2ee.rotateBtn")}</button>
           </div>
           <p class="settings-sync-hint">${t("settings.sync.e2ee.hint")}</p>
           <div class="row-inline settings-sync-actions">
             <button type="button" id="btnSyncTestServer" class="icon-btn">${t("settings.sync.testServer")}</button>
             <button type="button" id="btnSyncNow" class="icon-btn">${t("settings.sync.now")}</button>
+            <button type="button" id="btnSyncSnapshots" class="icon-btn">${t("settings.sync.snapshots.btn")}</button>
           </div>
           <div id="syncDevicesPanel" class="settings-sync-devices">
             <div class="row-inline settings-sync-devices-head">

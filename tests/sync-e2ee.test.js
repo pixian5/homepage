@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 
 import { defaultData } from "../src/js/storage.js";
 import { decryptSyncDocument, encryptSyncDocument, isEncryptedSyncEnvelope } from "../src/js/sync_crypto.js";
-import { initSyncEngine, pullNow, pushNow } from "../src/js/sync_engine.js";
+import { initSyncEngine, pullNow, pushNow, rotateE2eePassphrase } from "../src/js/sync_engine.js";
 import { hashSyncDocument, toSyncDocument } from "../src/js/sync_projection.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -344,5 +344,73 @@ describe("sync_crypto & end-to-end encrypted sync", () => {
     assert.equal(afterState.doc?.schema, "homepage.sync.e2ee.v1");
     assert.equal(afterState.doc?.contentHash, sealedState.doc?.contentHash);
     assert.equal(afterState.doc?.ciphertext, sealedState.doc?.ciphertext);
+  });
+
+  it("rotates E2EE passphrase safely without corrupting local state or remote ciphertext on bad old passphrase", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-e2ee-rot-"));
+    const port = await freePort();
+    const dataFile = path.join(tmpDir, "state.json");
+    const token = "e2ee-rot-token";
+    const child = spawn(process.execPath, [path.join(root, "scripts/sync-server.mjs")], {
+      env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", TOKEN: token, DATA_FILE: dataFile },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    cleanups.push({ child, tmpDir });
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      try {
+        if ((await fetch(`${baseUrl}/health`)).ok) break;
+      } catch {
+        // retry
+      }
+      await new Promise((r) => setTimeout(r, 40));
+    }
+
+    const stor = makeMemoryStorage();
+    globalThis.chrome = { runtime: { lastError: null }, storage: { local: stor.area } };
+    let data = defaultData();
+    Object.assign(data.settings, {
+      syncEnabled: true,
+      syncServerUrl: baseUrl,
+      syncServerToken: token,
+      syncE2eeEnabled: true,
+      syncE2eePassphrase: "OldPassphrase#1",
+    });
+    data.nodes.itm_rot = {
+      id: "itm_rot",
+      type: "item",
+      title: "口令轮换书签",
+      url: "https://rotate.example/",
+      updatedAt: Date.now(),
+      updatedBy: "",
+    };
+    data.groups[0].nodes.push("itm_rot");
+
+    initSyncEngine({
+      getData: () => data,
+      setData: (next) => {
+        data = next;
+      },
+      saveLocal: async () => null,
+    });
+    assert.equal((await pushNow("manual")).ok, true);
+
+    // 错旧口令被拒绝，不改动本地口令
+    const badRotate = await rotateE2eePassphrase({ oldPassphrase: "WrongOldPass", newPassphrase: "NewPassphrase#2" });
+    assert.equal(badRotate.ok, false);
+    assert.equal(badRotate.reason, "e2ee_decrypt_failed");
+    assert.equal(data.settings.syncE2eePassphrase, "OldPassphrase#1");
+
+    // 正确旧口令轮换成功
+    const okRotate = await rotateE2eePassphrase({ oldPassphrase: "OldPassphrase#1", newPassphrase: "NewPassphrase#2" });
+    assert.equal(okRotate.ok, true);
+    assert.equal(data.settings.syncE2eePassphrase, "NewPassphrase#2");
+
+    // 服务端新密文无法再用旧口令解开，可用新口令正常解密
+    const onDisk = JSON.parse(await readFile(dataFile, "utf8"));
+    await assert.rejects(() => decryptSyncDocument(onDisk.doc, "OldPassphrase#1"));
+    const restored = await decryptSyncDocument(onDisk.doc, "NewPassphrase#2");
+    assert.equal(restored.nodes[0].title, "口令轮换书签");
   });
 });

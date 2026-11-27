@@ -337,6 +337,37 @@ async function countHistorySnapshots() {
   return (await listSnapshotFilenames()).length;
 }
 
+async function listHistorySnapshots() {
+  const dir = path.join(path.dirname(DATA_FILE), ".snapshots");
+  const files = (await listSnapshotFilenames()).reverse();
+  const out = [];
+  for (const id of files) {
+    try {
+      const raw = await readFile(path.join(dir, id), "utf8");
+      const parsed = JSON.parse(raw);
+      out.push({
+        id,
+        createdAt: Number(parsed?.updatedAt) || 0,
+        bytes: Buffer.byteLength(raw, "utf8"),
+        revision: Number(parsed?.revision) || 0,
+        epoch: Number(parsed?.epoch) || 0,
+        encrypted: isEncryptedSyncEnvelope(parsed?.doc),
+      });
+    } catch {
+      // 跳过损坏的历史快照文件
+    }
+  }
+  return out;
+}
+
+function isValidSnapshotId(id) {
+  if (typeof id !== "string") return false;
+  const trimmed = id.trim();
+  if (!trimmed || trimmed !== id) return false;
+  if (trimmed.includes("/") || trimmed.includes("\\") || trimmed.includes("..")) return false;
+  return trimmed.startsWith(`${path.basename(DATA_FILE)}.`) && trimmed.endsWith(".json");
+}
+
 async function rotateHistorySnapshot() {
   if (MAX_HISTORY_SNAPSHOTS <= 0) return;
   try {
@@ -957,6 +988,108 @@ const server = createServer(async (req, res) => {
       };
     });
     json(res, result.status, result.body, result.headers);
+    return;
+  }
+
+  // 管理操作，仅主管理 Token 可调用。
+  // body: { dryRun?: boolean, confirm?: "RECLAIM", maxCandidates?: number }
+  if (url.pathname === "/v1/sync/snapshots" && method === "GET") {
+    if (!requireMaster(req, res)) return;
+    json(res, 200, { ok: true, snapshots: await listHistorySnapshots() });
+    return;
+  }
+
+  if (url.pathname === "/v1/sync/snapshots/restore" && method === "POST") {
+    if (!requireMaster(req, res)) return;
+    let raw;
+    try {
+      raw = await readBody(req, 16 * 1024);
+    } catch (e) {
+      json(res, e.message === "body_too_large" ? 413 : 400, { error: e.message || "bad_body" });
+      return;
+    }
+    let body = {};
+    try {
+      body = raw.trim() ? JSON.parse(raw) : {};
+    } catch {
+      json(res, 400, { error: "invalid_json" });
+      return;
+    }
+    if (body?.confirm !== "RESTORE") {
+      json(res, 400, { error: "confirmation_required", expected: "RESTORE" });
+      return;
+    }
+    const snapId = typeof body?.id === "string" ? body.id.trim() : "";
+    if (!isValidSnapshotId(snapId)) {
+      json(res, 400, { error: "invalid_snapshot_id" });
+      return;
+    }
+    const result = await enqueueWrite(async () => {
+      const snapPath = path.join(path.dirname(DATA_FILE), ".snapshots", snapId);
+      let snapRaw;
+      try {
+        snapRaw = await readFile(snapPath, "utf8");
+      } catch (e) {
+        if (e?.code === "ENOENT") return { status: 404, body: { error: "snapshot_not_found" }, headers: {} };
+        return { status: 500, body: { error: "snapshot_read_failed" }, headers: {} };
+      }
+      let snap;
+      try {
+        snap = JSON.parse(snapRaw);
+      } catch {
+        return { status: 400, body: { error: "invalid_snapshot_payload" }, headers: {} };
+      }
+      const docErr = validateSyncDocument(snap?.doc);
+      if (docErr) {
+        return { status: 400, body: { error: "invalid_snapshot_payload", detail: docErr }, headers: {} };
+      }
+      const nextRevision = Math.max(state?.revision || 0, Number(snap?.revision) || 0) + 1;
+      const nextEpoch = (state?.epoch || 0) + 1;
+      const nextDoc = { ...snap.doc, revision: nextRevision };
+      nextDoc.contentHash = hashSyncDocument(nextDoc);
+      const nextDevices = {};
+      for (const [id, device] of Object.entries(state?.devices || snap?.devices || {})) {
+        nextDevices[id] = {
+          ...device,
+          lastConfirmedEpoch: 0,
+          lastConfirmedRevision: 0,
+          lastSeenAt: device.lastSeenAt,
+        };
+      }
+      const nextState = {
+        revision: nextRevision,
+        etag: etagOf(nextDoc, nextRevision),
+        doc: nextDoc,
+        updatedAt: Date.now(),
+        epoch: nextEpoch,
+        devices: normalizeDevices(nextDevices),
+        deletions: normalizeDeletions(snap?.deletions),
+        reclaimedIds: normalizeReclaimedIds(snap?.reclaimedIds),
+      };
+      try {
+        await saveToDisk(nextState);
+      } catch (e) {
+        console.error("[sync-server] snapshot restore save failed", e);
+        return { status: 500, body: { error: "save_failed" }, headers: {} };
+      }
+      state = nextState;
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          restoredFrom: snapId,
+          revision: nextRevision,
+          epoch: nextEpoch,
+          encrypted: isEncryptedSyncEnvelope(nextDoc),
+        },
+        headers: {
+          ETag: nextState.etag,
+          "X-Sync-Revision": String(nextRevision),
+          "X-Sync-Epoch": String(nextEpoch),
+        },
+      };
+    });
+    json(res, result.status, result.body, result.headers || {});
     return;
   }
 

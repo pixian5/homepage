@@ -346,3 +346,74 @@ export async function httpRetireDevice(cfg, payload) {
     return { ok: false, reason: "network_error", error: `${detail} · ${url}` };
   }
 }
+
+/**
+ * 拉取服务端 `.snapshots/` 历史滚动快照列表（管理操作，需主管理 token）。
+ *
+ * @param {HttpSyncConfig} cfg
+ */
+export async function httpGetSnapshots(cfg) {
+  const baseUrl = String(cfg?.baseUrl || "").trim();
+  if (!baseUrl) return { ok: false, reason: "no_url" };
+  const url = joinUrl(baseUrl, "/v1/sync/snapshots");
+  try {
+    const res = await syncHttpFetchWithTimeout(url, {
+      method: "GET",
+      headers: { Accept: "application/json", ...authHeaders(cfg.token) },
+    });
+    if (res.status === 401) return { ok: false, reason: "unauthorized", status: 401 };
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { ok: false, reason: "http_error", status: res.status, error: text.slice(0, 200) };
+    }
+    const body = await res.json().catch(() => ({}));
+    return {
+      ok: true,
+      snapshots: Array.isArray(body?.snapshots) ? body.snapshots : [],
+    };
+  } catch (e) {
+    const detail = e?.name === "AbortError" ? "请求超时（10 秒）" : e?.message || String(e);
+    return { ok: false, reason: "network_error", error: `${detail} · ${url}` };
+  }
+}
+
+/**
+ * 原子回滚服务端状态到指定历史快照（管理操作，需主管理 token）。
+ *
+ * @param {HttpSyncConfig} cfg
+ * @param {string} snapshotId
+ */
+export async function httpRestoreSnapshot(cfg, snapshotId) {
+  const baseUrl = String(cfg?.baseUrl || "").trim();
+  if (!baseUrl) return { ok: false, reason: "no_url" };
+  const id = String(snapshotId || "").trim();
+  if (!id) return { ok: false, reason: "invalid_snapshot_id" };
+  const url = joinUrl(baseUrl, "/v1/sync/snapshots/restore");
+  try {
+    const res = await syncHttpFetchWithTimeout(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...authHeaders(cfg.token),
+      },
+      body: JSON.stringify({ id, confirm: "RESTORE" }),
+    });
+    if (res.status === 401) return { ok: false, reason: "unauthorized", status: 401 };
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, reason: body?.error || "http_error", status: res.status };
+    }
+    const body = await res.json().catch(() => ({}));
+    return {
+      ok: true,
+      restoredFrom: body?.restoredFrom || id,
+      revision: Number(body?.revision) || 0,
+      epoch: Number(body?.epoch) || 0,
+      encrypted: !!body?.encrypted,
+    };
+  } catch (e) {
+    const detail = e?.name === "AbortError" ? "请求超时（10 秒）" : e?.message || String(e);
+    return { ok: false, reason: "network_error", error: `${detail} · ${url}` };
+  }
+}

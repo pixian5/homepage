@@ -82,9 +82,17 @@ import {
   refreshSyncInterval,
   reloadSyncState,
   resolveDocConflict,
+  rotateE2eePassphrase,
   schedulePush,
 } from "./sync_engine.js";
-import { httpGetDevices, httpHealth, httpPullState, httpRetireDevice } from "./sync_http_transport.js";
+import {
+  httpGetDevices,
+  httpGetSnapshots,
+  httpHealth,
+  httpPullState,
+  httpRestoreSnapshot,
+  httpRetireDevice,
+} from "./sync_http_transport.js";
 import { createDocId, getOrCreateDeviceId } from "./sync_ids.js";
 import { mergeHomepage } from "./sync_merge.js";
 import {
@@ -1036,6 +1044,7 @@ async function init() {
       resolveDocConflict,
       pullNow,
       pushNow,
+      rotateE2eePassphrase,
       onSyncEnabledChanged,
       refreshSyncInterval,
       cancelScheduledPush,
@@ -1045,6 +1054,8 @@ async function init() {
       httpPullState,
       httpGetDevices,
       httpRetireDevice,
+      httpGetSnapshots,
+      httpRestoreSnapshot,
       ensureDevicePairing,
       exportNetscapeBookmarksHtml,
       parseNetscapeBookmarksHtml,

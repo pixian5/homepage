@@ -804,6 +804,161 @@ export async function pushNow(reason = "manual") {
   return enqueue(() => pushNowImpl(reason));
 }
 
+/**
+ * E2EE 端到端加密口令安全轮换：
+ * 1) 先用 oldPassphrase 拉取并解密合并云端最新数据；
+ * 2) 构造 SyncDocument 并显式用 newPassphrase 重新加密推送（若遇 412 重试一次）；
+ * 3) 云端落盘成功后再原子更新本机保存的 syncE2eePassphrase 并写入 _saveLocal。
+ * 任一校验或加解密步骤失败均保持旧口令与云端密文原封不动。
+ *
+ * @param {{ oldPassphrase: string, newPassphrase: string }} params
+ */
+export async function rotateE2eePassphrase({ oldPassphrase, newPassphrase } = {}) {
+  return enqueue(async () => {
+    const oldSecret = String(oldPassphrase || "");
+    const newSecret = String(newPassphrase || "");
+    if (!oldSecret || !newSecret) return { ok: false, reason: "invalid_passphrase" };
+    if (oldSecret === newSecret) return { ok: false, reason: "passphrase_unchanged" };
+
+    await loadState();
+    const initialData = _getData();
+    if (!initialData?.settings?.syncEnabled) {
+      return { ok: false, reason: "sync_disabled" };
+    }
+
+    await ensureDevicePairing();
+    const transport = await getTransportAuth();
+    if (!transport.baseUrl) return { ok: false, reason: "no_url" };
+    const deviceId = await getOrCreateDeviceId();
+    if (!_status.docId) _status.docId = createDocId();
+
+    const decodeWithOldSecret = async (rawDoc) => {
+      if (!rawDoc || !isEncryptedSyncEnvelope(rawDoc)) return { ok: true, doc: rawDoc };
+      try {
+        return { ok: true, doc: await decryptSyncDocument(rawDoc, oldSecret) };
+      } catch (e) {
+        return { ok: false, reason: e?.code || "e2ee_decrypt_failed" };
+      }
+    };
+
+    const pull = await httpPullState(transport);
+    let baseRevision = 0;
+    if (pull.ok) {
+      const decoded = await decodeWithOldSecret(pull.doc);
+      if (!decoded.ok) {
+        _status.status = "error";
+        _status.lastError = decoded.reason;
+        await saveState();
+        return { ok: false, reason: decoded.reason };
+      }
+      _status.lastRemoteEtag = pull.etag || _status.lastRemoteEtag;
+      if (Number.isSafeInteger(pull.epoch)) _status.lastRemoteEpoch = pull.epoch;
+      baseRevision = Number(decoded.doc?.revision || pull.revision) || 0;
+      if (!isContentEqualToRemote(_getData(), decoded.doc, _status.docId)) {
+        const applied = await applyRemoteDoc(decoded.doc, deviceId, "e2ee_rotate_pull");
+        if (!applied.ok) return applied;
+      }
+    } else if (pull.reason !== "no_remote") {
+      if (pull.reason === "device_retired") {
+        await markDeviceRetired();
+      } else if (pull.reason === "unauthorized" && transport.deviceSecret) {
+        await dropStaleDeviceCredentials();
+      }
+      _status.status = pull.reason === "device_retired" ? "device_retired" : "error";
+      _status.lastError = pull.reason || "pull_failed";
+      await saveState();
+      return { ok: false, reason: pull.reason || "pull_failed", error: pull.error };
+    }
+
+    let pushRes = null;
+    let pushedDoc = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const latest = _getData();
+      const revision = baseRevision + 1;
+      const doc = toSyncDocument(latest, {
+        deviceId,
+        docId: _status.docId,
+        revision,
+        writtenAt: Date.now(),
+      });
+      doc.contentHash = hashSyncDocument(doc);
+      let envelope;
+      try {
+        envelope = await encryptSyncDocument(doc, newSecret);
+      } catch (e) {
+        return { ok: false, reason: e?.code || "e2ee_encrypt_failed" };
+      }
+      pushRes = await httpPushState(await getTransportAuth(), envelope, {
+        ifMatch: _status.lastRemoteEtag || undefined,
+        epoch: _status.lastRemoteEpoch || 0,
+        idempotencyKey: `rotate:${doc.docId}:${revision}:${deviceId}`,
+      });
+      if (pushRes.ok) {
+        pushedDoc = doc;
+        break;
+      }
+      if (pushRes.reason === "precondition_failed" && pushRes.remote?.doc && attempt === 0) {
+        if (pushRes.etag) _status.lastRemoteEtag = pushRes.etag;
+        const retryDecoded = await decodeWithOldSecret(pushRes.remote.doc);
+        if (!retryDecoded.ok) return { ok: false, reason: retryDecoded.reason };
+        baseRevision = Number(pushRes.revision || retryDecoded.doc?.revision) || baseRevision;
+        const applied = await applyRemoteDoc(retryDecoded.doc, deviceId, "e2ee_rotate_412");
+        if (!applied.ok) return applied;
+        continue;
+      }
+      if (pushRes.reason === "device_retired") await markDeviceRetired();
+      _status.status = pushRes.reason === "device_retired" ? "device_retired" : "error";
+      _status.lastError = pushRes.reason || pushRes.error || "push_failed";
+      await saveState();
+      return { ok: false, reason: pushRes.reason || "push_failed", error: pushRes.error };
+    }
+
+    if (!pushRes?.ok || !pushedDoc) {
+      return { ok: false, reason: "push_failed" };
+    }
+
+    const current = _getData();
+    const prevEnabled = !!current?.settings?.syncE2eeEnabled;
+    const prevPassphrase = String(current?.settings?.syncE2eePassphrase || "");
+    if (current && typeof current === "object") {
+      current.settings = {
+        ...(current.settings || {}),
+        syncE2eeEnabled: true,
+        syncE2eePassphrase: newSecret,
+      };
+      current._syncMeta = {
+        ...(current._syncMeta && typeof current._syncMeta === "object" ? current._syncMeta : {}),
+        docId: _status.docId,
+        revision: Number(pushRes.revision || pushedDoc.revision),
+        contentHash: pushedDoc.contentHash,
+      };
+      try {
+        const writeErr = await _saveLocal(current);
+        if (writeErr && !isLocalTrimWarning(writeErr)) {
+          current.settings.syncE2eeEnabled = prevEnabled;
+          current.settings.syncE2eePassphrase = prevPassphrase;
+          return { ok: false, reason: "local_write_failed", error: String(writeErr) };
+        }
+      } catch (e) {
+        current.settings.syncE2eeEnabled = prevEnabled;
+        current.settings.syncE2eePassphrase = prevPassphrase;
+        return { ok: false, reason: "local_write_failed", error: e?.message || String(e) };
+      }
+    }
+
+    _status.lastRemoteEtag = pushRes.etag || _status.lastRemoteEtag;
+    if (Number.isSafeInteger(pushRes.epoch)) _status.lastRemoteEpoch = pushRes.epoch;
+    _status.lastRemoteRevision = Number(pushRes.revision || pushedDoc.revision);
+    _status.lastPushAt = Date.now();
+    _status.status = "idle";
+    _status.lastError = "";
+    await clearOutboxSuccess();
+    await saveState();
+    await confirmRemoteRevision(_status.lastRemoteRevision, deviceId);
+    return { ok: true, revision: _status.lastRemoteRevision };
+  });
+}
+
 async function enqueueOutbox(doc, error) {
   await enqueueOutboxRecord(doc, error);
 }

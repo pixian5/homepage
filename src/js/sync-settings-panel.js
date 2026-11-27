@@ -28,6 +28,7 @@ var HomepageSyncSettingsPanel = (() => {
       resolveDocConflict,
       pullNow,
       pushNow,
+      rotateE2eePassphrase,
       onSyncEnabledChanged,
       refreshSyncInterval,
       cancelScheduledPush,
@@ -35,6 +36,8 @@ var HomepageSyncSettingsPanel = (() => {
       httpPullState,
       httpGetDevices,
       httpRetireDevice,
+      httpGetSnapshots,
+      httpRestoreSnapshot,
       ensureDevicePairing,
     } = { ...(ctx?.ui || {}), ...(ctx?.deps || {}) };
 
@@ -312,7 +315,8 @@ var HomepageSyncSettingsPanel = (() => {
       const devices = devicesRes.devices || [];
       const activeCount = devices.filter((d) => !(Number(d.retiredAt) > 0)).length;
       const tombstoneCount = Number(healthRes?.body?.tombstoneCount);
-      healthEl.textContent = t("settings.sync.devices.health", {
+      const snapshotCount = Number(healthRes?.body?.snapshotCount);
+      let healthText = t("settings.sync.devices.health", {
         revision: devicesRes.revision,
         epoch: devicesRes.epoch,
         active: activeCount,
@@ -320,7 +324,147 @@ var HomepageSyncSettingsPanel = (() => {
         tombs: Number.isFinite(tombstoneCount) ? tombstoneCount : "-",
         reclaim: devicesRes.reclaimCandidates?.length ?? "-",
       });
+      if (healthRes?.body?.encrypted !== undefined || Number.isFinite(snapshotCount)) {
+        const modeLabel = t(
+          healthRes?.body?.encrypted ? "settings.sync.health.encrypted" : "settings.sync.health.plaintext",
+        );
+        const snapLabel = t("settings.sync.health.snapshots", {
+          count: Number.isFinite(snapshotCount) ? snapshotCount : "-",
+        });
+        healthText = `${healthText} · ${modeLabel} · ${snapLabel}`;
+      }
+      healthEl.textContent = healthText;
       renderSyncDevicesList(listEl, devices, localDeviceId);
+    }
+
+    function openRotateE2eeModal() {
+      const cfg = applySyncSettingsFromForm();
+      if (!cfg.enabled || !cfg.url) {
+        toast(t(cfg.url ? "settings.sync.state.off" : "settings.sync.testFail", { reason: "no_url" }), "warning");
+        return;
+      }
+      const modalHtml = html`
+        <h2>${t("settings.sync.e2ee.rotateTitle")}</h2>
+        <div class="section">
+          <div class="row-inline">
+            <span class="inline-label">${t("settings.sync.e2ee.oldPass")}</span>
+            <input id="e2eeRotateOldPass" type="password" class="inline-text" autocomplete="current-password" />
+          </div>
+          <div class="row-inline">
+            <span class="inline-label">${t("settings.sync.e2ee.newPass")}</span>
+            <input id="e2eeRotateNewPass" type="password" class="inline-text" autocomplete="new-password" />
+          </div>
+          <div class="row-inline">
+            <span class="inline-label">${t("settings.sync.e2ee.confirmPass")}</span>
+            <input id="e2eeRotateConfirmPass" type="password" class="inline-text" autocomplete="new-password" />
+          </div>
+        </div>
+        <div class="actions">
+          <button type="button" id="btnRotateE2eeConfirm" class="icon-btn primary">${t("common.confirm")}</button>
+          <button type="button" id="btnRotateE2eeCancel" class="icon-btn">${t("common.cancel")}</button>
+        </div>
+      `;
+      openModal(modalHtml);
+      const oldInput = $("e2eeRotateOldPass");
+      if (oldInput && getData().settings?.syncE2eePassphrase) {
+        oldInput.value = getData().settings.syncE2eePassphrase;
+      }
+      $("btnRotateE2eeCancel")?.addEventListener("click", () => closeModal());
+      $("btnRotateE2eeConfirm")?.addEventListener("click", async () => {
+        const oldPassphrase = String($("e2eeRotateOldPass")?.value || "");
+        const newPassphrase = String($("e2eeRotateNewPass")?.value || "");
+        const confirmPassphrase = String($("e2eeRotateConfirmPass")?.value || "");
+        if (!oldPassphrase || !newPassphrase) {
+          toast(t("settings.sync.e2ee.passphraseRequired"), "error");
+          return;
+        }
+        if (newPassphrase !== confirmPassphrase) {
+          toast(t("settings.sync.e2ee.rotateMismatch"), "error");
+          return;
+        }
+        await runWithButtonState($("btnRotateE2eeConfirm"), t("settings.sync.state.syncing"), async () => {
+          const res = await rotateE2eePassphrase?.({ oldPassphrase, newPassphrase });
+          if (!res?.ok) {
+            const msg =
+              res?.reason === "e2ee_decrypt_failed"
+                ? t("settings.sync.e2ee.decryptFailed")
+                : t("settings.sync.importFail", { reason: res?.reason || "rotate" });
+            toast(msg, "error");
+            return;
+          }
+          closeModal();
+          toast(t("settings.sync.e2ee.rotateDone"));
+          render();
+          void refreshSyncStatusLine();
+        });
+      });
+    }
+
+    async function openSnapshotsModal() {
+      const cfg = applySyncSettingsFromForm();
+      if (!cfg.url) {
+        toast(t("settings.sync.testFail", { reason: "no_url" }), "error");
+        return;
+      }
+      const res = await httpGetSnapshots?.(cfg);
+      if (!res?.ok) {
+        const reason = res?.reason === "unauthorized" ? t("settings.sync.unauthorized") : res?.reason || "error";
+        toast(t("settings.sync.testFail", { reason }), "error");
+        return;
+      }
+      const snapshots = res.snapshots || [];
+      const modalHtml = html`
+        <h2>${t("settings.sync.snapshots.title")}</h2>
+        <div class="section settings-sync-device-list" id="syncSnapshotsList"></div>
+        <div class="actions">
+          <button type="button" id="btnSyncSnapshotsClose" class="icon-btn">${t("common.cancel")}</button>
+        </div>
+      `;
+      openModal(modalHtml);
+      const container = $("syncSnapshotsList");
+      if (container) {
+        container.replaceChildren();
+        if (!snapshots.length) {
+          const empty = document.createElement("p");
+          empty.className = "settings-sync-hint";
+          empty.textContent = t("settings.sync.snapshots.empty");
+          container.appendChild(empty);
+        } else {
+          for (const snap of snapshots) {
+            const kb = snap.bytes < 1024 ? `${snap.bytes} B` : `${(snap.bytes / 1024).toFixed(1)} KB`;
+            const mode = t(snap.encrypted ? "settings.sync.health.encrypted" : "settings.sync.health.plaintext");
+            const row = document.createElement("div");
+            row.className = "row-inline settings-sync-device-row";
+            const name = document.createElement("span");
+            name.className = "settings-sync-device-name";
+            name.textContent = `rev ${snap.revision} · ${mode}`;
+            const seen = document.createElement("span");
+            seen.className = "settings-sync-device-seen";
+            seen.textContent = `${snap.createdAt ? formatSyncTime(snap.createdAt) : "-"} · ${kb}`;
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "icon-btn btn-snap-restore";
+            btn.textContent = t("settings.sync.snapshots.restore");
+            btn.addEventListener("click", async () => {
+              if (!snap.id || !confirm(t("settings.sync.snapshots.restoreConfirm"))) return;
+              await runWithButtonState(btn, t("settings.sync.state.syncing"), async () => {
+                const restored = await httpRestoreSnapshot?.(cfg, snap.id);
+                if (!restored?.ok) {
+                  toast(t("settings.sync.importFail", { reason: restored?.reason || "restore" }), "error");
+                  return;
+                }
+                await pullNow?.("snapshot_restore");
+                closeModal();
+                render();
+                toast(t("settings.sync.snapshots.restoreDone", { revision: restored.revision }));
+              });
+            });
+            row.append(name, seen, btn);
+            container.appendChild(row);
+          }
+        }
+      }
+      $("btnSyncSnapshotsClose")?.addEventListener("click", () => closeModal());
     }
 
     function bindButtons() {
@@ -482,6 +626,8 @@ var HomepageSyncSettingsPanel = (() => {
         }
       });
       $("btnSyncResolveConflict")?.addEventListener("click", () => openSyncConflictModal());
+      $("btnSyncRotateE2ee")?.addEventListener("click", () => openRotateE2eeModal());
+      $("btnSyncSnapshots")?.addEventListener("click", () => void openSnapshotsModal());
     }
 
     return {

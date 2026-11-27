@@ -124,7 +124,7 @@ function projectIcon(node) {
 
 /**
  * @param {object} data HomepageData
- * @param {{ deviceId: string, docId: string, revision?: number, writtenAt?: number }} ctx
+ * @param {{ deviceId: string, docId: string, revision?: number, writtenAt?: number, tombstoneNow?: number, tombstoneTtlMs?: number }} ctx
  * @returns {object} SyncDocument
  */
 export function toSyncDocument(data, ctx) {
@@ -132,6 +132,9 @@ export function toSyncDocument(data, ctx) {
   const deviceId = projAsStr(ctx.deviceId);
   const docId = projAsStr(ctx.docId);
   const revision = projAsNum(ctx.revision, 1);
+  const tombstoneNow = ctx?.tombstoneNow !== undefined ? projAsNum(ctx.tombstoneNow, now) : now;
+  const rawTtl = ctx?.tombstoneTtlMs !== undefined ? Number(ctx.tombstoneTtlMs) : SYNC_TOMBSTONE_TTL_MS;
+  const tombstoneTtlMs = Number.isNaN(rawTtl) ? SYNC_TOMBSTONE_TTL_MS : rawTtl;
 
   const settingsIn = data?.settings && typeof data.settings === "object" ? data.settings : {};
   const settings = {};
@@ -145,7 +148,7 @@ export function toSyncDocument(data, ctx) {
     settings.backgroundCustom = "";
   }
 
-  const tombstoneCutoff = now - SYNC_TOMBSTONE_TTL_MS;
+  const tombstoneCutoff = Number.isFinite(tombstoneTtlMs) ? tombstoneNow - tombstoneTtlMs : Number.NEGATIVE_INFINITY;
   const isExpiredTombstone = (value) => {
     const at = projAsNum(value?.deletedAt || value?.purgedAt);
     return at > 0 && at < tombstoneCutoff;
@@ -326,16 +329,24 @@ export function hashSyncDocument(doc) {
  * 兼容旧客户端或服务端存储的未排序快照，避免键序差异导致误判不一致。
  * 注意：绝不能替换 hashSyncDocument 原逻辑，以免破坏服务端与恢复脚本校验。
  * @param {object} doc
+ * @param {{ tombstoneCutoff?: number }} [opts]
  * @returns {object}
  */
-export function canonicalizeSyncDocument(doc) {
+export function canonicalizeSyncDocument(doc, opts = {}) {
   if (!doc || typeof doc !== "object") return doc;
+  const cutoff = Number(opts?.tombstoneCutoff);
+  const hasCutoff = Number.isFinite(cutoff);
+  const keepEntry = (entry) => {
+    if (!hasCutoff || (!entry?.deletedAt && !entry?.purgedAt)) return true;
+    const at = projAsNum(entry?.deletedAt || entry?.purgedAt);
+    return !(at > 0 && at < cutoff);
+  };
   const next = { ...doc, contentHash: "" };
   if (Array.isArray(doc.groups)) {
-    next.groups = [...doc.groups].sort((a, b) => compareSyncKey(a?.id, b?.id));
+    next.groups = doc.groups.filter(keepEntry).sort((a, b) => compareSyncKey(a?.id, b?.id));
   }
   if (Array.isArray(doc.nodes)) {
-    next.nodes = [...doc.nodes].sort((a, b) => compareSyncKey(a?.id, b?.id));
+    next.nodes = doc.nodes.filter(keepEntry).sort((a, b) => compareSyncKey(a?.id, b?.id));
   }
   if (Array.isArray(doc.placements)) {
     next.placements = [...doc.placements].sort(

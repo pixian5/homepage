@@ -281,9 +281,12 @@ export function migrateData(data) {
 
 /**
  * 加载本地数据
+ * @param {{ onBeforeInternalWrite?: () => void }} [options]
  * @returns {Promise<HomepageData>}
  */
-export async function loadData() {
+export async function loadData(options = {}) {
+  const onBeforeInternalWrite =
+    typeof options?.onBeforeInternalWrite === "function" ? options.onBeforeInternalWrite : null;
   const base = createDefaultData();
   const api = getChromeApi();
   const local = storageArea(false);
@@ -306,10 +309,12 @@ export async function loadData() {
   const stableData = await readSafariStableHomepage(api);
   if (shouldRestoreSafariStableHomepage(data, stableData, base)) {
     data = stableData;
+    onBeforeInternalWrite?.();
     const restoreError = await storageSetLocal(local, { [ROOT_KEY]: data });
     if (restoreError) console.error("loadData: failed to restore Safari stable homepage storage");
   }
   if (!data) {
+    onBeforeInternalWrite?.();
     await storageSetLocal(local, { [ROOT_KEY]: base });
     await writeSafariStableHomepage(base, api);
     return base;
@@ -320,7 +325,10 @@ export async function loadData() {
   const migratedRootModel = Array.isArray(data.groups) && data.groups.some((group) => !isAllBookmarksGroup(group));
   const migratedSchema = Number(data.schemaVersion) > schemaBeforeMigration;
   data = repairHomepageData(data, DEFAULT_SETTINGS);
-  if (migratedRootModel || migratedSchema) await storageSetLocal(local, { [ROOT_KEY]: data });
+  if (migratedRootModel || migratedSchema) {
+    onBeforeInternalWrite?.();
+    await storageSetLocal(local, { [ROOT_KEY]: data });
+  }
   if (!stableData) await writeSafariStableHomepage(data, api);
   return data;
 }

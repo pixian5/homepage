@@ -981,4 +981,49 @@ describe("mergeSettingsByClock convergence", () => {
     assert.equal(merged.ok, true);
     assert.equal(merged.stats.applied, false);
   });
+
+  it("ignores expired tombstones consistently under finite tombstoneTtlMs so pull-merge-prune cannot ping-pong", () => {
+    const ttl = 30 * 24 * 60 * 60 * 1000;
+    const deletedAt = 1000;
+    const now = deletedAt + ttl + 5000;
+
+    // 远端在墓碑过期前生成，仍携带 itm_expired 的墓碑
+    const remoteSource = baseData({
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["n1"], updatedAt: 2000, updatedBy: "dev_b" }],
+    });
+    remoteSource.nodes.n1.titleUpdatedAt = 1000;
+    remoteSource.nodes.n1.urlUpdatedAt = 1000;
+    remoteSource.nodes.itm_expired = {
+      id: "itm_expired",
+      type: "item",
+      title: "Expired",
+      url: "https://expired.test/",
+      iconType: "auto",
+      updatedAt: deletedAt,
+      deletedAt,
+      updatedBy: "dev_b",
+    };
+    const remoteDoc = toSyncDocument(remoteSource, {
+      deviceId: "dev_b",
+      docId: "doc_ttl",
+      revision: 3,
+      writtenAt: deletedAt + 1000,
+    });
+
+    // 本端已用 purge/prune 把过期墓碑清理出 nodes
+    const localPruned = baseData({
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["n1"], updatedAt: 2000, updatedBy: "dev_b" }],
+    });
+    localPruned.nodes.n1.titleUpdatedAt = 1000;
+    localPruned.nodes.n1.urlUpdatedAt = 1000;
+
+    const merged = mergeHomepage(localPruned, remoteDoc, {
+      deviceId: "dev_a",
+      now,
+      tombstoneTtlMs: ttl,
+    });
+    assert.equal(merged.ok, true);
+    assert.equal(merged.stats.applied, false, "过期墓碑不得重插或判定为有变更");
+    assert.equal("itm_expired" in merged.state.nodes, false, "已过期的远端墓碑不得复活进本地 nodes");
+  });
 });

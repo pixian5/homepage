@@ -5,7 +5,7 @@
 
 import { ALL_BOOKMARKS_GROUP_ID, collectReachableNodeIds, dedupeData, ensureAllBookmarksGroup } from "./data-utils.js";
 import { deepClone } from "./storage.js";
-import { HOMEPAGE_SCHEMA_VERSION, nextSyncTimestamp } from "./sync_policy.js";
+import { HOMEPAGE_SCHEMA_VERSION, nextSyncTimestamp, SYNC_TOMBSTONE_TTL_MS } from "./sync_policy.js";
 import { syncDocumentToHomepageShape, toSyncDocument } from "./sync_projection.js";
 import { mergeSettingsByClock, normalizeSettingsClock } from "./sync_settings.js";
 
@@ -238,13 +238,29 @@ function collectActiveIds(data) {
   return ids;
 }
 
-function syncContentFingerprint(data, deviceId, docId) {
+function syncContentFingerprint(data, deviceId, docId, now = 0, tombstoneTtlMs = SYNC_TOMBSTONE_TTL_MS) {
   return toSyncDocument(data, {
     deviceId,
     docId: docId || "doc_compare",
     revision: 0,
     writtenAt: 0,
+    tombstoneNow: now,
+    tombstoneTtlMs,
   }).contentHash;
+}
+
+function stripExpiredRemoteTombstones(doc, tombstoneCutoff) {
+  if (!doc || typeof doc !== "object" || !Number.isFinite(tombstoneCutoff)) return doc;
+  const keep = (entry) => {
+    if (!entry?.deletedAt && !entry?.purgedAt) return true;
+    const at = mergeAsNum(entry?.deletedAt || entry?.purgedAt);
+    return !(at > 0 && at < tombstoneCutoff);
+  };
+  return {
+    ...doc,
+    groups: Array.isArray(doc.groups) ? doc.groups.filter(keep) : doc.groups,
+    nodes: Array.isArray(doc.nodes) ? doc.nodes.filter(keep) : doc.nodes,
+  };
 }
 
 /**
@@ -323,17 +339,21 @@ function rescueUnplacedLiveNodes(state, placements, groupById, { deviceId, now }
  * 主合并入口
  * @param {object} localData HomepageData
  * @param {object|null} remoteDoc SyncDocument
- * @param {{ deviceId: string, now?: number }} ctx
+ * @param {{ deviceId: string, now?: number, tombstoneTtlMs?: number }} ctx
  */
 export function mergeHomepage(localData, remoteDoc, ctx = {}) {
   const deviceId = mergeAsStr(ctx.deviceId || "dev_unknown");
   const now = mergeAsNum(ctx.now, Date.now());
+  const rawTtl = ctx?.tombstoneTtlMs !== undefined ? Number(ctx.tombstoneTtlMs) : SYNC_TOMBSTONE_TTL_MS;
+  const tombstoneTtlMs = Number.isNaN(rawTtl) ? SYNC_TOMBSTONE_TTL_MS : rawTtl;
+  const tombstoneCutoff = Number.isFinite(tombstoneTtlMs) ? now - tombstoneTtlMs : Number.NEGATIVE_INFINITY;
 
   if (!remoteDoc || typeof remoteDoc !== "object") {
     return { ok: true, state: deepClone(localData), stats: { reason: "no_remote", applied: false } };
   }
 
-  const remoteShape = syncDocumentToHomepageShape(remoteDoc);
+  const effectiveRemoteDoc = stripExpiredRemoteTombstones(remoteDoc, tombstoneCutoff);
+  const remoteShape = syncDocumentToHomepageShape(effectiveRemoteDoc);
   const remoteEmpty = (remoteShape.groups?.length || 0) === 0 && Object.keys(remoteShape.nodes || {}).length === 0;
 
   if (remoteEmpty) {
@@ -355,6 +375,8 @@ export function mergeHomepage(localData, remoteDoc, ctx = {}) {
     docId: remoteDoc.docId || "doc_local",
     revision: 0,
     writtenAt: mergeAsNum(localData?.lastUpdated, now),
+    tombstoneNow: now,
+    tombstoneTtlMs,
   });
   const localShape = syncDocumentToHomepageShape(localDoc);
 
@@ -495,8 +517,8 @@ export function mergeHomepage(localData, remoteDoc, ctx = {}) {
   }
 
   const applied =
-    syncContentFingerprint(localData, deviceId, remoteDoc.docId) !==
-    syncContentFingerprint(state, deviceId, remoteDoc.docId);
+    syncContentFingerprint(localData, deviceId, remoteDoc.docId, now, tombstoneTtlMs) !==
+    syncContentFingerprint(state, deviceId, remoteDoc.docId, now, tombstoneTtlMs);
 
   return {
     ok: true,

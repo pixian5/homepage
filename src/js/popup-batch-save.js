@@ -70,6 +70,7 @@ function appendTabsToContainer(data, savableTabs, { containerId, deviceId = "", 
   );
 
   if (!data._syncMeta || typeof data._syncMeta !== "object") data._syncMeta = {};
+  data._syncMeta.lastWriteSource = "external";
   if (!data._syncMeta.placementClock || typeof data._syncMeta.placementClock !== "object") {
     data._syncMeta.placementClock = {};
   }

@@ -136,6 +136,7 @@ function createHarness(seedOverride = null) {
     appliesStaticI18n: 0,
     appliesSidebarState: 0,
     clearDataCalls: [],
+    suppressCalls: 0,
     deletedMarks: [],
     baselineSyncs: 0,
     settingsClockResets: 0,
@@ -229,6 +230,9 @@ function createHarness(seedOverride = null) {
       readFileAsDataUrl: async () => "data:image/png;base64,test",
       clearData: async (useSync) => {
         calls.clearDataCalls.push(useSync);
+      },
+      suppressStorage: () => {
+        calls.suppressCalls += 1;
       },
       defaultData,
       deepClone: (v) => structuredClone(v),
@@ -471,6 +475,7 @@ describe("settings-controller", () => {
     await h.$("btnClearData").click();
 
     assert.deepEqual(h.calls.clearDataCalls, [false, true]);
+    assert.ok(h.calls.suppressCalls >= 2, "清空数据前后必须开启抑制窗防止删键触发自重载");
     assert.ok(h.getData().nodes.itm_keep, "清空数据落盘失败后必须恢复原数据");
     assert.equal(h.getData().settings.syncEnabled, true);
     assert.equal(h.calls.baselineSyncs, 1);

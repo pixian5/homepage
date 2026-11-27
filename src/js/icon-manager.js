@@ -266,7 +266,7 @@ var HomepageIconManager = (() => {
             if (siteKey) cache[siteKey] = { ...cache[url] };
             await saveIconCache(cache);
             const target = deps.getData()?.nodes?.[nodeId];
-            if (!isActiveItemWithUrl(target, url)) return;
+            if (!isActiveItemWithUrl(target, url) || !target.iconPending) return;
             target.iconPending = false;
             await deps.persistData();
             deps.render();
@@ -277,7 +277,7 @@ var HomepageIconManager = (() => {
           if (siteKey) applyFailureToCache(cache, siteKey, cache[siteKey]);
           await saveIconCache(cache);
           const target = deps.getData()?.nodes?.[nodeId];
-          if (isActiveItemWithUrl(target, url)) {
+          if (isActiveItemWithUrl(target, url) && target.iconPending) {
             target.iconPending = false;
             await deps.persistData();
             deps.render();

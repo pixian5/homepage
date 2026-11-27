@@ -14,6 +14,7 @@ import {
   normalizeSyncInterval,
   SYNC_PUSH_DEBOUNCE_MS,
   SYNC_REVISION_RETRY,
+  SYNC_TOMBSTONE_TTL_MS,
   syncBytesBudgetLevel,
   syncIntervalToMs,
 } from "./sync_policy.js";
@@ -125,6 +126,12 @@ const VISIBILITY_SYNC_MIN_MS = 60_000;
 let _visibilityBound = false;
 let _lastVisibilitySyncAt = 0;
 
+function syncEngineStampWriteSource(target, source) {
+  if (!target || typeof target !== "object") return;
+  if (!target._syncMeta || typeof target._syncMeta !== "object") target._syncMeta = {};
+  target._syncMeta.lastWriteSource = source;
+}
+
 function installVisibilitySync() {
   if (_visibilityBound) return;
   if (typeof document === "undefined" || typeof document.addEventListener !== "function") return;
@@ -136,13 +143,19 @@ function installVisibilitySync() {
     const now = Date.now();
     if (now - _lastVisibilitySyncAt < VISIBILITY_SYNC_MIN_MS) return;
     _lastVisibilitySyncAt = now;
-    void pullNow("visible")
-      .then((res) => {
+    void (async () => {
+      try {
+        await loadState();
+        const latestPullAt = Number(_status.lastPullAt || 0);
+        if (latestPullAt > 0 && Date.now() - latestPullAt < VISIBILITY_SYNC_MIN_MS) return;
+        const res = await pullNow("visible");
         // 合并后本地仍与远端不同 → 推上去收敛
-        if (res?.needPush) return pushNow("visible_need_push");
-        return null;
-      })
-      .catch((e) => console.warn("visibility sync failed", e));
+        if (res?.needPush) return await pushNow("visible_need_push");
+      } catch (e) {
+        console.warn("visibility sync failed", e);
+      }
+      return null;
+    })();
   });
 }
 
@@ -445,6 +458,7 @@ export async function pullNow(reason = "manual") {
 async function persistMergedLocalState(nextState) {
   let warning = "";
   try {
+    syncEngineStampWriteSource(nextState, "sync_merge");
     const err = await _saveLocal(nextState);
     if (err) {
       if (isLocalTrimWarning(err)) {
@@ -587,22 +601,30 @@ async function confirmRemoteRevision(revision, deviceId) {
  * @param {object} data 本地数据
  * @param {object} remoteDoc 远端同步文档（必须带 contentHash 与 writtenAt）
  * @param {string} [docId]
+ * @param {{ now?: number, tombstoneTtlMs?: number }} [opts]
  * @returns {boolean}
  */
-export function isContentEqualToRemote(data, remoteDoc, docId) {
+export function isContentEqualToRemote(data, remoteDoc, docId, opts = {}) {
   if (!remoteDoc?.contentHash) return false;
   const writtenAt = Number(remoteDoc.writtenAt);
   if (!writtenAt) return false;
+  const tombstoneNow = opts?.now !== undefined ? Number(opts.now) : Date.now();
+  const rawTtl = opts?.tombstoneTtlMs !== undefined ? Number(opts.tombstoneTtlMs) : SYNC_TOMBSTONE_TTL_MS;
+  const tombstoneTtlMs = Number.isNaN(rawTtl) ? SYNC_TOMBSTONE_TTL_MS : rawTtl;
+  const tombstoneCutoff = Number.isFinite(tombstoneTtlMs) ? tombstoneNow - tombstoneTtlMs : Number.NEGATIVE_INFINITY;
   try {
     const localDoc = toSyncDocument(data, {
       deviceId: remoteDoc.deviceId,
       docId: docId || remoteDoc.docId,
       revision: Number(remoteDoc.revision) || 0,
       writtenAt,
+      tombstoneNow,
+      tombstoneTtlMs,
     });
-    if (localDoc.contentHash === remoteDoc.contentHash) return true;
+    if (!Number.isFinite(tombstoneCutoff) && localDoc.contentHash === remoteDoc.contentHash) return true;
     return (
-      hashSyncDocument(canonicalizeSyncDocument(localDoc)) === hashSyncDocument(canonicalizeSyncDocument(remoteDoc))
+      hashSyncDocument(canonicalizeSyncDocument(localDoc, { tombstoneCutoff })) ===
+      hashSyncDocument(canonicalizeSyncDocument(remoteDoc, { tombstoneCutoff }))
     );
   } catch {
     return false;
@@ -725,6 +747,7 @@ async function pushNowImpl(reason = "manual") {
           docId: _status.docId,
           revision,
           contentHash: doc.contentHash,
+          lastWriteSource: "sync_meta",
         };
         try {
           await _saveLocal(current);
@@ -981,6 +1004,7 @@ export async function rotateE2eePassphrase({ oldPassphrase, newPassphrase } = {}
         docId: _status.docId,
         revision: Number(pushRes.revision || pushedDoc.revision),
         contentHash: pushedDoc.contentHash,
+        lastWriteSource: "sync_meta",
       };
       try {
         const writeErr = await _saveLocal(current);
@@ -1075,6 +1099,8 @@ const conflictResolver = createSyncConflictResolver({
   writeRemoteSyncDocument,
   applyConflictLocalState,
   pushNowImpl,
+  isContentEqualToRemote,
+  getE2eeConfig,
   getOrCreateDeviceId,
   createDocId,
   toSyncDocument,
@@ -1153,6 +1179,9 @@ export function startSyncInterval() {
         const live = _getData();
         if (!live?.settings?.syncEnabled) return;
         if (document.visibilityState && document.visibilityState === "hidden") return;
+        await loadState();
+        const latestPullAt = Number(_status.lastPullAt || 0);
+        if (latestPullAt > 0 && Date.now() - latestPullAt < Math.floor(ms * 0.8)) return;
         const pull = await pullNow("interval");
         // unchanged = 远端版本号没变，本地也没有需要补推的东西，直接结束这一轮
         if (pull?.unchanged) return;

@@ -201,6 +201,9 @@ var HomepagePersistenceCoordinator = (() => {
         const prevBackups = Array.isArray(data?.backups) ? [...data.backups] : null;
         const prevSettingsClockBaseline = settingsClockBaseline ? deepClone(settingsClockBaseline) : null;
         const prevPlacementClockBaseline = placementClockBaseline ? deepClone(placementClockBaseline) : null;
+        const hadPrevSyncMeta = !!(data?._syncMeta && typeof data._syncMeta === "object");
+        const hasPrevWriteSource = hadPrevSyncMeta && Object.hasOwn(data._syncMeta, "lastWriteSource");
+        const prevWriteSource = hasPrevWriteSource ? data._syncMeta.lastWriteSource : undefined;
         const rollbackBaselines = () => {
           backupFingerprint = prevBackupFingerprint;
           backupBaselineSnapshot = prevBackupBaselineSnapshot;
@@ -210,6 +213,13 @@ var HomepagePersistenceCoordinator = (() => {
           }
           settingsClockBaseline = prevSettingsClockBaseline;
           placementClockBaseline = prevPlacementClockBaseline;
+          if (data?._syncMeta && typeof data._syncMeta === "object") {
+            if (hasPrevWriteSource) {
+              data._syncMeta.lastWriteSource = prevWriteSource;
+            } else {
+              delete data._syncMeta.lastWriteSource;
+            }
+          }
         };
         const autoBackedUp = ensureAutoBackupBeforePersist();
         suppressStorageUntil = Math.max(suppressStorageUntil, Date.now() + storageSuppressMs * 4);
@@ -228,6 +238,8 @@ var HomepagePersistenceCoordinator = (() => {
           const tombstonesPruned = pruneSyncTombstones(data);
           const settingsClockChanged = await stampSettingsClockBeforePersist();
           const placementClockChanged = await stampPlacementClockBeforePersist();
+          if (!data._syncMeta || typeof data._syncMeta !== "object") data._syncMeta = {};
+          data._syncMeta.lastWriteSource = "newtab_edit";
           let warning = null;
           let err = null;
           const err1 = await saveData(data, false);
@@ -270,6 +282,7 @@ var HomepagePersistenceCoordinator = (() => {
           debugLog("persist_done", { err1, changed, warning, err, autoBackedUp });
           return { ok: !err, warning, err };
         } finally {
+          suppressStorageUntil = Math.max(suppressStorageUntil, Date.now() + storageSuppressMs * 4);
           if (!saveSucceeded) {
             rollbackBaselines();
           }

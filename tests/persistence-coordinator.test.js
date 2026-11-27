@@ -261,4 +261,32 @@ describe("persistence-coordinator clock stamping", () => {
     assert.equal(data.backups.length, 1, "重试成功时仍能依据旧基线生成自动备份");
     assert.deepEqual(Object.keys(data.backups[0].data.nodes), ["itm_1"]);
   });
+
+  it("stamps lastWriteSource=newtab_edit, rolls it back on failure, and renews suppress window in finally", async () => {
+    let releaseSave = null;
+    const data = makeData();
+    const coordinator = createPersistenceCoordinator({
+      getData: () => data,
+      getDeviceId: async () => "dev_test",
+      saveData: async () => {
+        await new Promise((resolve) => {
+          releaseSave = resolve;
+        });
+        return "write_error";
+      },
+      schedulePush: () => {},
+      storageSuppressMs: 100,
+      backupIgnoredSettingsKeys: [],
+    });
+
+    const pending = coordinator.persistData();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const untilBeforeFinish = coordinator.getSuppressStorageUntil();
+    releaseSave();
+    const failRes = await pending;
+
+    assert.equal(failRes.ok, false);
+    assert.equal(Object.hasOwn(data._syncMeta, "lastWriteSource"), false, "写盘失败必须回滚新增的 lastWriteSource");
+    assert.ok(coordinator.getSuppressStorageUntil() >= untilBeforeFinish, "finally 内必须续期抑制窗");
+  });
 });

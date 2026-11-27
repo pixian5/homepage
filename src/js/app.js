@@ -302,7 +302,11 @@ function getAppReloadCoordinator() {
         openFolderId = id;
       },
       isPersistInFlight: () => persistenceCoordinator?.isPersistInFlight() || false,
-      loadData,
+      loadData: () =>
+        loadData({
+          onBeforeInternalWrite: () =>
+            persistenceCoordinator?.setSuppressStorageUntil?.(Date.now() + STORAGE_SUPPRESS_MS * 4),
+        }),
       pullNow,
       resetSettingsClockBaseline,
       resetPlacementClockBaseline,
@@ -745,6 +749,7 @@ function createStorageListenerInstance() {
     reload: () => reloadFromStorage(),
     onSyncKeysChanged: () => void syncBanner?.refresh?.(),
     reloadDelayMs: STORAGE_RELOAD_DELAY_MS,
+    syncKeysDelayMs: 200,
   });
 }
 
@@ -1011,6 +1016,7 @@ async function init() {
       normalizeUrlWithScheme,
       normalizeLanguage,
       normalizeSyncInterval,
+      suppressStorage: () => persistenceCoordinator?.setSuppressStorageUntil?.(Date.now() + STORAGE_SUPPRESS_MS * 4),
       clearData,
       defaultData,
       defaultSettings,

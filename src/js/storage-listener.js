@@ -25,6 +25,7 @@ var HomepageStorageListener = (() => {
    *   reload: () => Promise<void>|void,
    *   onSyncKeysChanged?: () => void,
    *   reloadDelayMs?: number,
+   *   syncKeysDelayMs?: number,
    *   getWebStorage?: () => Storage|null,
    * }} deps
    */
@@ -32,10 +33,25 @@ var HomepageStorageListener = (() => {
     const dataKey = deps.dataKey;
     const syncKeys = deps.syncKeys || [];
     const reloadDelayMs = Number(deps.reloadDelayMs) > 0 ? Number(deps.reloadDelayMs) : 120;
+    const syncKeysDelayMs = Number(deps.syncKeysDelayMs) > 0 ? Number(deps.syncKeysDelayMs) : 0;
     let reloadTimer = null;
+    let syncKeysTimer = null;
     /** 设置弹窗打开期间挂起的重载，关闭后 flush */
     let pendingReload = false;
     let disposed = false;
+
+    function notifySyncKeysChanged() {
+      if (typeof deps.onSyncKeysChanged !== "function") return;
+      if (syncKeysDelayMs <= 0) {
+        deps.onSyncKeysChanged();
+        return;
+      }
+      if (syncKeysTimer) clearTimeout(syncKeysTimer);
+      syncKeysTimer = setTimeout(() => {
+        syncKeysTimer = null;
+        if (!disposed) deps.onSyncKeysChanged?.();
+      }, syncKeysDelayMs);
+    }
 
     function scheduleReload() {
       if (deps.isSettingsOpen()) {
@@ -69,7 +85,7 @@ var HomepageStorageListener = (() => {
       // 这些键不受写入窗口期 / 抑制期影响（它们只保护数据写入）；
       // 若同一次批量变更同时包含 dataKey，不得早退，须继续检查数据重载。
       if (syncKeys.some((key) => changes?.[key])) {
-        deps.onSyncKeysChanged?.();
+        notifySyncKeysChanged();
       }
       if (deps.isPersistInFlight()) return;
       if (deps.isSuppressed()) return;
@@ -129,6 +145,8 @@ var HomepageStorageListener = (() => {
         disposed = true;
         if (reloadTimer) clearTimeout(reloadTimer);
         reloadTimer = null;
+        if (syncKeysTimer) clearTimeout(syncKeysTimer);
+        syncKeysTimer = null;
         pendingReload = false;
         for (const disposer of disposers) disposer();
       };

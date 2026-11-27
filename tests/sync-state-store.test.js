@@ -101,6 +101,17 @@ describe("sync_state_store", () => {
     await clearOutboxRecord();
     assert.equal(store[SYNC_OUTBOX_KEY].length, 0);
 
+    // 队列本就为空时，clearOutboxRecord 不得继续写盘触发存储事件
+    let setCallsAfterClear = 0;
+    const origSet = globalThis.chrome.storage.local.set;
+    globalThis.chrome.storage.local.set = (obj, cb) => {
+      setCallsAfterClear += 1;
+      return origSet(obj, cb);
+    };
+    await clearOutboxRecord();
+    assert.equal(setCallsAfterClear, 0);
+    globalThis.chrome.storage.local.set = origSet;
+
     await enqueueOutboxRecord({ docId: "doc_2", revision: 3 }, "timeout");
     const summary = await readOutboxSummary();
     assert.equal(summary.length, 1);

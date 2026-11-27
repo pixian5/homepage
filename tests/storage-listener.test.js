@@ -114,6 +114,23 @@ describe("storage-listener extension onChanged", () => {
     assert.equal(calls.syncRefreshes, 1);
     await flushReloads(1, calls);
   });
+
+  it("debounces sync-key refreshes when syncKeysDelayMs is configured and clears on dispose", async () => {
+    const { listener, calls } = setup({ syncKeysDelayMs: 25 });
+    listener.bind();
+    listener.handleExtensionChanges({ homepage_sync_state: { newValue: { status: "syncing" } } }, "local");
+    listener.handleExtensionChanges({ homepage_sync_outbox: { newValue: [] } }, "local");
+    listener.handleExtensionChanges({ homepage_sync_state: { newValue: { status: "idle" } } }, "local");
+    assert.equal(calls.syncRefreshes, 0, "防抖窗内不立即触发刷新");
+
+    await tick(45);
+    assert.equal(calls.syncRefreshes, 1, "连续三次 sync 状态写入仅触发一次 refresh");
+
+    listener.handleExtensionChanges({ homepage_sync_state: { newValue: { status: "syncing" } } }, "local");
+    listener.dispose();
+    await tick(45);
+    assert.equal(calls.syncRefreshes, 1, "dispose 后已挂起的 syncKeysTimer 必须取消");
+  });
 });
 
 describe("storage-listener web storage event", () => {

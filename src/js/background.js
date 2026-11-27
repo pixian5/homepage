@@ -125,6 +125,7 @@ export function addBookmarkToFolderInData(data, { folderId, url, title, deviceId
   container.updatedAt = ts;
   if (deviceId) container.updatedBy = deviceId;
   if (!data._syncMeta || typeof data._syncMeta !== "object") data._syncMeta = {};
+  data._syncMeta.lastWriteSource = "external";
   if (!data._syncMeta.placementClock || typeof data._syncMeta.placementClock !== "object") {
     data._syncMeta.placementClock = {};
   }

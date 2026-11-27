@@ -500,4 +500,32 @@ describe("createIconManager", () => {
       else globalThis.Image = realImage;
     }
   });
+
+  it("fetchFaviconInBackground does not call persistData if iconPending was cleared before finish", async () => {
+    stubIconStorage();
+    const realImage = globalThis.Image;
+    globalThis.Image = class MockImage {
+      set src(_url) {
+        queueMicrotask(() => this.onerror?.());
+      }
+    };
+    try {
+      const { manager, data, calls } = makeManager();
+      data.nodes.n_cleared = {
+        id: "n_cleared",
+        type: "item",
+        title: "Cleared",
+        url: "https://cleared.example/",
+        iconType: "auto",
+        iconPending: true,
+      };
+      const pending = manager.fetchFaviconInBackground("n_cleared", "https://cleared.example/");
+      data.nodes.n_cleared.iconPending = false;
+      await pending;
+      assert.equal(calls.persist, 0, "iconPending 已清除后不再重复触发 persistData");
+    } finally {
+      if (realImage === undefined) delete globalThis.Image;
+      else globalThis.Image = realImage;
+    }
+  });
 });

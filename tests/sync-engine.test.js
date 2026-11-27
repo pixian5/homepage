@@ -15,6 +15,8 @@ import {
   pullNow,
   pushNow,
   schedulePush,
+  startSyncInterval,
+  stopSyncInterval,
 } from "../src/js/sync_engine.js";
 import { httpHealth, httpPullState, httpPushState } from "../src/js/sync_http_transport.js";
 import { _setDeviceIdForTests } from "../src/js/sync_ids.js";
@@ -1306,7 +1308,144 @@ describe("sync_engine convergence after pull", () => {
       assert.equal(pulled.merged, false);
       assert.equal(saveLocalCalls, 0);
       assert.equal(onMergedCalls, 0);
+
+      // 校验 finite tombstoneTtlMs 下 isContentEqualToRemote 对过期墓碑一视同仁
+      const ttl = 30 * 24 * 60 * 60 * 1000;
+      const expiredData = structuredClone(data);
+      const docWithExpired = toSyncDocument(expiredData, {
+        deviceId: "dev_legacy",
+        docId: "doc_ttl",
+        revision: 2,
+        writtenAt: 500,
+      });
+      delete expiredData.nodes.itm_178602;
+      assert.equal(
+        isContentEqualToRemote(expiredData, docWithExpired, "doc_ttl", { now: 100 + ttl + 1000, tombstoneTtlMs: ttl }),
+        true,
+      );
+
+      // 校验 pushNow 写入 _syncMeta.lastWriteSource = "sync_meta"
+      data.nodes.n_added = {
+        id: "n_added",
+        type: "item",
+        title: "Added",
+        url: "https://added.test/",
+        iconType: "auto",
+        updatedAt: 600,
+        updatedBy: "dev_local",
+      };
+      data.groups[0].nodes.push("n_added");
+      const pushed = await pushNow("manual");
+      assert.equal(pushed.ok, true);
+      assert.equal(data._syncMeta.lastWriteSource, "sync_meta");
     } finally {
+      delete globalThis.chrome;
+      _setDeviceIdForTests("");
+      await stopServer(child);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("dedupes startSyncInterval and visibilitychange pulls across tabs via shared lastPullAt", async () => {
+    const port = 33500 + (process.pid % 1500);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const token = "sync-engine-cross-tab-pull";
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "homepage-sync-tab-dedupe."));
+    const child = spawn(process.execPath, [path.join(root, "scripts", "sync-server.mjs")], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HOST: "127.0.0.1",
+        TOKEN: token,
+        DATA_FILE: path.join(tempDir, "state.json"),
+      },
+      stdio: "ignore",
+    });
+
+    const realDocument = globalThis.document;
+    const realFetch = globalThis.fetch;
+    const realSetInterval = globalThis.setInterval;
+    const realClearInterval = globalThis.clearInterval;
+    const listeners = {};
+    let intervalFn = null;
+    const store = {
+      homepage_sync_state: {
+        docId: "doc_dedupe",
+        lastPullAt: Date.now(),
+        lastRemoteRevision: 0,
+        status: "idle",
+      },
+    };
+    let pullRequests = 0;
+
+    globalThis.chrome = {
+      runtime: { lastError: null },
+      storage: {
+        local: {
+          get(keys, cb) {
+            const out = {};
+            for (const key of Array.isArray(keys) ? keys : [keys]) {
+              if (key in store) out[key] = structuredClone(store[key]);
+            }
+            cb(out);
+          },
+          set(obj, cb) {
+            for (const [k, v] of Object.entries(obj)) store[k] = structuredClone(v);
+            cb?.();
+          },
+        },
+        sync: { get: (_k, cb) => cb?.({}), set: (_o, cb) => cb?.() },
+      },
+    };
+    globalThis.document = {
+      visibilityState: "visible",
+      addEventListener(type, fn) {
+        listeners[type] = fn;
+      },
+    };
+    globalThis.setInterval = (fn) => {
+      intervalFn = fn;
+      return 12345;
+    };
+    globalThis.clearInterval = () => {
+      intervalFn = null;
+    };
+    globalThis.fetch = async (url, init) => {
+      if (String(url).includes("/v1/sync/state") && (!init?.method || init.method === "GET")) {
+        pullRequests += 1;
+      }
+      return realFetch(url, init);
+    };
+
+    try {
+      await waitForHealth(baseUrl, token);
+      let data = baseData(baseUrl, token);
+      data.settings.syncInterval = "1m";
+      _setDeviceIdForTests("dev_dedupe");
+      initSyncEngine({
+        getData: () => data,
+        setData: (next) => {
+          data = next;
+        },
+        saveLocal: async () => null,
+      });
+
+      startSyncInterval();
+      assert.equal(typeof intervalFn, "function");
+
+      // 另一标签页刚刚拉取过（lastPullAt 很新）：定时轮询和切回标签页都必须直接跳过
+      store.homepage_sync_state.lastPullAt = Date.now();
+      await intervalFn();
+      listeners.visibilitychange?.();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      assert.equal(pullRequests, 0, "共享 lastPullAt 在冷却窗内时不得重复拉取远端");
+    } finally {
+      stopSyncInterval();
+      globalThis.document = realDocument;
+      globalThis.fetch = realFetch;
+      globalThis.setInterval = realSetInterval;
+      globalThis.clearInterval = realClearInterval;
       delete globalThis.chrome;
       _setDeviceIdForTests("");
       await stopServer(child);

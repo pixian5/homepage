@@ -105,7 +105,9 @@ var HomepageSyncStateStore = (() => {
     const local = areaLocal();
     if (!local) return;
     const got = await syncStorageGetKeys(local, [SYNC_OUTBOX_KEY]);
-    const next = removeSyncOutbox(got.value?.[SYNC_OUTBOX_KEY], SYNC_OUTBOX_TARGET);
+    const current = normalizeSyncOutbox(got.value?.[SYNC_OUTBOX_KEY]);
+    const next = removeSyncOutbox(current, SYNC_OUTBOX_TARGET);
+    if (next.length === current.length) return;
     await syncStorageSetObj(local, { [SYNC_OUTBOX_KEY]: next });
   }
 

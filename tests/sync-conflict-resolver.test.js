@@ -10,7 +10,10 @@ function createHarness({
   writeRemoteImpl,
   applyConflictLocalStateImpl,
   mergeHomepageImpl,
+  isContentEqualToRemote,
+  getE2eeConfig,
 } = {}) {
+  const options = { isContentEqualToRemote, getE2eeConfig };
   let pendingRemote = initialPendingRemote;
   const status = {
     status: "idle",
@@ -48,6 +51,8 @@ function createHarness({
     saveState: async () => {
       calls.saveState += 1;
     },
+    isContentEqualToRemote: options?.isContentEqualToRemote,
+    getE2eeConfig: options?.getE2eeConfig || (() => ({ enabled: false })),
     readRemoteSyncDocument: readRemoteImpl || (async () => ({ ok: false, reason: "no_remote" })),
     writeRemoteSyncDocument:
       writeRemoteImpl ||
@@ -234,5 +239,23 @@ describe("sync_conflict_resolver", () => {
     const errRes = await hErr.resolver.resolveDocConflict("merge");
     assert.deepEqual(errRes, { ok: false, reason: "schema_mismatch" });
     assert.deepEqual(hErr.calls.pushNow, []);
+  });
+
+  it("skips redundant resolve_remote push when choice=remote matches remote content without E2EE", async () => {
+    const h = createHarness({
+      initialStatus: { status: "need_setup", docId: "doc_local", conflictRemoteDocId: "doc_remote" },
+      initialPendingRemote: {
+        docId: "doc_remote",
+        revision: 12,
+        settings: {},
+        groups: [{ id: "grp_all", name: "All", order: -1, systemAllGroup: true, nodes: [] }],
+        nodes: [],
+      },
+      isContentEqualToRemote: () => true,
+      getE2eeConfig: () => ({ enabled: false }),
+    });
+    const res = await h.resolver.resolveDocConflict("remote");
+    assert.deepEqual(res, { ok: true, choice: "remote" });
+    assert.deepEqual(h.calls.pushNow, []);
   });
 });

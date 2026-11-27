@@ -104,6 +104,10 @@ var HomepageSyncDeviceAuth = (() => {
           if (raced && String(current.settings.syncDeviceSecretUrl || "").trim() === baseUrl) return true;
           current.settings.syncDeviceSecret = res.deviceSecret;
           current.settings.syncDeviceSecretUrl = baseUrl;
+          current._syncMeta = {
+            ...(current._syncMeta && typeof current._syncMeta === "object" ? current._syncMeta : {}),
+            lastWriteSource: "sync_meta",
+          };
           const err = await saveLocal(current);
           if (err && !isLocalTrimWarning(err)) {
             // 落盘失败必须回滚内存：否则本页一直用未持久化的凭据，重启后凭据丢失
@@ -131,6 +135,10 @@ var HomepageSyncDeviceAuth = (() => {
       if (!current?.settings?.syncDeviceSecret) return;
       delete current.settings.syncDeviceSecret;
       delete current.settings.syncDeviceSecretUrl;
+      current._syncMeta = {
+        ...(current._syncMeta && typeof current._syncMeta === "object" ? current._syncMeta : {}),
+        lastWriteSource: "sync_meta",
+      };
       try {
         await saveLocal(current);
       } catch (e) {

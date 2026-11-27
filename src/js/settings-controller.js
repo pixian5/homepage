@@ -125,6 +125,7 @@ var HomepageSettingsController = (() => {
           // 必须在重置前记下是否开过同步，否则 defaultData 会把 syncEnabled 置 false，云端清不掉
           const prevSync = !!getData()?.settings?.syncEnabled;
           try {
+            _ctx.deps?.suppressStorage?.();
             await clearData(false);
             if (prevSync) await clearData(true);
             setData(defaultData());
@@ -143,6 +144,8 @@ var HomepageSettingsController = (() => {
             _ctx.deps?.resetSettingsClockBaseline?.(previous);
             _ctx.deps?.resetPlacementClockBaseline?.(previous);
             toast(t("settings.clearDataFail", { reason: error?.message || error }), "error");
+          } finally {
+            _ctx.deps?.suppressStorage?.();
           }
         });
       });

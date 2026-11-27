@@ -17,6 +17,8 @@ var HomepageSyncConflictResolver = (() => {
       writeRemoteSyncDocument,
       applyConflictLocalState,
       pushNowImpl,
+      isContentEqualToRemote,
+      getE2eeConfig,
       getOrCreateDeviceId,
       createDocId,
       toSyncDocument,
@@ -161,7 +163,13 @@ var HomepageSyncConflictResolver = (() => {
           status.lastPullAt = Date.now();
           status.lastRemoteRevision = Number(forceDoc.revision) || 0;
           await saveState();
-          await pushNowImpl("resolve_remote");
+          const skipRedundantPush =
+            typeof isContentEqualToRemote === "function" &&
+            !getE2eeConfig?.()?.enabled &&
+            isContentEqualToRemote(getData(), forceDoc, forceDoc.docId);
+          if (!skipRedundantPush) {
+            await pushNowImpl("resolve_remote");
+          }
           return { ok: true, choice: "remote" };
         }
 

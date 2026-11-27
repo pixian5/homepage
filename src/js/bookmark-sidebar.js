@@ -142,7 +142,7 @@
     };
     const allGroup = groups.find((group) => group?.id === ALL_GROUP_ID);
     if (allGroup) {
-      const allName = String(allGroup.name || sbText(lang, "allBookmarks"));
+      const allName = String(allGroup.name || allGroup.title || sbText(lang, "allBookmarks"));
       folders.push({
         id: allGroup.id,
         title: allName,
@@ -158,7 +158,7 @@
     } else {
       for (const group of groups) {
         if (!group?.id) continue;
-        const groupName = String(group.name || sbText(lang, "defaultGroup"));
+        const groupName = String(group.title || group.name || sbText(lang, "defaultGroup"));
         folders.push({
           id: group.id,
           title: groupName,

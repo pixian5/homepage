@@ -112,4 +112,73 @@ describe("settings-form-renderer", () => {
     assert.equal(data.settings.iconThirdPartyFallback, false);
     assert.equal(data.settings.toastDuration, 60);
   });
+
+  it("clamps numeric settings bounds so negative or extreme inputs cannot break layout or backup caps", async () => {
+    const data = defaultData();
+    const fields = new Map();
+    const radios = ["compact", "standard", "spacious"].map((value) => {
+      const r = makeField(`density_${value}`);
+      r.value = value;
+      return r;
+    });
+    const $ = (id) => {
+      if (!fields.has(id)) fields.set(id, makeField(id));
+      return fields.get(id);
+    };
+    const qsa = (selector) => (selector === "input[name='density']" ? radios : []);
+    globalThis.document = { createElement: (tag) => makeField(tag, tag.toUpperCase()) };
+
+    hydrateSettingsForm({
+      $,
+      qsa,
+      elements: { modal: {} },
+      data,
+      currentLang: () => "zh-CN",
+      t: (k) => k,
+      normalizeSyncInterval,
+      getRootContainers: () => data.groups,
+      isAllBookmarksGroup,
+      defaultToastDurationSeconds: 5,
+      getAppVersion: () => "27.4.5",
+    });
+
+    const runApply = () =>
+      applySettingsFormToData({
+        $,
+        qsa,
+        elements: { modal: {} },
+        data,
+        normalizeUrl: (u) => u,
+        normalizeLanguage,
+        normalizeSyncInterval,
+        detectPreferredLanguage: () => "zh-CN",
+        getRootContainerById: (id) => data.groups.find((g) => g.id === id),
+        isAllBookmarksGroup,
+        stampNodeFieldChanges: () => {},
+        defaultToastDurationSeconds: 5,
+        readFileAsDataUrl: async () => "",
+      });
+
+    $("settingCols").value = "-3";
+    $("settingFontSize").value = "4";
+    $("settingBgOverlay").value = "-0.5";
+    $("settingBackup").value = "-5";
+    await runApply();
+    assert.equal(data.settings.fixedCols, 1);
+    assert.equal(data.settings.fontSize, 10);
+    assert.equal(data.settings.backgroundOverlayStrength, 0);
+    assert.equal(data.settings.maxBackups, 0);
+
+    $("settingCols").value = "99";
+    $("settingFontSize").value = "80";
+    $("settingBgOverlay").value = "2.5";
+    await runApply();
+    assert.equal(data.settings.fixedCols, 24);
+    assert.equal(data.settings.fontSize, 32);
+    assert.equal(data.settings.backgroundOverlayStrength, 0.6);
+
+    $("settingBgOverlay").value = "invalid";
+    await runApply();
+    assert.equal(data.settings.backgroundOverlayStrength, 0.08);
+  });
 });

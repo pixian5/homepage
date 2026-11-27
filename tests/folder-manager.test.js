@@ -230,4 +230,37 @@ describe("folder-manager dismiss", () => {
     const { manager } = setup();
     assert.equal(manager.dismissFolder("itm_1"), false);
   });
+
+  it("ignores tombstoned parent folders and auto-closes when dismissing the open folder", () => {
+    const { manager, data, state } = setup();
+    // 造一个已删除但 children 仍残留 fld_sub 引用的幽灵文件夹
+    data.nodes.fld_deleted_ghost = {
+      id: "fld_deleted_ghost",
+      type: "folder",
+      title: "已删父夹",
+      children: ["fld_sub"],
+      deletedAt: 1000,
+    };
+    data.nodes.fld_root.children = ["itm_1"];
+    data.nodes.fld_root = {
+      id: "fld_root",
+      type: "folder",
+      title: "工作",
+      children: ["itm_1", "fld_sub"],
+    };
+    // 调整顺序让 fld_deleted_ghost 先被遍历
+    data.nodes = {
+      fld_deleted_ghost: data.nodes.fld_deleted_ghost,
+      ...data.nodes,
+    };
+
+    assert.equal(manager.findParentFolderId("fld_sub"), "fld_root");
+
+    // 直接从外部（如右键菜单）解散当前打开中的文件夹，应自动退出覆盖层并平铺到活跃父级
+    manager.openFolder("fld_sub");
+    assert.equal(state.openFolderId, "fld_sub");
+    assert.equal(manager.dismissFolder("fld_sub"), true);
+    assert.equal(state.openFolderId, "fld_root");
+    assert.deepEqual(data.nodes.fld_root.children, ["itm_1", "itm_2"]);
+  });
 });

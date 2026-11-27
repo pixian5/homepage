@@ -214,4 +214,41 @@ describe("keyboard-navigator", () => {
     assert.equal(searchFocused, false);
     assert.equal(deleted, false);
   });
+
+  test("parses multi-whitespace and 'none' gridTemplateColumns safely for arrow navigation", () => {
+    const tiles = Array.from({ length: 4 }, (_, i) => createMockElement("div", { dataset: { id: `n_${i}` } }));
+    const grid = createMockElement("div");
+    const mockDoc = { activeElement: tiles[0] };
+    const realGetComputedStyle = globalThis.getComputedStyle;
+    let colsValue = " 150px  150px   150px ";
+    globalThis.getComputedStyle = () => ({ gridTemplateColumns: colsValue });
+
+    try {
+      const navigator = createKeyboardNavigator({
+        getData: () => ({ settings: { keyboardNav: true } }),
+        getState: () => ({ activeGroupId: "grp_all", openFolderId: null }),
+        getElements: () => ({
+          modalOverlay: createMockElement("div", { hidden: true }),
+          grid,
+        }),
+        closeFolder: () => {},
+        deleteNodes: () => {},
+        qsa: () => tiles,
+        doc: mockDoc,
+      });
+
+      // 3 列下：index 0 按 ArrowDown 应跳到 index 3
+      navigator.handleKeydown({ key: "ArrowDown", target: tiles[0], preventDefault: () => {} });
+      assert.equal(tiles[3].focused, true);
+
+      // 'none' 回退 1 列：index 0 按 ArrowDown 应跳到 index 1
+      colsValue = "none";
+      mockDoc.activeElement = tiles[0];
+      navigator.handleKeydown({ key: "ArrowDown", target: tiles[0], preventDefault: () => {} });
+      assert.equal(tiles[1].focused, true);
+    } finally {
+      if (realGetComputedStyle === undefined) delete globalThis.getComputedStyle;
+      else globalThis.getComputedStyle = realGetComputedStyle;
+    }
+  });
 });

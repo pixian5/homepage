@@ -4,10 +4,11 @@
 
 ## 当前开发进度
 
-当前产品版本 **27.4.4**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
+当前产品版本 **27.4.5**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
 
 项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。
 
+- **27.4.5**：修复 [folder-manager.js](src/js/folder-manager.js) 遍历父节点与解组（`dismissFolder`）时跳过 `deletedAt`/`purgedAt` 墓碑节点，并在解组当前打开文件夹前先执行 `closeFolder()`；在 [settings-form-renderer.js](src/js/settings-form-renderer.js) 钳制 `fixedCols`（`1..24`）、`backgroundOverlayStrength`（`0..0.6`）、`fontSize`（`10..32`）与 `maxBackups`（`>=0`）；修正 [bookmark-sidebar.js](src/js/bookmark-sidebar.js) 分组标题 `title`/`name` 回退顺序并加固 [keyboard-navigator.js](src/js/keyboard-navigator.js) `gridTemplateColumns` `"none"`/空值解析；补齐对应 4 个测试文件单测（增至 686/686）；因 Safari 运行中仅完成三端打包，通过 Chrome/Firefox 双端冒烟与 4 套 Firefox E2E 验收，见[当前开发进度](docs/20261127-1240-当前开发进度-Gemini.md)。
 - **27.4.4**：补齐 [app-i18n.js](src/js/app-i18n.js) 全 8 语言缺失的 `common.confirm` 词条并在 `tests/i18n-manager.test.js` 增加 `src/js/*.js` 全量 `t()` 键值静态检查；在 `src/js/storage.js` 与 `src/js/import-export.js` 将 `syncDeviceSecret`/`syncDeviceSecretUrl` 纳入快照、JSON 导出脱敏与恢复保护；在 `src/js/sync_engine.js` 补齐 `writeRemoteSyncDocument`/412 的 `lastRemoteEpoch` 更新，并在 E2EE 开启时加密 `homepage_sync_outbox` 入队载荷；扩展 `tests/storage.test.js`、`tests/import-export-security.test.js` 与 `tests/sync-e2ee.test.js`（单测增至 682/682）；因 Safari 运行中仅完成三端打包，通过 Chrome/Firefox 双端冒烟与 4 套 Firefox E2E 验收，见[当前开发进度](docs/20261127-1114-当前开发进度-Gemini.md)。
 
 - **27.4.3**：加固 `scripts/sync-server.mjs`（为 `PUT /v1/sync/state` 200/412 响应补齐 `epoch` 与 `X-Sync-Epoch`、`snapshots/restore` 与 `reclaim` 推进代际后清空 `idempotency` 缓存、`readBody` 补齐 `settled` 守卫）及 `src/js/sync_http_transport.js` 412 `epoch` 解析；升级 `src/sw.js` 缓存至 `homepage-pwa-v3` 并绕过 `/v1/*`、`/health` 与 `Authorization` 请求；收紧 `src/js/background.js` `isWebTabUrl` 过滤扩展与内部协议；补齐 `tests/sync-http.test.js`、`tests/pwa-manifest-sw.test.js` 与 `tests/background-add-bookmark.test.js`（单测增至 680/680）；因检测到 Safari 运行中仅完成三端打包（未覆盖安装），通过 Chrome/Firefox 双端冒烟与 4 套 Firefox E2E 验收，见[当前开发进度](docs/20261127-1055-当前开发进度-Gemini.md)。
@@ -87,7 +88,7 @@
 - **26.6.1**：修复 Safari 扩展消失：新增注册自愈脚本并挂进每日体检，详见[Safari 扩展消失自愈](docs/20261103-1525-Safari扩展消失自愈-DeepSeek-V4.1-Flash.md)。
 - **26.6.0（基线）**：修复 Chrome 永久误报「同步已多次失败，自动重试已停止」：同步实际健康，根因是存储中残留一条指向已废弃浏览器 storage.sync 传输目标的僵尸队列项，它永远发不出去也清不掉；新增 filterCurrentOutbox 在读取与加载时剔除废弃目标，详见[Chrome 永久误报同步失败](docs/20261102-1725-Chrome永久误报同步失败-DeepSeek-V4.1-Flash.md)。
 
-当前单测 682 项全部通过，Biome 检查 0 告警，三端打包（Safari 运行中故未覆盖安装）、双端无头浏览器冒烟与 4 套 Firefox E2E 测试套件均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
+当前单测 686 项全部通过，Biome 检查 0 告警，三端打包（Safari 运行中故未覆盖安装）、双端无头浏览器冒烟与 4 套 Firefox E2E 测试套件均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
 
 ## 下一步待实现
 

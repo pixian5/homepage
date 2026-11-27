@@ -87,11 +87,9 @@ export function createKeyboardNavigator(options) {
       }
 
       if (!tiles.length) return;
-      const gridCols =
-        typeof getComputedStyle !== "undefined"
-          ? getComputedStyle(grid).gridTemplateColumns?.split(" ").length || 1
-          : 1;
-      const cols = Math.max(1, Number.parseInt(gridCols, 10) || 1);
+      const colsSpec =
+        typeof getComputedStyle !== "undefined" ? String(getComputedStyle(grid).gridTemplateColumns || "").trim() : "";
+      const cols = !colsSpec || colsSpec === "none" ? 1 : Math.max(1, colsSpec.split(/\s+/).filter(Boolean).length);
       const idx = tiles.indexOf(doc.activeElement);
       const next = nextGridFocusIndex({ index: idx, columns: cols, count: tiles.length, key: e.key });
       if (next >= 0 && tiles[next]) {

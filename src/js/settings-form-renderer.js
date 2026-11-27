@@ -365,7 +365,7 @@ var HomepageSettingsFormRenderer = (() => {
       s.searchEngineUrl = normalizedEngine || s.searchEngineUrl;
     }
     s.fixedLayout = $("settingFixedLayout").checked;
-    s.fixedCols = Number($("settingCols").value) || 8;
+    s.fixedCols = Math.min(24, Math.max(1, Math.round(Number($("settingCols").value) || 8)));
     const selectedDensity = qsa("input[name='density']", elements.modal).find((r) => r.checked);
     s.gridDensity = selectedDensity ? selectedDensity.value : s.gridDensity;
     s.backgroundType = $("settingBgType").value;
@@ -375,10 +375,11 @@ var HomepageSettingsFormRenderer = (() => {
     s.backgroundGradientA = gA;
     s.backgroundGradientB = gB;
     s.backgroundGradient = `linear-gradient(120deg, ${gA}, ${gB})`;
-    s.backgroundOverlayStrength = Number($("settingBgOverlay").value);
+    const rawOverlay = Number($("settingBgOverlay").value);
+    s.backgroundOverlayStrength = Number.isFinite(rawOverlay) ? Math.min(0.6, Math.max(0, rawOverlay)) : 0.08;
     s.tooltipEnabled = $("settingTooltip").checked;
     s.keyboardNav = $("settingKeyboard").checked;
-    s.fontSize = Number($("settingFontSize").value) || s.fontSize;
+    s.fontSize = Math.min(32, Math.max(10, Math.round(Number($("settingFontSize").value) || s.fontSize || 13)));
     s.toastDuration = Math.min(
       60,
       Math.max(1, Math.round(Number($("settingToastDuration").value) || defaultToastDurationSeconds)),
@@ -409,7 +410,7 @@ var HomepageSettingsFormRenderer = (() => {
     const e2eeChanged = prevE2eeEnabled !== s.syncE2eeEnabled || prevE2eePassphrase !== s.syncE2eePassphrase;
 
     s.openMode = $("settingOpenMode").value || "current";
-    const nextMaxBackups = Number($("settingBackup").value) || 0;
+    const nextMaxBackups = Math.max(0, Math.round(Number($("settingBackup").value) || 0));
     if (nextMaxBackups > 0 && data.backups.length > nextMaxBackups) {
       data.backups = data.backups.slice(0, nextMaxBackups);
     }

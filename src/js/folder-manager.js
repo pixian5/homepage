@@ -54,7 +54,7 @@ var HomepageFolderManager = (() => {
       const data = deps.getData();
       const activeGroupId = data?.groups?.find((group) => group?.id && group.nodes?.includes?.(folderId))?.id || "";
       for (const node of Object.values(data?.nodes || {})) {
-        if (node.type !== "folder" || !Array.isArray(node.children)) continue;
+        if (node.type !== "folder" || node.deletedAt || node.purgedAt || !Array.isArray(node.children)) continue;
         if (node.id === activeGroupId) continue;
         if (node.children.includes(folderId)) {
           return node.id;
@@ -114,6 +114,9 @@ var HomepageFolderManager = (() => {
       const data = deps.getData();
       const folder = data?.nodes?.[folderId];
       if (folder?.type !== "folder") return false;
+      if (deps.getOpenFolderId?.() === folderId) {
+        closeFolder();
+      }
       const children = Array.isArray(folder.children) ? folder.children.slice() : [];
       deps.pushBackup();
       let replaced = false;
@@ -127,7 +130,7 @@ var HomepageFolderManager = (() => {
       }
       if (!replaced) {
         for (const node of Object.values(data.nodes)) {
-          if (node.type !== "folder" || !Array.isArray(node.children)) continue;
+          if (node.type !== "folder" || node.deletedAt || node.purgedAt || !Array.isArray(node.children)) continue;
           const idx = node.children.indexOf(folderId);
           if (idx < 0) continue;
           node.children.splice(idx, 1, ...children);

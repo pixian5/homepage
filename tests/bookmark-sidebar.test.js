@@ -412,4 +412,28 @@ describe("bookmark-sidebar filtering, feedback and Escape handling", () => {
     assert.equal(paths.length, 4);
     assert.ok(paths.every((p) => p.length > 0));
   });
+
+  it("displays group.title for non-grp_all groups instead of falling back to default label", async () => {
+    const { document, dispatchMessage } = await mountSidebar({
+      apiImpl: (_msg, cb) => cb?.({ ok: true }),
+    });
+    dispatchMessage({
+      type: "homepage_open_bookmark_sidebar",
+      side: "left",
+      data: {
+        settings: { language: "zh-CN" },
+        groups: [{ id: "grp_work", title: "办公文档", nodes: ["itm_doc"] }],
+        nodes: {
+          itm_doc: { id: "itm_doc", type: "item", title: "Work Doc", url: "https://work.example/" },
+        },
+      },
+    });
+
+    const rootEl = document.getElementById("homepage-bookmark-sidebar-root");
+    const folderButtons = rootEl.querySelector(".hp-folders").querySelectorAll(".hp-folder");
+    assert.deepEqual(
+      folderButtons.map((btn) => btn.textContent),
+      ["办公文档"],
+    );
+  });
 });

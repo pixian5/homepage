@@ -10,6 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 function createFakeDom() {
   const byId = new Map();
   const docListeners = new Map();
+  let innerHTMLWrites = 0;
 
   class FakeElement {
     constructor(tag) {
@@ -69,15 +70,9 @@ function createFakeDom() {
     }
 
     set innerHTML(html) {
+      innerHTMLWrites += 1;
       this._innerHTML = String(html || "");
       this.children = [];
-      if (this._innerHTML.includes("hp-title")) {
-        for (const cls of ["hp-title", "hp-url", "hp-path"]) {
-          const span = new FakeElement("span");
-          span.className = cls;
-          this.appendChild(span);
-        }
-      }
     }
 
     get innerHTML() {
@@ -190,12 +185,12 @@ function createFakeDom() {
       return (docListeners.get(type) || []).length;
     },
   };
-  return { document };
+  return { document, getInnerHTMLWrites: () => innerHTMLWrites };
 }
 
 async function mountSidebar({ apiImpl }) {
   const code = await readFile(path.join(root, "src/js/bookmark-sidebar.js"), "utf8");
-  const { document } = createFakeDom();
+  const { document, getInnerHTMLWrites } = createFakeDom();
   const messageListeners = [];
   const runtimeApi = {
     runtime: {
@@ -223,6 +218,7 @@ async function mountSidebar({ apiImpl }) {
   return {
     document,
     runtimeApi,
+    getInnerHTMLWrites,
     dispatchMessage: (msg) => {
       let response = null;
       messageListeners[0](msg, null, (r) => {
@@ -389,5 +385,31 @@ describe("bookmark-sidebar filtering, feedback and Escape handling", () => {
         `隐私开关关闭后不得包含第三方候选：${JSON.stringify(visited)}`,
       );
     }
+  });
+
+  it("renders bookmark list items with pure DOM nodes without touching innerHTML (Trusted Types safe)", async () => {
+    const { document, getInnerHTMLWrites, dispatchMessage } = await mountSidebar({
+      apiImpl: (_msg, cb) => cb?.({ ok: true }),
+    });
+    dispatchMessage({
+      type: "homepage_open_bookmark_sidebar",
+      side: "left",
+      data: buildFolderCollisionData("zh-CN"),
+    });
+
+    assert.equal(getInnerHTMLWrites(), 0);
+    const rootEl = document.getElementById("homepage-bookmark-sidebar-root");
+    const titles = rootEl.querySelectorAll(".hp-title").map((el) => el.textContent);
+    const urls = rootEl.querySelectorAll(".hp-url").map((el) => el.textContent);
+    const paths = rootEl.querySelectorAll(".hp-path").map((el) => el.textContent);
+    assert.deepEqual(titles, ["AI Only", "Tools Only", "Doc Alpha", "Doc Beta"]);
+    assert.deepEqual(urls, [
+      "https://ai.example/",
+      "https://tools.example/",
+      "https://alpha.example/",
+      "https://beta.example/",
+    ]);
+    assert.equal(paths.length, 4);
+    assert.ok(paths.every((p) => p.length > 0));
   });
 });

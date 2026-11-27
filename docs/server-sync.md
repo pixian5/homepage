@@ -163,3 +163,34 @@ curl -sS -X POST "$SYNC_URL/v1/sync/reclaim" \
 
 缺少 `confirm: "RECLAIM"` 会被拒绝；候选数超过 `maxCandidates` 也会被拒绝。回收成功后
 epoch 递增，所有设备必须重新确认新基线。未完成人工核对前不要自动化调用真实回收。
+
+---
+
+## 历史滚动快照查询与原子回滚（27.3.9+）
+
+服务端每次写入新状态前都会向数据目录下的 `.snapshots/` 转存滚动历史快照（仅 Master 管理 Token 可访问，不支持 `Device` 凭据）：
+
+- 查询历史快照列表：
+
+```bash
+curl -sS -H "Authorization: Bearer $SYNC_TOKEN" "$SYNC_URL/v1/sync/snapshots"
+```
+
+返回 `{ "snapshots": [{ "id", "createdAt", "bytes", "revision", "epoch", "encrypted" }] }`（按时间倒序）。
+
+- 原子回滚到指定快照（必须携带 `"confirm": "RESTORE"`，服务端会先转存当前状态再覆盖恢复并递增 `revision` 与 `epoch`）：
+
+```bash
+curl -sS -X POST "$SYNC_URL/v1/sync/snapshots/restore" \
+  -H "Authorization: Bearer $SYNC_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"<snapshot-id>","confirm":"RESTORE"}'
+```
+
+## E2EE 口令安全轮换
+
+客户端提供 `rotateE2eePassphrase({ oldPassphrase, newPassphrase })`（并在设置面板接入「更换口令」按钮）：
+1. 先使用旧口令从云端拉取最新状态并解密合并，旧口令校验失败或解密失败会立即中止，不改动云端与本机配置；
+2. 构造最新同步文档并用新口令加密推送至服务端（遇并发 `412` 自动按旧口令重拉并重试）；
+3. 云端密文写入成功后才原子落盘本机 `syncE2eeEnabled` 与新 `syncE2eePassphrase`。
+

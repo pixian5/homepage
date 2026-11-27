@@ -13,6 +13,10 @@ function joinUrl(base, path) {
   return `${b}${p}`;
 }
 
+function syncHttpResolveBaseUrl(cfg) {
+  return String(cfg?.baseUrl || cfg?.url || "").trim();
+}
+
 /**
  * 计算鉴权头：
  * - deviceAuth（或 cfg 本身）携带 deviceId + deviceSecret → 使用设备独立凭据 Device <id>:<secret>
@@ -62,7 +66,7 @@ async function syncHttpFetchWithTimeout(url, options = {}, timeoutMs = 10000) {
  * @returns {Promise<{ ok: true, doc: object, revision: number, etag: string } | { ok: false, reason: string, status?: number, error?: string, remote?: object }>}
  */
 export async function httpPullState(cfg) {
-  const baseUrl = String(cfg?.baseUrl || "").trim();
+  const baseUrl = syncHttpResolveBaseUrl(cfg);
   if (!baseUrl) return { ok: false, reason: "no_url" };
   const url = joinUrl(baseUrl, "/v1/sync/state");
   try {
@@ -104,7 +108,7 @@ export async function httpPullState(cfg) {
  * @param {{ ifMatch?: string, idempotencyKey?: string }} [opts]
  */
 export async function httpPushState(cfg, doc, opts = {}) {
-  const baseUrl = String(cfg?.baseUrl || "").trim();
+  const baseUrl = syncHttpResolveBaseUrl(cfg);
   if (!baseUrl) return { ok: false, reason: "no_url" };
   const url = joinUrl(baseUrl, "/v1/sync/state");
   try {
@@ -178,7 +182,7 @@ export async function httpPushState(cfg, doc, opts = {}) {
  * @param {HttpSyncConfig} cfg
  */
 export async function httpHealth(cfg) {
-  const baseUrl = String(cfg?.baseUrl || "").trim();
+  const baseUrl = syncHttpResolveBaseUrl(cfg);
   if (!baseUrl) return { ok: false, reason: "no_url" };
   try {
     const res = await syncHttpFetchWithTimeout(joinUrl(baseUrl, "/health"), {
@@ -203,7 +207,7 @@ export async function httpHealth(cfg) {
  * @param {{ deviceId: string, revision: number, protocol?: number }} payload
  */
 export async function httpConfirmSyncState(cfg, payload) {
-  const baseUrl = String(cfg?.baseUrl || "").trim();
+  const baseUrl = syncHttpResolveBaseUrl(cfg);
   if (!baseUrl) return { ok: false, reason: "no_url" };
   const url = joinUrl(baseUrl, "/v1/sync/confirm");
   try {
@@ -241,7 +245,7 @@ export async function httpConfirmSyncState(cfg, payload) {
  * @returns {Promise<{ ok: true, deviceId: string, deviceSecret: string } | { ok: false, reason: string, status?: number, error?: string }>}
  */
 export async function httpPairDevice(cfg, payload) {
-  const baseUrl = String(cfg?.baseUrl || "").trim();
+  const baseUrl = syncHttpResolveBaseUrl(cfg);
   if (!baseUrl) return { ok: false, reason: "no_url" };
   const deviceId = String(payload?.deviceId || "").trim();
   if (!deviceId) return { ok: false, reason: "invalid_device_id" };
@@ -279,7 +283,7 @@ export async function httpPairDevice(cfg, payload) {
  * @returns {Promise<{ ok: true, revision: number, epoch: number, devices: Array<object>, reclaimCandidates: string[] } | { ok: false, reason: string, status?: number, error?: string }>}
  */
 export async function httpGetDevices(cfg) {
-  const baseUrl = String(cfg?.baseUrl || "").trim();
+  const baseUrl = syncHttpResolveBaseUrl(cfg);
   if (!baseUrl) return { ok: false, reason: "no_url" };
   const url = joinUrl(baseUrl, "/v1/sync/devices");
   try {
@@ -314,7 +318,7 @@ export async function httpGetDevices(cfg) {
  * @param {{ deviceId: string, retired?: boolean }} payload retired 省略时默认 true
  */
 export async function httpRetireDevice(cfg, payload) {
-  const baseUrl = String(cfg?.baseUrl || "").trim();
+  const baseUrl = syncHttpResolveBaseUrl(cfg);
   if (!baseUrl) return { ok: false, reason: "no_url" };
   const deviceId = String(payload?.deviceId || "").trim();
   if (!deviceId) return { ok: false, reason: "invalid_device_id" };
@@ -353,7 +357,7 @@ export async function httpRetireDevice(cfg, payload) {
  * @param {HttpSyncConfig} cfg
  */
 export async function httpGetSnapshots(cfg) {
-  const baseUrl = String(cfg?.baseUrl || "").trim();
+  const baseUrl = syncHttpResolveBaseUrl(cfg);
   if (!baseUrl) return { ok: false, reason: "no_url" };
   const url = joinUrl(baseUrl, "/v1/sync/snapshots");
   try {
@@ -384,7 +388,7 @@ export async function httpGetSnapshots(cfg) {
  * @param {string} snapshotId
  */
 export async function httpRestoreSnapshot(cfg, snapshotId) {
-  const baseUrl = String(cfg?.baseUrl || "").trim();
+  const baseUrl = syncHttpResolveBaseUrl(cfg);
   if (!baseUrl) return { ok: false, reason: "no_url" };
   const id = String(snapshotId || "").trim();
   if (!id) return { ok: false, reason: "invalid_snapshot_id" };

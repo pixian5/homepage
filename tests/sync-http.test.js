@@ -4,7 +4,13 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { httpHealth, httpPullState, httpPushState } from "../src/js/sync_http_transport.js";
+import {
+  httpGetSnapshots,
+  httpHealth,
+  httpPullState,
+  httpPushState,
+  httpRestoreSnapshot,
+} from "../src/js/sync_http_transport.js";
 import { hashSyncDocument } from "../src/js/sync_projection.js";
 
 import { startSyncServer, stopSyncServer } from "./helpers/sync-server.js";
@@ -271,5 +277,41 @@ describe("sync_http_transport + server", () => {
       await stopSyncServer(persistedServer);
       await rm(persistedDir, { recursive: true, force: true });
     }
+  });
+
+  it("httpGetSnapshots and httpRestoreSnapshot support baseUrl/url fallback, validation, and atomic rollback", async () => {
+    const first = await httpPushState({ baseUrl: BASE, token: TOKEN }, makeDoc("doc_snap_v1"));
+    assert.equal(first.ok, true);
+    const second = await httpPushState({ baseUrl: BASE, token: TOKEN }, makeDoc("doc_snap_v2"));
+    assert.equal(second.ok, true);
+
+    // 验证空 snapshotId 校验与未授权拦截
+    const invalidId = await httpRestoreSnapshot({ baseUrl: BASE, token: TOKEN }, "  ");
+    assert.deepEqual(invalidId, { ok: false, reason: "invalid_snapshot_id" });
+    const unauthSnap = await httpGetSnapshots({ baseUrl: BASE, token: "wrong-token" });
+    assert.equal(unauthSnap.ok, false);
+    assert.equal(unauthSnap.reason, "unauthorized");
+
+    // 同时验证 { url } 字段兼容回退不会误报 no_url
+    const listedViaUrlFallback = await httpGetSnapshots({ url: BASE, token: TOKEN });
+    assert.equal(listedViaUrlFallback.ok, true);
+    assert.ok(listedViaUrlFallback.snapshots.length >= 1);
+
+    const targetSnap = listedViaUrlFallback.snapshots.find((s) => Number(s.revision) === first.revision);
+    assert.ok(targetSnap?.id);
+
+    const unauthRestore = await httpRestoreSnapshot({ baseUrl: BASE, token: "wrong-token" }, targetSnap.id);
+    assert.equal(unauthRestore.ok, false);
+    assert.equal(unauthRestore.reason, "unauthorized");
+
+    const restored = await httpRestoreSnapshot({ baseUrl: BASE, token: TOKEN }, targetSnap.id);
+    assert.equal(restored.ok, true);
+    assert.equal(restored.restoredFrom, targetSnap.id);
+    assert.ok(restored.revision > second.revision);
+    assert.ok(restored.epoch >= 1);
+
+    const current = await httpPullState({ baseUrl: BASE, token: TOKEN });
+    assert.equal(current.ok, true);
+    assert.equal(current.doc.docId, "doc_snap_v1");
   });
 });

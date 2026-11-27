@@ -79,6 +79,11 @@ var HomepageSyncSettingsPanel = (() => {
           processPendingIconFetches();
         } catch (e) {
           toast(t("settings.sync.importFail", { reason: e?.message || "conflict" }), "error");
+        } finally {
+          for (const id of btnIds) {
+            const b = $(id);
+            if (b) b.disabled = false;
+          }
         }
       };
       $("btnConflictMerge")?.addEventListener("click", () => void run("merge"));
@@ -109,6 +114,13 @@ var HomepageSyncSettingsPanel = (() => {
         interval: getData().settings.syncInterval || "5m",
         url: getData().settings.syncServerUrl || "",
         token: getData().settings.syncServerToken || "",
+      };
+    }
+
+    function toTransportConfig(cfg) {
+      return {
+        baseUrl: String(cfg?.url || cfg?.baseUrl || "").trim(),
+        token: String(cfg?.token || "").trim(),
       };
     }
 
@@ -259,7 +271,7 @@ var HomepageSyncSettingsPanel = (() => {
       await runWithButtonState(btn, t(busyKey), async () => {
         try {
           const cfg = applySyncSettingsFromForm();
-          const res = await httpRetireDevice(cfg, { deviceId: device.deviceId, retired });
+          const res = await httpRetireDevice(toTransportConfig(cfg), { deviceId: device.deviceId, retired });
           if (!res.ok) {
             toast(
               t("settings.sync.devices.retireFail", {
@@ -296,10 +308,14 @@ var HomepageSyncSettingsPanel = (() => {
         listEl.dataset.state = "empty";
         return;
       }
+      const transportCfg = toTransportConfig(cfg);
       const localDeviceId = await getOrCreateDeviceId().catch(() => "");
       listEl.dataset.state = "loading";
       healthEl.textContent = t("settings.sync.devices.loading");
-      const [devicesRes, healthRes] = await Promise.all([httpGetDevices(cfg), httpHealth(cfg).catch(() => null)]);
+      const [devicesRes, healthRes] = await Promise.all([
+        httpGetDevices(transportCfg),
+        httpHealth(transportCfg).catch(() => null),
+      ]);
       if (!devicesRes.ok) {
         listEl.dataset.state = "error";
         healthEl.textContent =
@@ -406,7 +422,8 @@ var HomepageSyncSettingsPanel = (() => {
         toast(t("settings.sync.testFail", { reason: "no_url" }), "error");
         return;
       }
-      const res = await httpGetSnapshots?.(cfg);
+      const transportCfg = toTransportConfig(cfg);
+      const res = await httpGetSnapshots?.(transportCfg);
       if (!res?.ok) {
         const reason = res?.reason === "unauthorized" ? t("settings.sync.unauthorized") : res?.reason || "error";
         toast(t("settings.sync.testFail", { reason }), "error");
@@ -448,7 +465,7 @@ var HomepageSyncSettingsPanel = (() => {
             btn.addEventListener("click", async () => {
               if (!snap.id || !confirm(t("settings.sync.snapshots.restoreConfirm"))) return;
               await runWithButtonState(btn, t("settings.sync.state.syncing"), async () => {
-                const restored = await httpRestoreSnapshot?.(cfg, snap.id);
+                const restored = await httpRestoreSnapshot?.(transportCfg, snap.id);
                 if (!restored?.ok) {
                   toast(t("settings.sync.importFail", { reason: restored?.reason || "restore" }), "error");
                   return;
@@ -472,14 +489,15 @@ var HomepageSyncSettingsPanel = (() => {
         const btn = $("btnSyncTestServer");
         await runWithButtonState(btn, t("settings.sync.testing"), async () => {
           const cfg = applySyncSettingsFromForm();
-          const baseUrl = cfg.url;
-          const token = cfg.token;
+          const transportCfg = toTransportConfig(cfg);
+          const baseUrl = transportCfg.baseUrl;
+          const token = transportCfg.token;
           if (!baseUrl) {
             toast(t("settings.sync.testFail", { reason: "no_url" }), "error");
             return;
           }
           // 先 health（可达性 + 是否需要鉴权），再 pull state（404 表示空库也算鉴权通过）
-          const health = await httpHealth({ baseUrl, token });
+          const health = await httpHealth(transportCfg);
           if (!health.ok && health.reason === "network_error") {
             toast(
               t("settings.sync.testFail", {
@@ -489,7 +507,7 @@ var HomepageSyncSettingsPanel = (() => {
             );
             return;
           }
-          const pull = await httpPullState({ baseUrl, token });
+          const pull = await httpPullState(transportCfg);
           if (pull.reason === "unauthorized") {
             const need = health?.body?.authRequired === true;
             toast(
@@ -627,7 +645,14 @@ var HomepageSyncSettingsPanel = (() => {
       });
       $("btnSyncResolveConflict")?.addEventListener("click", () => openSyncConflictModal());
       $("btnSyncRotateE2ee")?.addEventListener("click", () => openRotateE2eeModal());
-      $("btnSyncSnapshots")?.addEventListener("click", () => void openSnapshotsModal());
+      $("btnSyncSnapshots")?.addEventListener("click", () => {
+        const btn = $("btnSyncSnapshots");
+        if (btn) {
+          void runWithButtonState(btn, t("settings.sync.devices.loading"), () => openSnapshotsModal());
+        } else {
+          void openSnapshotsModal();
+        }
+      });
     }
 
     return {

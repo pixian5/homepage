@@ -264,7 +264,14 @@ export function createModalManager(options) {
       } else if (iconType === "color") {
         color = $("fieldColor")?.value || "#4dd6a8";
       } else if (iconType === "remote") {
-        iconData = ($("fieldRemote")?.value || "").trim();
+        const rawRemote = ($("fieldRemote")?.value || "").trim();
+        if (rawRemote) {
+          iconData = normalizeUrl(rawRemote);
+          if (!iconData) {
+            toast(t("error.invalidUrl"), "error");
+            return;
+          }
+        }
       }
 
       const iconPending = iconType === "auto";
@@ -285,13 +292,20 @@ export function createModalManager(options) {
       state.data.nodes[node.id] = node;
 
       const helpers = getContainerHelpers();
-      if (state.openFolderId) {
-        const targetContainer = helpers.getFolderPlacementContainer(state.openFolderId);
-        const targetList = helpers.getPlacementList(targetContainer);
+      const openFolderContainer = state.openFolderId ? helpers.getFolderPlacementContainer(state.openFolderId) : null;
+      const canUseOpenFolder = !!(
+        openFolderContainer &&
+        openFolderContainer.type === "folder" &&
+        !openFolderContainer.deletedAt &&
+        !openFolderContainer.purgedAt
+      );
+      if (canUseOpenFolder) {
+        const targetList = helpers.getPlacementList(openFolderContainer);
         targetList.push(node.id);
-        helpers.setPlacementList(targetContainer, targetList);
-        helpers.touchPlacementContainer(targetContainer);
+        helpers.setPlacementList(openFolderContainer, targetList);
+        helpers.touchPlacementContainer(openFolderContainer);
       } else {
+        if (state.openFolderId) setState({ openFolderId: null });
         const targetGroup = helpers.getActiveGroup();
         const targetList = helpers.getPlacementList(targetGroup);
         targetList.push(node.id);
@@ -305,8 +319,8 @@ export function createModalManager(options) {
       debugLog("add_item", {
         id: node.id,
         url,
-        groupId: state.openFolderId ? state.openFolderId : helpers.getActiveGroup().id,
-        openFolderId: state.openFolderId || "",
+        groupId: canUseOpenFolder ? state.openFolderId : helpers.getActiveGroup().id,
+        openFolderId: canUseOpenFolder ? state.openFolderId : "",
       });
 
       const result = await persistData();
@@ -465,9 +479,11 @@ export function createModalManager(options) {
 
     $("btnCancel")?.addEventListener("click", closeModal);
     $("btnSave")?.addEventListener("click", async () => {
-      const nextTitle = ($("fieldTitle")?.value || "").trim() || node.title;
-      let nextUrl = node.url;
-      if (node.type === "item") {
+      const state = getState();
+      const targetNode = state.data?.nodes?.[node.id] || node;
+      const nextTitle = ($("fieldTitle")?.value || "").trim() || targetNode.title;
+      let nextUrl = targetNode.url;
+      if (targetNode.type === "item") {
         nextUrl = normalizeUrl(($("fieldUrl")?.value || "").trim());
         if (!nextUrl) {
           toast(t("error.invalidUrl"), "error");
@@ -475,32 +491,43 @@ export function createModalManager(options) {
         }
       }
 
-      const state = getState();
+      let nextRemoteIcon = "";
+      if (targetNode.type === "item" && ($("fieldIconType")?.value || "auto") === "remote") {
+        const rawRemote = ($("fieldRemote")?.value || "").trim();
+        if (rawRemote) {
+          nextRemoteIcon = normalizeUrl(rawRemote);
+          if (!nextRemoteIcon) {
+            toast(t("error.invalidUrl"), "error");
+            return;
+          }
+        }
+      }
+
       const snapshot = deepClone(state.data);
       pushBackup();
 
-      const oldUrl = node.url;
-      const oldIconType = node.iconType;
-      const titleChanged = node.title !== nextTitle;
-      const urlChanged = node.type === "item" && oldUrl !== nextUrl;
-      stampNodeFieldChanges(node, { titleChanged, urlChanged });
+      const oldUrl = targetNode.url;
+      const oldIconType = targetNode.iconType;
+      const titleChanged = targetNode.title !== nextTitle;
+      const urlChanged = targetNode.type === "item" && oldUrl !== nextUrl;
+      stampNodeFieldChanges(targetNode, { titleChanged, urlChanged });
 
-      node.title = nextTitle;
-      if (node.type === "item") {
+      targetNode.title = nextTitle;
+      if (targetNode.type === "item") {
         const url = nextUrl;
-        node.url = url;
+        targetNode.url = url;
         const iconType = $("fieldIconType")?.value || "auto";
-        node.iconType = iconType;
+        targetNode.iconType = iconType;
         if (iconType === "upload") {
           const file = $("fieldUpload")?.files?.[0];
-          if (file) node.iconData = await readIconAsDataUrl(file);
+          if (file) targetNode.iconData = await readIconAsDataUrl(file);
         } else if (iconType === "color") {
-          node.color = $("fieldColor")?.value || node.color;
-          node.iconData = "";
+          targetNode.color = $("fieldColor")?.value || targetNode.color;
+          targetNode.iconData = "";
         } else if (iconType === "remote") {
-          node.iconData = ($("fieldRemote")?.value || "").trim();
+          targetNode.iconData = nextRemoteIcon;
         } else {
-          node.iconData = "";
+          targetNode.iconData = "";
         }
 
         const iconTypeChanged = oldIconType !== iconType;
@@ -509,7 +536,7 @@ export function createModalManager(options) {
         if (shouldRefetchIcon) {
           await clearIconCacheForUrl(oldUrl, url);
           if (iconType === "auto") {
-            node.iconPending = true;
+            targetNode.iconPending = true;
           }
         }
       }
@@ -523,8 +550,8 @@ export function createModalManager(options) {
       }
       render();
       closeModal();
-      if (node.type === "item" && node.iconPending) {
-        fetchFaviconInBackground(node.id, node.url);
+      if (targetNode.type === "item" && targetNode.iconPending) {
+        fetchFaviconInBackground(targetNode.id, targetNode.url);
       }
       if (result.warning === "local_trimmed_backups") {
         toast(t("toast.save.trimBackup"), "warning");

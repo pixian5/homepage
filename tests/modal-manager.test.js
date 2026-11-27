@@ -249,3 +249,160 @@ test("createModalManager dispatches setState on save failure and recent group sw
   assert.ok(receivedSetState);
   assert.ok(receivedSetState.data, "失败时必须触发 setState 回滚内存 snapshot");
 });
+
+test("openAddModal rejects unsafe remote icon URL before backup and falls back from missing openFolderId", async () => {
+  const modal = createMockElement("modal");
+  const modalOverlay = createMockElement("modalOverlay");
+  const btnSettings = createMockElement("btnSettings", "button");
+  const domElements = {
+    fieldUrl: Object.assign(createMockElement("fieldUrl", "input"), { value: "https://site.example/" }),
+    fieldTitle: Object.assign(createMockElement("fieldTitle", "input"), { value: "Site" }),
+    fieldIconType: Object.assign(createMockElement("fieldIconType", "select"), { value: "remote" }),
+    fieldRemote: Object.assign(createMockElement("fieldRemote", "input"), { value: "javascript:alert(1)" }),
+    iconExtra: createMockElement("iconExtra", "div"),
+    btnSave: createMockElement("btnSave", "button"),
+    btnCancel: createMockElement("btnCancel", "button"),
+  };
+  globalThis.document = {
+    getElementById: (id) => domElements[id] || null,
+    createElement: (tag) => createMockElement("", tag),
+    importNode: (node) => node,
+    createDocumentFragment: () => {
+      const children = [];
+      return { children, childNodes: children, append: (...nodes) => children.push(...nodes) };
+    },
+  };
+  globalThis.DOMParser = class {
+    parseFromString(_html) {
+      const root = createMockElement("modal-root");
+      root.appendChild(domElements.btnSave);
+      return { getElementById: () => root };
+    }
+  };
+
+  let backups = 0;
+  let openFolderId = "fld_deleted";
+  const toasts = [];
+  const stateData = {
+    nodes: { fld_deleted: { id: "fld_deleted", type: "folder", title: "Gone", deletedAt: 100 } },
+    groups: [{ id: "grp_all", name: "全部", order: -1, nodes: [] }],
+    settings: {},
+  };
+
+  const manager = createModalManager({
+    modalEl: modal,
+    modalOverlayEl: modalOverlay,
+    btnSettingsEl: btnSettings,
+    t: (k) => k,
+    toast: (msg, type) => toasts.push({ msg, type }),
+    getState: () => ({ data: stateData, openFolderId, activeGroupId: "grp_all" }),
+    setState: (patch) => {
+      if (patch.openFolderId !== undefined) openFolderId = patch.openFolderId;
+    },
+    readIconAsDataUrl: async () => "",
+    fetchTitleInBackground: () => {},
+    fetchFaviconInBackground: () => {},
+    fetchFaviconNow: async () => true,
+    clearIconCacheForUrl: async () => {},
+    pushBackup: () => {
+      backups += 1;
+    },
+    persistData: async () => ({ ok: true }),
+    render: () => {},
+    debugLog: () => {},
+    getContainerHelpers: () => ({
+      getFolderPlacementContainer: (id) => stateData.nodes[id] || null,
+      getPlacementList: (c) => (Array.isArray(c?.nodes) ? c.nodes : c?.children || []),
+      setPlacementList: (c, list) => {
+        if (Array.isArray(c.nodes)) c.nodes = list;
+        else c.children = list;
+      },
+      touchPlacementContainer: () => {},
+      getActiveGroup: () => stateData.groups[0],
+    }),
+  });
+
+  manager.openAddModal();
+  await domElements.btnSave.click();
+  assert.equal(backups, 0, "非法远程图标链接应在创建备份前拦截");
+  assert.equal(toasts[0]?.msg, "error.invalidUrl");
+
+  domElements.fieldRemote.value = "https://cdn.example/icon.png";
+  await domElements.btnSave.click();
+  assert.equal(backups, 1);
+  assert.equal(openFolderId, null, "失效的 openFolderId 应清理并回退到活跃分组");
+  assert.equal(stateData.groups[0].nodes.length, 1);
+});
+
+test("openEditModal retry after failed persist updates rolled-back live node", async () => {
+  const modal = createMockElement("modal");
+  const modalOverlay = createMockElement("modalOverlay");
+  const btnSettings = createMockElement("btnSettings", "button");
+  const domElements = {
+    fieldUrl: Object.assign(createMockElement("fieldUrl", "input"), { value: "https://after.example/" }),
+    fieldTitle: Object.assign(createMockElement("fieldTitle", "input"), { value: "After" }),
+    fieldIconType: Object.assign(createMockElement("fieldIconType", "select"), { value: "auto" }),
+    iconExtra: createMockElement("iconExtra", "div"),
+    btnSave: createMockElement("btnSave", "button"),
+    btnCancel: createMockElement("btnCancel", "button"),
+  };
+  globalThis.document = {
+    getElementById: (id) => domElements[id] || null,
+    createElement: (tag) => createMockElement("", tag),
+    importNode: (node) => node,
+    createDocumentFragment: () => {
+      const children = [];
+      return { children, childNodes: children, append: (...nodes) => children.push(...nodes) };
+    },
+  };
+  globalThis.DOMParser = class {
+    parseFromString(_html) {
+      const root = createMockElement("modal-root");
+      root.appendChild(domElements.btnSave);
+      return { getElementById: () => root };
+    }
+  };
+
+  let stateData = {
+    nodes: { itm_1: { id: "itm_1", type: "item", title: "Before", url: "https://before.example/", updatedAt: 10 } },
+    groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["itm_1"] }],
+    settings: {},
+  };
+  let persistShouldSucceed = false;
+  const manager = createModalManager({
+    modalEl: modal,
+    modalOverlayEl: modalOverlay,
+    btnSettingsEl: btnSettings,
+    t: (k) => k,
+    toast: () => {},
+    getState: () => ({ data: stateData, openFolderId: null, activeGroupId: "grp_all" }),
+    setState: (patch) => {
+      if (patch.data) stateData = patch.data;
+    },
+    readIconAsDataUrl: async () => "",
+    fetchTitleInBackground: () => {},
+    fetchFaviconInBackground: () => {},
+    fetchFaviconNow: async () => true,
+    clearIconCacheForUrl: async () => {},
+    pushBackup: () => {},
+    persistData: async () => ({ ok: persistShouldSucceed }),
+    render: () => {},
+    debugLog: () => {},
+    getContainerHelpers: () => ({}),
+  });
+
+  const originalNode = stateData.nodes.itm_1;
+  manager.openEditModal(originalNode);
+  domElements.btnSave.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.notEqual(stateData.nodes.itm_1, originalNode, "回滚后应替换数据快照实例");
+  assert.equal(stateData.nodes.itm_1.title, "Before", "首次保存失败后应回滚到快照");
+
+  persistShouldSucceed = true;
+  domElements.fieldTitle.value = "RetryTitle";
+  domElements.btnSave.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(stateData.nodes.itm_1.title, "RetryTitle", "二次重试应更新回滚后的新节点对象");
+  assert.equal(stateData.nodes.itm_1.url, "https://after.example/");
+  assert.equal(originalNode.title, "After", "旧的游离节点对象不应再被重试覆盖");
+});

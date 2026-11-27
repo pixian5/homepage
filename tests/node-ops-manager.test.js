@@ -60,7 +60,7 @@ function setup({
   promptResult = null,
 } = {}) {
   const state = { activeGroupId, openFolderId };
-  const calls = { persists: 0, renders: 0, backups: 0, toasts: [], renames: [] };
+  const calls = { persists: 0, renders: 0, backups: 0, toasts: [], renames: [], closedFolders: 0 };
   const data = makeData();
   const folderManager = {
     renameFolder: (folderId, newTitle) => {
@@ -74,6 +74,10 @@ function setup({
     setActiveGroupId: (id) => {
       state.activeGroupId = id;
       data.settings.lastActiveGroupId = id;
+    },
+    closeFolder: () => {
+      calls.closedFolders += 1;
+      state.openFolderId = null;
     },
     getRecentItems: () => [],
     pushBackup: () => {
@@ -299,5 +303,28 @@ describe("node-ops-manager container helpers", () => {
     assert.deepEqual(backRes, { ok: true, movedCount: 2 });
     assert.ok(data.groups[0].nodes.includes("itm_1"));
     assert.ok(data.groups[0].nodes.includes("itm_3"));
+
+    // 拒绝向已逻辑删除或 purged 文件夹移动
+    data.nodes.fld_b.deletedAt = Date.now();
+    assert.deepEqual(manager.moveNodesToContainer(["itm_1"], "fld_b"), { ok: false, movedCount: 0 });
+  });
+
+  it("closes open folder / resets active group on deleteNodes and advances monotonic clock & root fallback on undo", () => {
+    const { manager, state, calls } = setup({ activeGroupId: "fld_a", openFolderId: "fld_sub" });
+    manager.deleteNodes(["fld_a"]);
+    assert.equal(calls.closedFolders, 1, "删除含当前打开子文件夹的祖先时应关闭覆盖层");
+    assert.equal(state.openFolderId, null);
+    assert.equal(state.activeGroupId, "grp_all", "删除当前激活分组应切回 grp_all");
+
+    // 验证撤销恢复在未来墓碑时钟场景下仍能单调推进 updatedAt 且在原父文件夹失效时回挂根分组
+    const ctx2 = setup();
+    ctx2.data.nodes.itm_a1.updatedAt = Date.now() + 60_000;
+    ctx2.manager.deleteNodes(["itm_a1"]);
+    const deletedClock = ctx2.data._syncMeta.nodeTombstones.itm_a1.deletedAt;
+    ctx2.data.nodes.fld_a.deletedAt = deletedClock + 10;
+    ctx2.data.groups[0].nodes = ctx2.data.groups[0].nodes.filter((id) => id !== "fld_a");
+    assert.equal(ctx2.manager.undoDelete(), true);
+    assert.ok(ctx2.data.nodes.itm_a1.updatedAt > deletedClock, "撤销恢复后的 updatedAt 必须严格大于墓碑 deletedAt");
+    assert.ok(ctx2.data.groups[0].nodes.includes("itm_a1"), "原父文件夹已删时恢复书签应兜底挂回根分组");
   });
 });

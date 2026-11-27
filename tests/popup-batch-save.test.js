@@ -225,5 +225,19 @@ describe("saveSingleTabToContainer", () => {
       saveSingleTabToContainer({ groups: null, nodes: null }, { url: "https://a.example/" }, { containerId: "x" }),
       { error: "no_data" },
     );
+
+    const deletedData = makeData();
+    deletedData.nodes.fld_work.deletedAt = 1700000000000;
+    assert.deepEqual(
+      saveSingleTabToContainer(deletedData, { url: "https://a.example/" }, { containerId: "fld_work" }),
+      { error: "no_group" },
+    );
+    deletedData.groups[0].purgedAt = 1700000000001;
+    assert.deepEqual(
+      saveTabsToContainer(deletedData, [{ url: "https://a.example/", title: "A" }], {
+        containerId: ALL_BOOKMARKS_GROUP_ID,
+      }),
+      { error: "no_group" },
+    );
   });
 });

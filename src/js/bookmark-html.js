@@ -9,6 +9,7 @@
  */
 
 import { ALL_BOOKMARKS_GROUP_ID, createItemNode } from "./data-utils.js";
+import { normalizeUrl } from "./shared-utils.js";
 
 /** ICON 属性长度上限：超长图标（异常数据）跳过，避免导出文件膨胀 */
 const EXPORT_ICON_MAX_LENGTH = 32768;
@@ -44,10 +45,10 @@ function nodeTitle(node, fallback = "未命名") {
   return String(node?.title || "").trim() || fallback;
 }
 
-/** 导出用图标：仅接受 data: URI 形态的内嵌图标，超长跳过 */
+/** 导出用图标：仅接受图片 data:image/* URI（兼容 Imported data 与用户 upload 图标），超长跳过 */
 function exportIconOf(node) {
-  const icon = node?.iconType === "data" ? String(node?.iconData || "") : "";
-  if (!icon.startsWith("data:") || icon.length > EXPORT_ICON_MAX_LENGTH) return "";
+  const icon = node?.iconType === "data" || node?.iconType === "upload" ? String(node?.iconData || "") : "";
+  if (!/^data:image\//i.test(icon) || icon.length > EXPORT_ICON_MAX_LENGTH) return "";
   return icon;
 }
 
@@ -246,10 +247,11 @@ export function parseNetscapeBookmarksHtml(htmlText) {
   return { groups };
 }
 
-/** 导入图标规整：data: URI 原样保留；Netscape 裸 base64 补 PNG 前缀；超长丢弃 */
+/** 导入图标 data URI 规整：仅接受图片 data:image/*；Netscape 裸 base64 补 PNG 前缀；超长丢弃 */
 function normalizeImportIcon(icon) {
   const value = String(icon || "").trim();
   if (!value) return "";
+  if (value.startsWith("data:") && !/^data:image\//i.test(value)) return "";
   const uri = value.startsWith("data:") ? value : `data:image/png;base64,${value.replace(/\s+/g, "")}`;
   return uri.length <= IMPORT_ICON_MAX_LENGTH ? uri : "";
 }
@@ -286,11 +288,13 @@ export function bookmarksToHomepageData(
   const makeFolderId = () => `fld_bm_${now.toString(36)}_${(folderSeq++).toString(36)}`;
 
   const buildItem = (child) => {
-    if (!child?.url || known.has(String(child.url))) return null;
+    const rawUrl = String(child?.url || "").trim();
+    const safeUrl = normalizeUrl(rawUrl);
+    if (!safeUrl || known.has(safeUrl) || known.has(rawUrl)) return null;
     const icon = normalizeImportIcon(child.icon);
     const item = createItemNode({
-      url: String(child.url),
-      title: String(child.title || child.url),
+      url: safeUrl,
+      title: String(child.title || safeUrl),
       iconType: icon ? "data" : "auto",
       iconData: icon,
       // 无内嵌图标的书签交给新标签页后台抓取 favicon

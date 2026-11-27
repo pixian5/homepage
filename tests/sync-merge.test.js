@@ -779,4 +779,103 @@ describe("mergeSettingsByClock convergence", () => {
     );
     assert.equal(merged.settings.backgroundType, "color");
   });
+
+  it("rescues live nodes orphaned by a concurrent folder deletion without deadlocking", () => {
+    const local = baseData({
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["fld_work"], updatedAt: 3000 }],
+      nodes: {
+        fld_work: { id: "fld_work", type: "folder", title: "工作", children: ["n1"], updatedAt: 1000 },
+        n1: {
+          id: "n1",
+          type: "item",
+          title: "New Bookmark",
+          url: "https://new.example/",
+          updatedAt: 2500,
+          createdAt: 2500,
+          updatedBy: "dev_a",
+        },
+      },
+      _syncMeta: {
+        placementClock: {
+          fld_work: { parentKind: "group", parentId: "grp_all", index: 0, updatedAt: 1000, updatedBy: "dev_a" },
+          n1: { parentKind: "folder", parentId: "fld_work", index: 0, updatedAt: 2500, updatedBy: "dev_a" },
+        },
+      },
+      lastUpdated: 3000,
+    });
+    const remoteDeleted = baseData({
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["fld_work"], updatedAt: 4000 }],
+      nodes: { fld_work: { id: "fld_work", type: "folder", title: "工作", children: [], updatedAt: 1000 } },
+      lastUpdated: 4000,
+    });
+    markNodeDeleted(remoteDeleted, "fld_work", 4000);
+    remoteDeleted.groups[0].nodes = [];
+    const remote = toSyncDocument(remoteDeleted, { deviceId: "dev_b", docId: "doc1", revision: 3, writtenAt: 4000 });
+
+    const result = mergeHomepage(local, remote, { deviceId: "dev_a", now: 5000 });
+    assert.equal(result.ok, true, "父文件夹被对端删除时不得因 missing_local_ids 卡死同步");
+    assert.ok(result.state.nodes.fld_work.deletedAt, "已删文件夹墓碑保留");
+    assert.ok(result.state.nodes.n1 && !result.state.nodes.n1.deletedAt, "存活子节点被挽救");
+    assert.ok(result.state.groups[0].nodes.includes("n1"), "孤立存活节点应回挂至 grp_all");
+    assert.equal(result.state._syncMeta.placementClock.n1.parentId, "grp_all");
+  });
+
+  it("deterministically breaks concurrent folder move cycles without losing either subtree", () => {
+    const folderA = { id: "fld_a", type: "folder", title: "A", children: ["itm_a"], updatedAt: 1000 };
+    const folderB = { id: "fld_b", type: "folder", title: "B", children: ["itm_b"], updatedAt: 1000 };
+    const itemA = { id: "itm_a", type: "item", title: "A1", url: "https://a1.example/", updatedAt: 1000 };
+    const itemB = { id: "itm_b", type: "item", title: "B1", url: "https://b1.example/", updatedAt: 1000 };
+
+    const chrome = baseData({
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["fld_b"], updatedAt: 5000 }],
+      nodes: {
+        fld_a: { ...folderA, children: ["itm_a"] },
+        fld_b: { ...folderB, children: ["itm_b", "fld_a"] },
+        itm_a: itemA,
+        itm_b: itemB,
+      },
+      _syncMeta: {
+        placementClock: {
+          fld_b: { parentKind: "group", parentId: "grp_all", index: 0, updatedAt: 1000, updatedBy: "chrome" },
+          fld_a: { parentKind: "folder", parentId: "fld_b", index: 1, updatedAt: 5000, updatedBy: "chrome" },
+          itm_a: { parentKind: "folder", parentId: "fld_a", index: 0, updatedAt: 1000, updatedBy: "chrome" },
+          itm_b: { parentKind: "folder", parentId: "fld_b", index: 0, updatedAt: 1000, updatedBy: "chrome" },
+        },
+      },
+      lastUpdated: 5000,
+    });
+    const firefox = baseData({
+      groups: [{ id: "grp_all", name: "全部", order: -1, nodes: ["fld_a"], updatedAt: 5100 }],
+      nodes: {
+        fld_a: { ...folderA, children: ["itm_a", "fld_b"] },
+        fld_b: { ...folderB, children: ["itm_b"] },
+        itm_a: itemA,
+        itm_b: itemB,
+      },
+      _syncMeta: {
+        placementClock: {
+          fld_a: { parentKind: "group", parentId: "grp_all", index: 0, updatedAt: 1000, updatedBy: "firefox" },
+          fld_b: { parentKind: "folder", parentId: "fld_a", index: 1, updatedAt: 5100, updatedBy: "firefox" },
+          itm_a: { parentKind: "folder", parentId: "fld_a", index: 0, updatedAt: 1000, updatedBy: "firefox" },
+          itm_b: { parentKind: "folder", parentId: "fld_b", index: 0, updatedAt: 1000, updatedBy: "firefox" },
+        },
+      },
+      lastUpdated: 5100,
+    });
+
+    const firefoxDoc = toSyncDocument(firefox, { deviceId: "firefox", docId: "doc1", revision: 2, writtenAt: 5100 });
+    const chromeDoc = toSyncDocument(chrome, { deviceId: "chrome", docId: "doc1", revision: 2, writtenAt: 5000 });
+    const onChrome = mergeHomepage(chrome, firefoxDoc, { deviceId: "chrome", now: 6000 });
+    const onFirefox = mergeHomepage(firefox, chromeDoc, { deviceId: "firefox", now: 6000 });
+
+    assert.equal(onChrome.ok, true);
+    assert.equal(onFirefox.ok, true);
+    for (const side of [onChrome.state, onFirefox.state]) {
+      for (const id of ["fld_a", "fld_b", "itm_a", "itm_b"]) {
+        assert.ok(side.nodes[id] && !side.nodes[id].deletedAt, `${id} 必须保留`);
+      }
+      assert.ok(side.groups[0].nodes.length >= 1, "破环后至少有一个文件夹挂在根分组下");
+    }
+    assert.deepEqual(onChrome.state.groups[0].nodes, onFirefox.state.groups[0].nodes);
+  });
 });

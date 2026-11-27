@@ -821,6 +821,7 @@ function createNodeOpsManagerInstance() {
     toast,
     t,
     getFolderManager: () => folderMgr,
+    closeFolder: () => folderMgr?.closeFolder?.(),
     undoTimeoutMs: 10000,
     isRecentGroup: (groupId) => groupId === RECENT_GROUP_ID,
   });

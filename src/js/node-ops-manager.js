@@ -13,6 +13,7 @@ import {
   ALL_BOOKMARKS_GROUP_ID,
   canMoveNodeToFolder,
   collectNodeSubtreeIds,
+  collectReachableNodeIds,
   dedupeData,
   getRootFolderNodeIds,
   isAllBookmarksGroup,
@@ -53,6 +54,7 @@ var HomepageNodeOpsManager = (() => {
     const promptFn = options.prompt || ((message, defaultValue) => globalThis.prompt?.(message, defaultValue));
     const confirmFn = options.confirm || ((message) => globalThis.confirm?.(message));
     const getFolderManager = options.getFolderManager || (() => null);
+    const closeFolderFn = options.closeFolder;
     const undoTimeoutMs = Number(options.undoTimeoutMs) > 0 ? Number(options.undoTimeoutMs) : 10000;
     const isRecentGroup = options.isRecentGroup || ((groupId) => groupId === "__recent__");
 
@@ -210,6 +212,15 @@ var HomepageNodeOpsManager = (() => {
       for (const id of ids) {
         for (const nid of collectNodeSubtreeIds(data, id)) expanded.add(nid);
       }
+      const { activeGroupId, openFolderId } = getState();
+      if (openFolderId && expanded.has(openFolderId)) {
+        closeFolderFn?.();
+      }
+      if (activeGroupId && expanded.has(activeGroupId)) {
+        const fallbackRootId = getRootGroup()?.id || ALL_BOOKMARKS_GROUP_ID;
+        setActiveGroupId(fallbackRootId);
+        if (data.settings) data.settings.lastActiveGroupId = fallbackRootId;
+      }
       for (const id of expanded) {
         if (data.nodes[id]) deletedNodes[id] = deepClone(data.nodes[id]);
       }
@@ -246,25 +257,35 @@ var HomepageNodeOpsManager = (() => {
       }, undoTimeoutMs);
     }
 
-    /** 撤销删除：恢复节点实体（清软删标记与墓碑），按原位置逆序回插，保持相对顺序 */
+    /** 撤销删除：恢复节点实体（单调推进时钟并清软删墓碑），原父目录缺失时回挂根分组 */
     function undoDelete() {
       if (!pendingDeletion) return false;
       if (pendingDeletion.timer) clearTimeout(pendingDeletion.timer);
       const { deletedNodes, placements } = pendingDeletion;
       pendingDeletion = null;
       const data = getData();
-      // 先恢复节点实体
+      // 先恢复节点实体并保证时钟严格大于此前墓碑，防同步回流误删
       for (const [id, node] of Object.entries(deletedNodes || {})) {
-        data.nodes[id] = { ...node, updatedAt: Date.now(), updatedBy: "" };
+        const tombstone = data._syncMeta?.nodeTombstones?.[id];
+        const restoredAt = nextSyncTimestamp(
+          Date.now(),
+          tombstone?.deletedAt,
+          tombstone?.purgedAt,
+          tombstone?.updatedAt,
+          node.updatedAt,
+          node.titleUpdatedAt,
+          node.urlUpdatedAt,
+        );
+        data.nodes[id] = { ...node, updatedAt: restoredAt, updatedBy: "" };
         delete data.nodes[id].deletedAt;
         delete data.nodes[id].purgedAt;
         if (data._syncMeta?.nodeTombstones) delete data._syncMeta.nodeTombstones[id];
       }
-      // 再按原位置回插引用（倒序插入以尽量保持相对顺序）
+      // 再按原位置回插引用（倒序插入以尽量保持相对顺序；跳过已删除容器）
       const sorted = [...(placements || [])].sort((a, b) => b.index - a.index);
       for (const p of sorted) {
         if (p.kind === "group") {
-          const group = data.groups.find((g) => g.id === p.groupId);
+          const group = data.groups.find((g) => g.id === p.groupId && !g.deletedAt && !g.purgedAt);
           if (!group) continue;
           if (!Array.isArray(group.nodes)) group.nodes = [];
           if (!group.nodes.includes(p.id)) {
@@ -274,12 +295,38 @@ var HomepageNodeOpsManager = (() => {
           }
         } else if (p.kind === "folder") {
           const folder = data.nodes[p.folderId];
-          if (folder?.type !== "folder") continue;
+          if (folder?.type !== "folder" || folder.deletedAt || folder.purgedAt) continue;
           if (!Array.isArray(folder.children)) folder.children = [];
           if (!folder.children.includes(p.id)) {
             const idx = Math.max(0, Math.min(p.index, folder.children.length));
             folder.children.splice(idx, 0, p.id);
             touchPlacementContainer(folder);
+          }
+        }
+      }
+      // 原父文件夹若已被删除/清理，将孤立恢复节点兜底挂回根分组，避免 dedupeData 当孤儿清掉
+      const rootGroup = getRootGroup();
+      if (rootGroup) {
+        if (!Array.isArray(rootGroup.nodes)) rootGroup.nodes = [];
+        const restoredIds = Object.keys(deletedNodes || {});
+        const roots = (data.groups || []).flatMap((g) => g.nodes || []);
+        const reachable = collectReachableNodeIds(data, roots);
+        const unreachedRestored = restoredIds.filter((id) => data.nodes[id] && !reachable.has(id));
+        if (unreachedRestored.length) {
+          const unreachedSet = new Set(unreachedRestored);
+          const hasParentAmongUnreached = new Set();
+          for (const id of unreachedRestored) {
+            const candidate = data.nodes[id];
+            if (candidate?.type !== "folder") continue;
+            for (const childId of candidate.children || []) {
+              if (unreachedSet.has(childId)) hasParentAmongUnreached.add(childId);
+            }
+          }
+          for (const id of unreachedRestored) {
+            if (hasParentAmongUnreached.has(id) || reachable.has(id)) continue;
+            rootGroup.nodes.push(id);
+            touchPlacementContainer(rootGroup);
+            for (const subId of collectReachableNodeIds(data, [id])) reachable.add(subId);
           }
         }
       }
@@ -299,9 +346,14 @@ var HomepageNodeOpsManager = (() => {
       if (isRecentGroup(getState().activeGroupId)) return { ok: false, movedCount: 0 };
       const data = getData();
       const root = getRootGroup();
-      const targetGroup = (data.groups || []).find((group) => group?.id === targetContainerId) || null;
+      const targetGroup =
+        (data.groups || []).find((group) => group?.id === targetContainerId && !group.deletedAt && !group.purgedAt) ||
+        null;
       const targetFolder =
-        !targetGroup && data.nodes?.[targetContainerId]?.type === "folder" && !data.nodes[targetContainerId]?.deletedAt
+        !targetGroup &&
+        data.nodes?.[targetContainerId]?.type === "folder" &&
+        !data.nodes[targetContainerId]?.deletedAt &&
+        !data.nodes[targetContainerId]?.purgedAt
           ? data.nodes[targetContainerId]
           : null;
       const target = targetGroup || targetFolder || (isAllBookmarksGroup(targetContainerId) ? root : null);

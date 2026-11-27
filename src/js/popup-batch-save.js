@@ -48,9 +48,9 @@ export function filterSavableTabs(tabs) {
  */
 function appendTabsToContainer(data, savableTabs, { containerId, deviceId = "", now = Date.now() } = {}) {
   if (!data?.groups || !data.nodes) return { error: "no_data" };
-  const group = data.groups.find((entry) => entry.id === containerId);
+  const group = data.groups.find((entry) => entry?.id === containerId && !entry.deletedAt && !entry.purgedAt);
   const folder = !group ? data.nodes[containerId] : null;
-  const container = group || (folder?.type === "folder" ? folder : null);
+  const container = group || (folder?.type === "folder" && !folder.deletedAt && !folder.purgedAt ? folder : null);
   if (!container) return { error: "no_group" };
   if (!Array.isArray(savableTabs) || !savableTabs.length) return { error: "no_valid_tabs" };
 

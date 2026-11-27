@@ -106,11 +106,40 @@ describe("exportNetscapeBookmarksHtml", () => {
     assert.ok(!html.includes("<script>alert"), "不得出现未转义脚本");
   });
 
-  it("embeds data-uri icons and skips deleted nodes", () => {
-    const html = exportNetscapeBookmarksHtml(makeData());
+  it("embeds data-uri icons (data & upload) and skips deleted nodes", () => {
+    const data = makeData();
+    data.nodes.itm_home.iconType = "upload";
+    data.nodes.itm_home.iconData = "data:image/webp;base64,UklGRg==";
+    const html = exportNetscapeBookmarksHtml(data);
     assert.ok(html.includes('ICON="data:image/png;base64,iVBORw0KGgo="'));
+    assert.ok(html.includes('ICON="data:image/webp;base64,UklGRg=="'), "用户上传图标也应导出");
     assert.ok(!html.includes("gone.example.com"), "deletedAt 节点不得导出");
     assert.ok(!html.includes("已删除"));
+  });
+
+  it("filters unsafe bookmark hrefs and non-image data icons on import", () => {
+    const parsed = {
+      groups: [
+        {
+          name: "安全测试",
+          children: [
+            { type: "link", title: "XSS", url: "javascript:alert(1)", icon: "data:text/html,<svg/onload=alert(1)>" },
+            {
+              type: "link",
+              title: "正常",
+              url: "https://safe.example.com",
+              icon: "data:text/html;base64,PHNjcmlwdD4=",
+            },
+          ],
+        },
+      ],
+    };
+    const incoming = bookmarksToHomepageData(parsed, { now: TS });
+    const items = Object.values(incoming.nodes).filter((node) => node.type === "item");
+    assert.equal(items.length, 1);
+    assert.equal(items[0].url, "https://safe.example.com/");
+    assert.equal(items[0].iconData, "");
+    assert.equal(items[0].iconType, "auto");
   });
 
   it("exports legacy multi-group data with one H3 per group", () => {

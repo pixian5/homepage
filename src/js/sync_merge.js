@@ -3,9 +3,9 @@
  * 吸收 Pass：字段时钟、空值不覆盖、墓碑、ID 保全、空远端拒绝
  */
 
-import { dedupeData, ensureAllBookmarksGroup } from "./data-utils.js";
+import { ALL_BOOKMARKS_GROUP_ID, collectReachableNodeIds, dedupeData, ensureAllBookmarksGroup } from "./data-utils.js";
 import { deepClone } from "./storage.js";
-import { HOMEPAGE_SCHEMA_VERSION } from "./sync_policy.js";
+import { HOMEPAGE_SCHEMA_VERSION, nextSyncTimestamp } from "./sync_policy.js";
 import { syncDocumentToHomepageShape, toSyncDocument } from "./sync_projection.js";
 import { mergeSettingsByClock, normalizeSettingsClock } from "./sync_settings.js";
 
@@ -248,6 +248,78 @@ function syncContentFingerprint(data, deviceId, docId) {
 }
 
 /**
+ * 多设备合并时兜底挽救孤立存活节点并打破并发移动引发的文件夹环路：
+ * - 若父文件夹在远端被删除/清理而本端/另一端新增了子节点，则把孤立存活子树回挂到 grp_all；
+ * - 若双端并发互移文件夹形成封闭环路（fld_A <-> fld_B），则确定性选取一个入口回挂到 grp_all，
+ *   后续 dedupeData 会自动剪除回边，既保住数据又防止触发 missing_local_ids 死锁同步。
+ */
+function rescueUnplacedLiveNodes(state, placements, groupById, { deviceId, now }) {
+  const rootGroup = state.groups.find((group) => group?.id === ALL_BOOKMARKS_GROUP_ID) || state.groups[0];
+  if (!rootGroup) return;
+  if (!Array.isArray(rootGroup.nodes)) rootGroup.nodes = [];
+  const roots = state.groups.flatMap((group) => group?.nodes || []);
+  const reachable = collectReachableNodeIds(state, roots);
+  const unreachedIds = Object.keys(state.nodes || {}).filter((id) => {
+    const node = state.nodes[id];
+    return node && !node.deletedAt && !node.purgedAt && !reachable.has(id);
+  });
+  if (!unreachedIds.length) return;
+
+  const placementById = new Map();
+  for (const placement of placements || []) {
+    if (placement?.nodeId && !placement.deletedAt) placementById.set(placement.nodeId, placement);
+  }
+  const unreachedSet = new Set(unreachedIds);
+  const hasLiveIncoming = new Set();
+  for (const id of unreachedIds) {
+    const node = state.nodes[id];
+    if (node?.type !== "folder") continue;
+    for (const childId of node.children || []) {
+      if (unreachedSet.has(childId)) hasLiveIncoming.add(childId);
+    }
+  }
+
+  const compareRescued = (leftId, rightId) =>
+    (state.nodes[leftId]?.type === "folder" ? 0 : 1) - (state.nodes[rightId]?.type === "folder" ? 0 : 1) ||
+    mergeAsNum(placementById.get(leftId)?.updatedAt, mergeAsNum(state.nodes[leftId]?.updatedAt)) -
+      mergeAsNum(placementById.get(rightId)?.updatedAt, mergeAsNum(state.nodes[rightId]?.updatedAt)) ||
+    mergeAsStr(leftId).localeCompare(mergeAsStr(rightId));
+
+  const attachToRoot = (id) => {
+    if (reachable.has(id)) return;
+    if (!rootGroup.nodes.includes(id)) rootGroup.nodes.push(id);
+    for (const subId of collectReachableNodeIds(state, [id])) reachable.add(subId);
+    const prevP = placementById.get(id);
+    let parentDeletedAt = 0;
+    if (prevP?.parentKind === "folder") {
+      const parentFolder = state.nodes?.[prevP.parentId];
+      parentDeletedAt = mergeAsNum(parentFolder?.deletedAt || parentFolder?.purgedAt);
+    } else if (prevP?.parentKind === "group") {
+      const parentGroup = groupById.get(prevP.parentId);
+      parentDeletedAt = mergeAsNum(parentGroup?.deletedAt || parentGroup?.purgedAt);
+    }
+    if (!state._syncMeta || typeof state._syncMeta !== "object") state._syncMeta = {};
+    if (!state._syncMeta.placementClock || typeof state._syncMeta.placementClock !== "object") {
+      state._syncMeta.placementClock = {};
+    }
+    state._syncMeta.placementClock[id] = {
+      parentKind: "group",
+      parentId: rootGroup.id,
+      index: rootGroup.nodes.indexOf(id),
+      updatedAt: nextSyncTimestamp(now, prevP?.updatedAt, parentDeletedAt, state.nodes?.[id]?.updatedAt),
+      updatedBy: deviceId,
+    };
+  };
+
+  // 先挂载无存活父引用的子树根（如父文件夹已删的子文件夹/书签），保留子树内部结构
+  const dagRoots = unreachedIds.filter((id) => !hasLiveIncoming.has(id)).sort(compareRescued);
+  for (const id of dagRoots) attachToRoot(id);
+  // 再打破无根互指环路（如 A <-> B）
+  const remaining = unreachedIds.filter((id) => !reachable.has(id)).sort(compareRescued);
+  for (const id of remaining) attachToRoot(id);
+}
+
+/**
  * 主合并入口
  * @param {object} localData HomepageData
  * @param {object|null} remoteDoc SyncDocument
@@ -398,6 +470,7 @@ export function mergeHomepage(localData, remoteDoc, ctx = {}) {
   // 安全闸门：本地未删除的活跃 id 必须仍在
   const beforeIds = collectActiveIds(localData);
   ensureAllBookmarksGroup(state);
+  rescueUnplacedLiveNodes(state, placements, groupById, { deviceId, now });
   dedupeData(state);
   const afterIds = collectActiveIds(state);
   const missing = [];

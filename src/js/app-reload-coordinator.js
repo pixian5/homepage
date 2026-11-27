@@ -32,7 +32,8 @@ export function resolveActiveGroupId(candidateId, { getRootContainerById, getRoo
  * @returns {string|null} 有效的文件夹 ID 或 null
  */
 export function resolveOpenFolderId(candidateFolderId, nodes) {
-  if (candidateFolderId && nodes && nodes[candidateFolderId]?.type === "folder") {
+  const folder = candidateFolderId && nodes ? nodes[candidateFolderId] : null;
+  if (folder?.type === "folder" && !folder.deletedAt && !folder.purgedAt) {
     return candidateFolderId;
   }
   return null;

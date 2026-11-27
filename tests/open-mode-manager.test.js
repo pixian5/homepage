@@ -142,4 +142,16 @@ describe("open-mode-manager cycleOpenMode", () => {
     );
     ctx.restore();
   });
+
+  it("blocks unsafe protocols in openUrlWithMode", () => {
+    const ctx = setup();
+    ctx.useExtensionTabs();
+    ctx.manager.openUrlWithMode("javascript:alert(1)", "new");
+    ctx.manager.openUrlWithMode("data:text/html,<script>", "current");
+    assert.equal(ctx.calls.tabsCreated.length, 0);
+    assert.equal(ctx.calls.windowOpened.length, 0);
+    assert.equal(ctx.calls.locationAssigned.length, 0);
+    assert.equal(ctx.calls.visits.length, 0);
+    ctx.restore();
+  });
 });

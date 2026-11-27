@@ -247,4 +247,39 @@ describe("selection-manager batch delete & guards", () => {
     assert.equal(manager.isBatchModeActive(), false);
     assert.equal(byId.get("btnBatchMove").classes.has("hidden"), true);
   });
+
+  it("guards null grid references cleanly in selectAll, updateStyles, and box select", () => {
+    const calls = [];
+    const byId = new Map([
+      ["btnSelectAll", fakeEl("btnSelectAll")],
+      ["btnBatchMove", fakeEl("btnBatchMove")],
+      ["btnFolderBatchMove", fakeEl("btnFolderBatchMove")],
+      ["btnBatchDelete", fakeEl("btnBatchDelete")],
+      ["btnFolderBatchDelete", fakeEl("btnFolderBatchDelete")],
+    ]);
+    globalThis.document = {
+      getElementById: (id) => byId.get(id) || null,
+      createElement: () => fakeEl("selection-box"),
+      body: fakeEl("body"),
+      addEventListener: () => {},
+    };
+    const mgr = createSelectionManager({
+      getState: () => ({ activeGroupId: "grp_all", openFolderId: null }),
+      getNodes: () => [],
+      getGrid: () => null,
+      getMain: () => null,
+      deleteNodes: () => {},
+      toast: () => {},
+      t: (k) => k,
+      isRecentGroup: () => false,
+      qsa: (_sel, root) => {
+        calls.push(root);
+        return [];
+      },
+    });
+    mgr.toggleBatchMode(true);
+    mgr.selectAll();
+    mgr.updateStyles();
+    assert.equal(calls.length, 0, "grid 为 null 时不得回退查询整棵 document");
+  });
 });

@@ -220,4 +220,30 @@ describe("backgroundSignature (pure)", () => {
       backgroundSignature({ ...base, backgroundCustom: "data:image/png;base64,BBBB" }),
     );
   });
+
+  it("blocks css url() injection, defaults non-finite overlay to 0, and clears is-loading on failure", async () => {
+    const ctx = setup();
+    const { manager, data, backgroundEl, cssVars } = ctx;
+    backgroundEl.style.backgroundImage = "none";
+    manager.setBackground("url(javascript:alert(1))");
+    assert.equal(backgroundEl.style.backgroundImage, "none", "不得允许 css url() 绕过梯度白名单");
+    manager.setBackground("data:text/html,<script>alert(1)</script>");
+    assert.equal(backgroundEl.style.backgroundImage, "none", "仅允许 data:image/*");
+
+    data.settings.backgroundType = "custom";
+    data.settings.backgroundOverlayStrength = undefined;
+    manager.applyBackgroundOverlay();
+    assert.equal(cssVars["--bg-overlay"], "rgba(0, 0, 0, 0)", "缺失遮罩强度不得产出 NaN");
+
+    const throwing = setup({
+      deps: {
+        getBingWallpaper: async () => {
+          throw new Error("boom");
+        },
+      },
+    });
+    throwing.data.settings.backgroundType = "bing";
+    await assert.rejects(() => throwing.manager.loadBackground({ silent: true }), /boom/);
+    assert.equal(throwing.backgroundEl.classes.has("is-loading"), false, "异常退出后必须移除 is-loading");
+  });
 });

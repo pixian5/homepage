@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { evaluateSyncBanner, SYNC_BANNER_DISMISS_MS, SYNC_BANNER_ERROR_GRACE_MS } from "../src/js/sync-banner.js";
+import {
+  createSyncBanner,
+  evaluateSyncBanner,
+  SYNC_BANNER_DISMISS_MS,
+  SYNC_BANNER_ERROR_GRACE_MS,
+} from "../src/js/sync-banner.js";
 
 const NOW = 1_800_000_000_000;
 
@@ -97,5 +102,71 @@ describe("sync-banner evaluateSyncBanner", () => {
       nowMs: NOW,
     });
     assert.equal(verdict.show, false);
+  });
+
+  it("retry preserves fresh refreshed error text instead of clobbering it with stale label", async () => {
+    const prevDoc = globalThis.document;
+    const makeEl = (hidden = false) => {
+      const classes = new Set(hidden ? ["hidden"] : []);
+      const listeners = new Map();
+      const props = {};
+      return {
+        textContent: "",
+        offsetHeight: 36,
+        classList: {
+          contains: (c) => classes.has(c),
+          add: (c) => classes.add(c),
+          remove: (c) => classes.delete(c),
+        },
+        style: { setProperty: (k, v) => (props[k] = v) },
+        addEventListener: (type, fn) => {
+          if (!listeners.has(type)) listeners.set(type, []);
+          listeners.get(type).push(fn);
+        },
+        click: async () => {
+          for (const fn of listeners.get("click") || []) await fn();
+        },
+      };
+    };
+    const banner = makeEl(true);
+    const label = makeEl(false);
+    label.textContent = "old_error_text";
+    const retryBtn = makeEl(false);
+    const body = makeEl(false);
+    const docEl = makeEl(false);
+    const map = new Map([
+      ["syncBanner", banner],
+      ["syncBannerText", label],
+      ["btnSyncBannerRetry", retryBtn],
+      ["btnSyncBannerSettings", makeEl(false)],
+      ["btnSyncBannerDismiss", makeEl(false)],
+    ]);
+    globalThis.document = {
+      getElementById: (id) => map.get(id) || null,
+      body,
+      documentElement: docEl,
+    };
+
+    try {
+      let currentState = { status: "error", lastError: "old_err" };
+      const ctrl = createSyncBanner({
+        getState: async () => currentState,
+        getOutbox: async () => [],
+        onRetry: async () => {
+          currentState = { status: "error", lastError: "fresh_auth_error" };
+        },
+        onOpenSettings: () => {},
+        getStorage: () => ({ get: async () => ({}), set: async () => {} }),
+        t: (key) => (key === "sync.banner.error" ? "ERR:{error}" : key),
+      });
+      await ctrl.start();
+      assert.equal(label.textContent, "ERR:old_err");
+
+      await retryBtn.click();
+      assert.equal(banner.classList.contains("hidden"), false);
+      assert.equal(label.textContent, "ERR:fresh_auth_error", "重试后应保留 refresh() 写入的最新错误文案");
+    } finally {
+      globalThis.document = prevDoc;
+    }
   });
 });

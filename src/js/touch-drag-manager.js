@@ -154,7 +154,10 @@ var HomepageTouchDragManager = (() => {
       tile.addEventListener(
         "touchstart",
         (e) => {
-          if (e.touches.length !== 1) return;
+          if (e.touches.length !== 1) {
+            if (e.touches.length > 1) resetTouchDragState();
+            return;
+          }
           // 选择模式与历史分组（只读）不进入触摸长按
           if (deps.canStartTileTouch && !deps.canStartTileTouch()) return;
           const touch = e.touches[0];
@@ -181,7 +184,11 @@ var HomepageTouchDragManager = (() => {
       btn.addEventListener(
         "touchstart",
         (e) => {
-          if (e.touches.length !== 1 || disabled) return;
+          if (e.touches.length !== 1) {
+            if (e.touches.length > 1) resetTouchDragState();
+            return;
+          }
+          if (disabled) return;
           const touch = e.touches[0];
           beginLongPress("group", groupId, btn, touch.clientX, touch.clientY);
         },
@@ -334,7 +341,10 @@ var HomepageTouchDragManager = (() => {
       document.addEventListener(
         "touchmove",
         (e) => {
-          if (e.touches.length !== 1) return;
+          if (e.touches.length !== 1) {
+            if (e.touches.length > 1) resetTouchDragState();
+            return;
+          }
           const touch = e.touches[0];
           if (!touchDragState.active && touchMenuState.timer) {
             touchMenuState.x = touch.clientX;

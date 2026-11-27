@@ -93,6 +93,7 @@ var HomepageSelectionManager = (() => {
     function selectAll() {
       if (!selectionMode) return;
       const grid = deps.getGrid(!!deps.getState().openFolderId);
+      if (!grid) return;
       for (const tile of qsa(".tile", grid)) {
         selectedIds.add(tile.dataset.id);
       }
@@ -140,6 +141,7 @@ var HomepageSelectionManager = (() => {
     /** 网格卡片选中态样式 */
     function updateStyles() {
       const grid = deps.getGrid(!!deps.getState().openFolderId);
+      if (!grid) return;
       for (const tile of qsa(".tile", grid)) {
         tile.classList.toggle("selected", selectedIds.has(tile.dataset.id));
       }
@@ -167,6 +169,7 @@ var HomepageSelectionManager = (() => {
 
     /** 框选矩形与可见卡片的几何相交命中 */
     function selectTilesInBox(grid, x1, y1, x2, y2) {
+      if (!grid) return;
       const left = Math.min(x1, x2);
       const right = Math.max(x1, x2);
       const top = Math.min(y1, y2);
@@ -235,6 +238,7 @@ var HomepageSelectionManager = (() => {
     /** 绑定鼠标框选（主网格 / 文件夹覆盖层 / main 空白兜底） */
     function bindBoxSelectEvents() {
       const handleStart = (e, grid) => {
+        if (!grid) return;
         if (e.button !== 0) return;
         if (e.target.closest?.(".tile")) return;
         if (!selectionMode) return;

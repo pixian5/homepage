@@ -106,11 +106,12 @@ var HomepageThemeManager = (() => {
       applyDensity();
     }
 
-    /** 遮罩强度：仅图片类背景（bing/custom）生效，其它类型透明 */
+    /** 遮罩强度：仅图片类背景（bing/custom）生效，非有限数值按 0 兜底防 NaN 破坏 CSS */
     function applyBackgroundOverlay() {
       const type = deps.getData()?.settings?.backgroundType || "color";
       const isImage = type === "bing" || type === "custom";
-      const strength = Math.min(0.6, Math.max(0, Number(deps.getData()?.settings?.backgroundOverlayStrength)));
+      const rawStrength = Number(deps.getData()?.settings?.backgroundOverlayStrength);
+      const strength = Number.isFinite(rawStrength) ? Math.min(0.6, Math.max(0, rawStrength)) : 0;
       docEl().style.setProperty("--bg-overlay", isImage ? `rgba(0, 0, 0, ${strength})` : "rgba(0, 0, 0, 0)");
     }
 
@@ -130,22 +131,24 @@ var HomepageThemeManager = (() => {
       return true;
     }
 
-    /** 写入背景样式：data:/http 走 url()，仅放行 CSS 函数与关键字，防注入 */
+    /** 写入背景样式：仅放行 https/data:image URL、安全 CSS 渐变函数与纯关键字，防 CSS/URL 注入 */
     function setBackground(style) {
-      if (!style) return;
+      if (typeof style !== "string") return;
+      const trimmed = style.trim();
+      if (!trimmed) return;
       const el = deps.getBackgroundEl();
       el.style.backgroundSize = "cover";
       el.style.backgroundPosition = "center";
       el.style.backgroundRepeat = "no-repeat";
-      if (style.startsWith("data:") || style.startsWith("http")) {
+      if (/^data:image\//i.test(trimmed) || /^https?:\/\//i.test(trimmed)) {
         // JSON.stringify 给 URL 加引号并转义，比 CSS.escape(标识符) 更适合 url() 值
-        el.style.backgroundImage = `url(${JSON.stringify(style)})`;
-      } else if (isSafeCssGradient(style) || /^[a-zA-Z-]+\([^)]*\)$/.test(style)) {
-        // 仅允许形如 linear-gradient(...) / radial-gradient(...) 的合法 CSS 渐变函数（含嵌套 rgba）
-        el.style.backgroundImage = style;
-      } else if (/^[a-zA-Z-]+$/.test(style)) {
+        el.style.backgroundImage = `url(${JSON.stringify(trimmed)})`;
+      } else if (isSafeCssGradient(trimmed)) {
+        // 仅允许形如 linear-gradient(...) / radial-gradient(...) / conic-gradient(...) 的安全渐变
+        el.style.backgroundImage = trimmed;
+      } else if (/^[a-zA-Z-]+$/.test(trimmed)) {
         // 仅允许纯关键字（如 none）
-        el.style.backgroundImage = style;
+        el.style.backgroundImage = trimmed;
       }
       // 其它情况一律忽略，避免注入
     }
@@ -167,39 +170,42 @@ var HomepageThemeManager = (() => {
 
     async function doLoadBackground({ silent = false } = {}) {
       const settings = deps.getData()?.settings || {};
-      deps.getBackgroundEl().classList.add("is-loading");
-
-      if (settings.backgroundType === "bing") {
-        const info = await deps.getBingWallpaper(settings.language, {
-          onUpdated: (fresh) => {
-            if (deps.getData()?.settings?.backgroundType === "bing" && fresh?.dataUrl) {
-              setBackground(fresh.dataUrl);
-              appliedBackgroundSignature = backgroundSignature(deps.getData()?.settings);
+      const bgEl = deps.getBackgroundEl();
+      bgEl.classList.add("is-loading");
+      try {
+        if (settings.backgroundType === "bing") {
+          const info = await deps.getBingWallpaper(settings.language, {
+            onUpdated: (fresh) => {
+              if (deps.getData()?.settings?.backgroundType === "bing" && fresh?.dataUrl) {
+                setBackground(fresh.dataUrl);
+                appliedBackgroundSignature = backgroundSignature(deps.getData()?.settings);
+              }
+            },
+          });
+          if (info.dataUrl) {
+            setBackground(info.dataUrl);
+            if (!silent) {
+              if (info.failed) deps.toast(deps.t("background.fetchFailedCache"), "warning");
+              else if (!info.fromCache) deps.toast(deps.t("background.updatedToday"));
             }
-          },
-        });
-        if (info.dataUrl) {
-          setBackground(info.dataUrl);
-          if (!silent) {
-            if (info.failed) deps.toast(deps.t("background.fetchFailedCache"), "warning");
-            else if (!info.fromCache) deps.toast(deps.t("background.updatedToday"));
+          } else {
+            setSolidBackgroundColor(settings.backgroundColor);
+            if (!silent) deps.toast(deps.t("background.failedDefault"), "error");
           }
-        } else {
+        } else if (settings.backgroundType === "color") {
           setSolidBackgroundColor(settings.backgroundColor);
-          if (!silent) deps.toast(deps.t("background.failedDefault"), "error");
+        } else if (settings.backgroundType === "gradient") {
+          setBackground(settings.backgroundGradient);
+        } else if (settings.backgroundType === "custom") {
+          if (settings.backgroundCustom) setBackground(settings.backgroundCustom);
+          else setSolidBackgroundColor(settings.backgroundColor);
         }
-      } else if (settings.backgroundType === "color") {
-        setSolidBackgroundColor(settings.backgroundColor);
-      } else if (settings.backgroundType === "gradient") {
-        setBackground(settings.backgroundGradient);
-      } else if (settings.backgroundType === "custom") {
-        if (settings.backgroundCustom) setBackground(settings.backgroundCustom);
-        else setSolidBackgroundColor(settings.backgroundColor);
-      }
 
-      applyBackgroundOverlay();
-      appliedBackgroundSignature = backgroundSignature(settings);
-      deps.getBackgroundEl().classList.remove("is-loading");
+        applyBackgroundOverlay();
+        appliedBackgroundSignature = backgroundSignature(settings);
+      } finally {
+        bgEl.classList.remove("is-loading");
+      }
     }
 
     /** 数据被整包替换后调用：只有背景相关设置确实变了才重跑 */

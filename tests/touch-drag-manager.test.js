@@ -196,6 +196,26 @@ describe("touch-drag-manager long press", () => {
     assert.equal(calls.menus.length, 1, "长按出上下文菜单");
     assert.deepEqual(calls.menus[0], { x: 30, y: 40, node });
   });
+
+  it("cancels pending long-press timers on multi-touch pinch gesture", async () => {
+    const { manager, drag, calls } = setup();
+    const tile = fakeEl({ dataset: { id: "a" } });
+    manager.bindDocumentTouchEvents();
+    manager.bindTileTouchEvents(tile, data_node("a"));
+    tile.dispatch("touchstart", touchAt(10, 10));
+    const twoFingers = {
+      touches: [
+        { clientX: 10, clientY: 10 },
+        { clientX: 50, clientY: 50 },
+      ],
+      changedTouches: [{ clientX: 50, clientY: 50 }],
+    };
+    tile.dispatch("touchstart", twoFingers);
+    await waitLongPress();
+    assert.equal(manager.isActive, false);
+    assert.equal(drag.calls.setDragState.length, 0);
+    assert.equal(calls.menus.length, 0);
+  });
 });
 
 describe("touch-drag-manager move & drop intents", () => {

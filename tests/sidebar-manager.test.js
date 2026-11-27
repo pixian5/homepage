@@ -216,4 +216,17 @@ describe("sidebar-manager group switching", () => {
     assert.equal(calls.groupContextMenus.length, 1);
     assert.equal(calls.groupContextMenus[0].group.id, "fld_a");
   });
+
+  it("filters deleted/purged folders from sidebar and falls back title/name safely", () => {
+    const { manager, data, elements } = setup();
+    data.nodes.fld_a.deletedAt = 123;
+    data.nodes.fld_b = { id: "fld_b", type: "folder", name: "备用名", children: [] };
+    manager.renderGroups();
+    const tabs = elements.groupTabs.children;
+    assert.equal(tabs.length, 2, "已删除文件夹不得渲染到侧边栏");
+    assert.equal(tabs[1].dataset.label, "备用名");
+
+    data.settings = null;
+    assert.doesNotThrow(() => tabs[1].dispatch("click"));
+  });
 });

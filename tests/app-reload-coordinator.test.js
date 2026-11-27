@@ -45,12 +45,16 @@ describe("app-reload-coordinator pure helpers", () => {
     assert.equal(res, "__recent__");
   });
 
-  it("resolveOpenFolderId validates folder existence and type", () => {
+  it("resolveOpenFolderId validates folder existence, type, and active status", () => {
     const nodes = {
       f1: { id: "f1", type: "folder" },
+      fDeleted: { id: "fDeleted", type: "folder", deletedAt: 100 },
+      fPurged: { id: "fPurged", type: "folder", purgedAt: 200 },
       b1: { id: "b1", type: "link" },
     };
     assert.equal(resolveOpenFolderId("f1", nodes), "f1");
+    assert.equal(resolveOpenFolderId("fDeleted", nodes), null);
+    assert.equal(resolveOpenFolderId("fPurged", nodes), null);
     assert.equal(resolveOpenFolderId("b1", nodes), null);
     assert.equal(resolveOpenFolderId("nonexistent", nodes), null);
     assert.equal(resolveOpenFolderId(null, nodes), null);

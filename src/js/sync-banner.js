@@ -150,9 +150,10 @@ export function createSyncBanner(deps) {
       busy = true;
       const label = textEl();
       const prev = label?.textContent || "";
+      const retryingText = t("sync.banner.retrying");
       // 重试期间必须让提示条可见，否则用户看不到「正在重试」的进度反馈
       show();
-      if (label) label.textContent = t("sync.banner.retrying");
+      if (label) label.textContent = retryingText;
       try {
         await onRetry();
       } catch (e) {
@@ -160,8 +161,10 @@ export function createSyncBanner(deps) {
       } finally {
         busy = false;
         await refresh();
-        // refresh 判定不该显示时会自动隐藏；仍显示则恢复原文案
-        if (label && !el()?.classList.contains("hidden")) label.textContent = prev;
+        // 仅当 refresh 未写入新文案（仍停留在 retrying 占位）时恢复原文案，避免覆盖最新失败原因
+        if (label && !el()?.classList.contains("hidden") && label.textContent === retryingText) {
+          label.textContent = prev;
+        }
       }
     });
 

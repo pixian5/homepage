@@ -84,13 +84,15 @@ var HomepageSidebarManager = (() => {
       const root = data.groups.find((group) => deps.isAllBookmarksGroup(group)) || data.groups[0];
       const sidebarEntries = [
         root,
-        ...(root?.nodes || []).map((id) => data.nodes[id]).filter((node) => node?.type === "folder"),
+        ...(root?.nodes || [])
+          .map((id) => data.nodes[id])
+          .filter((node) => node?.type === "folder" && !node.deletedAt && !node.purgedAt),
       ].filter(Boolean);
       sidebarEntries.forEach((group, idx) => {
         const fixedAllGroup = deps.isAllBookmarksGroup(group);
         const btn = createButton();
         btn.className = `group-tab${fixedAllGroup ? "" : " draggable"} ${group.id === activeGroupId ? "active" : ""}`;
-        const label = fixedAllGroup ? group.name : group.title;
+        const label = fixedAllGroup ? group.name || group.title || "" : group.title || group.name || "";
         btn.dataset.label = label;
         btn.setAttribute("aria-label", label);
         btn.textContent = data.settings?.sidebarCollapsed ? "" : label;
@@ -104,7 +106,7 @@ var HomepageSidebarManager = (() => {
           }
           deps.setActiveGroup(group.id);
           deps.closeFolder();
-          deps.getData().settings.lastActiveGroupId = group.id;
+          if (deps.getData()?.settings) deps.getData().settings.lastActiveGroupId = group.id;
           deps.persist();
           deps.render();
         });

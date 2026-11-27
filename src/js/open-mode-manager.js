@@ -9,7 +9,7 @@
  * 顶层 const/let 会和其它模块重名。IIFE 保证只暴露一个全局名。
  */
 
-import { getChromeApi } from "./shared-utils.js";
+import { callExtensionApi, getChromeApi, normalizeUrl } from "./shared-utils.js";
 
 var HomepageOpenModeManager = (() => {
   const MODE_ORDER = ["current", "new", "background"];
@@ -61,23 +61,26 @@ var HomepageOpenModeManager = (() => {
      * @param {"current"|"new"|"background"} [mode]
      */
     function openUrlWithMode(url, mode) {
-      if (!url) return;
+      const safeUrl = normalizeUrl(url);
+      if (!safeUrl) return;
       const api = getChromeApi();
       const openMode = mode || getEffectiveOpenMode(null);
       // 用户从本扩展打开的链接也记入「最近访问」（Safari 无系统历史时的数据来源）
       try {
-        deps.recordVisit?.({ url, title: "" })?.catch?.((e) => console.warn("recordVisit failed", e));
+        deps.recordVisit?.({ url: safeUrl, title: "" })?.catch?.((e) => console.warn("recordVisit failed", e));
       } catch (_e) {
         // 记录失败不影响打开
       }
       if (api?.tabs && (openMode === "new" || openMode === "background")) {
-        api.tabs.create({ url, active: openMode !== "background" });
+        void callExtensionApi(api, api.tabs, "create", [{ url: safeUrl, active: openMode !== "background" }]).catch(
+          () => {},
+        );
         return;
       }
       if (openMode === "new" || openMode === "background") {
-        window.open(url, "_blank", "noopener,noreferrer");
+        window.open(safeUrl, "_blank", "noopener,noreferrer");
       } else {
-        window.location.href = url;
+        window.location.href = safeUrl;
       }
     }
 

@@ -4,10 +4,11 @@
 
 ## 当前开发进度
 
-当前产品版本 **27.4.6**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
+当前产品版本 **27.4.7**。以下按 `git log` 倒序记录，版本号与各提交的 `VERSION` 字段逐一核对（提交标题里的「轮次」编号与产品版本号不同步，轮次编号已写在括号内）；有对应文档的给出链接，无文档的仅按提交标题概括并注明细节缺失。
 
 项目已全面完成 Chrome / Firefox / Safari 三端适配、自建 HTTP 增量同步、ETag 并发合并、设备退役与 epoch 回收协议。
 
+- **27.4.7**：修复 [sync-banner.js](src/js/sync-banner.js) 重试 `refresh()` 后被旧占位文案覆盖问题；在 [theme-manager.js](src/js/theme-manager.js) 移除 `setBackground` 的 `url(...)` 正则绕过、`backgroundOverlayStrength` `NaN` 兜底为 `0` 并为 `doLoadBackground` 补充 `finally` loading 清理；加固 [app-reload-coordinator.js](src/js/app-reload-coordinator.js)、[sidebar-manager.js](src/js/sidebar-manager.js)、[open-mode-manager.js](src/js/open-mode-manager.js)、[touch-drag-manager.js](src/js/touch-drag-manager.js) 与 [selection-manager.js](src/js/selection-manager.js) 的墓碑过滤、协议安全、`callExtensionApi` 异步兼容、多指取消长按及空网格守卫；扩展 7 个测试文件（单测增至 698/698）；因 Safari 运行中仅完成三端打包，通过 Chrome/Firefox 双端冒烟与 4 套 Firefox E2E 验收，见[当前开发进度](docs/20261127-1817-当前开发进度-Gemini.md)。
 - **27.4.6**：在 [sync_merge.js](src/js/sync_merge.js) 新增 `rescueUnplacedLiveNodes` 兜底挽救父文件夹被删的存活孤立节点并确定性破除并发文件夹移动环路（避免 `missing_local_ids` 死锁）；在 [node-ops-manager.js](src/js/node-ops-manager.js) 与 [app.js](src/js/app.js) 补齐删及打开目录自动关闭覆盖层、撤销恢复单调时钟与缺父兜底回挂、移动跳过墓碑目标；升级 [bookmark-html.js](src/js/bookmark-html.js) 支持 `upload` 图标导出并按 `normalizeUrl`/`data:image/*` 过滤危险导入书签与图标；加固 [popup-batch-save.js](src/js/popup-batch-save.js) 拒绝写入墓碑容器及 [modal-manager.js](src/js/modal-manager.js) 远程图标校验、`openFolderId` 回退与失败回滚重试实时节点定位；扩展 5 个测试文件（单测增至 692/692）；因 Safari 运行中仅完成三端打包，通过 Chrome/Firefox 双端冒烟与 4 套 Firefox E2E 验收，见[当前开发进度](docs/20261127-1301-当前开发进度-Gemini.md)。
 - **27.4.5**：修复 [folder-manager.js](src/js/folder-manager.js) 遍历父节点与解组（`dismissFolder`）时跳过 `deletedAt`/`purgedAt` 墓碑节点，并在解组当前打开文件夹前先执行 `closeFolder()`；在 [settings-form-renderer.js](src/js/settings-form-renderer.js) 钳制 `fixedCols`（`1..24`）、`backgroundOverlayStrength`（`0..0.6`）、`fontSize`（`10..32`）与 `maxBackups`（`>=0`）；修正 [bookmark-sidebar.js](src/js/bookmark-sidebar.js) 分组标题 `title`/`name` 回退顺序并加固 [keyboard-navigator.js](src/js/keyboard-navigator.js) `gridTemplateColumns` `"none"`/空值解析；补齐对应 4 个测试文件单测（增至 686/686）；因 Safari 运行中仅完成三端打包，通过 Chrome/Firefox 双端冒烟与 4 套 Firefox E2E 验收，见[当前开发进度](docs/20261127-1240-当前开发进度-Gemini.md)。
 - **27.4.4**：补齐 [app-i18n.js](src/js/app-i18n.js) 全 8 语言缺失的 `common.confirm` 词条并在 `tests/i18n-manager.test.js` 增加 `src/js/*.js` 全量 `t()` 键值静态检查；在 `src/js/storage.js` 与 `src/js/import-export.js` 将 `syncDeviceSecret`/`syncDeviceSecretUrl` 纳入快照、JSON 导出脱敏与恢复保护；在 `src/js/sync_engine.js` 补齐 `writeRemoteSyncDocument`/412 的 `lastRemoteEpoch` 更新，并在 E2EE 开启时加密 `homepage_sync_outbox` 入队载荷；扩展 `tests/storage.test.js`、`tests/import-export-security.test.js` 与 `tests/sync-e2ee.test.js`（单测增至 682/682）；因 Safari 运行中仅完成三端打包，通过 Chrome/Firefox 双端冒烟与 4 套 Firefox E2E 验收，见[当前开发进度](docs/20261127-1114-当前开发进度-Gemini.md)。
@@ -89,7 +90,7 @@
 - **26.6.1**：修复 Safari 扩展消失：新增注册自愈脚本并挂进每日体检，详见[Safari 扩展消失自愈](docs/20261103-1525-Safari扩展消失自愈-DeepSeek-V4.1-Flash.md)。
 - **26.6.0（基线）**：修复 Chrome 永久误报「同步已多次失败，自动重试已停止」：同步实际健康，根因是存储中残留一条指向已废弃浏览器 storage.sync 传输目标的僵尸队列项，它永远发不出去也清不掉；新增 filterCurrentOutbox 在读取与加载时剔除废弃目标，详见[Chrome 永久误报同步失败](docs/20261102-1725-Chrome永久误报同步失败-DeepSeek-V4.1-Flash.md)。
 
-当前单测 692 项全部通过，Biome 检查 0 告警，三端打包（Safari 运行中故未覆盖安装）、双端无头浏览器冒烟与 4 套 Firefox E2E 测试套件均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
+当前单测 698 项全部通过，Biome 检查 0 告警，三端打包（Safari 运行中故未覆盖安装）、双端无头浏览器冒烟与 4 套 Firefox E2E 测试套件均正常（可 `bash scripts/run-all-smoke.sh` 一键复验全部门禁）。
 
 ## 下一步待实现
 

@@ -1310,7 +1310,13 @@ const server = createServer(async (req, res) => {
     const result = await enqueueWrite(async () => {
       if (idem && idempotency.has(idem)) {
         const cached = idempotency.get(idem);
-        const requestHash = sha256Hex(raw);
+        const requestHash = sha256Hex(
+          JSON.stringify({
+            raw,
+            ifMatch: String(req.headers["if-match"] || ""),
+            epoch: String(req.headers["x-sync-epoch"] || ""),
+          }),
+        );
         if (cached.requestHash !== requestHash) {
           return {
             status: 409,
@@ -1411,7 +1417,19 @@ const server = createServer(async (req, res) => {
         "X-Sync-Revision": String(state.revision),
         "X-Sync-Epoch": String(state.epoch || 0),
       };
-      const cached = { status: 200, body, headers, requestHash: sha256Hex(raw), at: Date.now() };
+      const cached = {
+        status: 200,
+        body,
+        headers,
+        requestHash: sha256Hex(
+          JSON.stringify({
+            raw,
+            ifMatch: String(req.headers["if-match"] || ""),
+            epoch: String(req.headers["x-sync-epoch"] || ""),
+          }),
+        ),
+        at: Date.now(),
+      };
       if (idem) {
         idempotency.set(idem, cached);
         // 简单清理：超过 200 条丢最旧

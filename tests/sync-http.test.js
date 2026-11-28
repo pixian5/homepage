@@ -176,6 +176,27 @@ describe("sync_http_transport + server", () => {
     assert.equal(repeated.body.error, "idempotency_key_reused");
   });
 
+  it("rejects reuse of an idempotency key with different preconditions", async () => {
+    const current = await httpPullState({ baseUrl: BASE, token: TOKEN });
+    assert.equal(current.ok, true);
+    const key = "same-operation-different-preconditions";
+    const doc = makeDoc("doc_idempotency_preconditions");
+    const first = await httpPushState({ baseUrl: BASE, token: TOKEN }, doc, {
+      ifMatch: current.etag,
+      epoch: 0,
+      idempotencyKey: key,
+    });
+    assert.equal(first.ok, true, JSON.stringify(first));
+
+    const repeated = await putRaw(BASE, doc, TOKEN, {
+      "If-Match": first.etag,
+      "X-Sync-Epoch": "99",
+      "Idempotency-Key": key,
+    });
+    assert.equal(repeated.response.status, 409);
+    assert.equal(repeated.body.error, "idempotency_key_reused");
+  });
+
   it("retries successfully after a real network outage", async () => {
     // 持有端口并主动断开连接，制造真实网络错误，不访问任何未知服务。
     const outage = createServer((socket) => socket.destroy());

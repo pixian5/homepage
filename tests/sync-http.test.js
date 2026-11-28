@@ -154,6 +154,28 @@ describe("sync_http_transport + server", () => {
     assert.equal(after.revision, first.revision);
   });
 
+  it("rejects reuse of an idempotency key with different content", async () => {
+    const current = await httpPullState({ baseUrl: BASE, token: TOKEN });
+    assert.equal(current.ok, true);
+    const key = "same-operation-different-content";
+    const firstDoc = makeDoc("doc_idempotency_conflict");
+    const first = await httpPushState({ baseUrl: BASE, token: TOKEN }, firstDoc, {
+      ifMatch: current.etag,
+      idempotencyKey: key,
+    });
+    assert.equal(first.ok, true, JSON.stringify(first));
+
+    const secondDoc = makeDoc("doc_idempotency_conflict");
+    secondDoc.nodes = [{ ...secondDoc.nodes[0], title: "Changed" }];
+    secondDoc.contentHash = hashSyncDocument(secondDoc);
+    const repeated = await putRaw(BASE, secondDoc, TOKEN, {
+      "If-Match": first.etag,
+      "Idempotency-Key": key,
+    });
+    assert.equal(repeated.response.status, 409);
+    assert.equal(repeated.body.error, "idempotency_key_reused");
+  });
+
   it("retries successfully after a real network outage", async () => {
     // 持有端口并主动断开连接，制造真实网络错误，不访问任何未知服务。
     const outage = createServer((socket) => socket.destroy());

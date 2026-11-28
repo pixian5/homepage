@@ -34,8 +34,22 @@ const SYNC_ITEM_QUOTA_BYTES = 7500;
 const ICON_DATA_MAX_LENGTH = 2048;
 const MAX_ICON_CACHE_ENTRIES = 500;
 const STORAGE_SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en", "ja", "ko", "de", "fr", "es"];
+const STORAGE_READ_FAILED = Symbol("storageReadFailed");
 export const deepClone = (obj) =>
   typeof structuredClone === "function" ? structuredClone(obj) : JSON.parse(JSON.stringify(obj));
+
+export function isStorageReadFailure(data) {
+  return !!data?.[STORAGE_READ_FAILED];
+}
+
+function markStorageReadFailure(data) {
+  Object.defineProperty(data, STORAGE_READ_FAILED, {
+    value: true,
+    enumerable: false,
+    configurable: false,
+  });
+  return data;
+}
 
 /**
  * 默认设置配置
@@ -291,7 +305,7 @@ export async function loadData(options = {}) {
   const api = getChromeApi();
   const local = storageArea(false);
   // 无扩展 API 且无 Web 回退存储（极端环境）才退回内存默认值
-  if (!api && !local) return base;
+  if (!api && !local) return markStorageReadFailure(base);
   // 读失败时最多重试 2 次，避免瞬时错误被当成「无数据」并覆盖默认主页
   let got = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -303,7 +317,7 @@ export async function loadData(options = {}) {
   if (!got?.ok) {
     // 失败关闭：返回内存默认值，但不写盘，避免冲掉真实数据
     console.error("loadData: storage unreadable, using in-memory defaults without overwrite");
-    return base;
+    return markStorageReadFailure(base);
   }
   let data = got.value;
   const stableData = await readSafariStableHomepage(api);
@@ -375,6 +389,7 @@ async function fallbackSyncToLocal(data, prevLastUpdated, prevSyncEnabled, senti
  * @returns {Promise<string | null>}
  */
 export async function saveData(data, useSync = false) {
+  if (isStorageReadFailure(data)) return "storage_read_failed";
   const api = getChromeApi();
   const area = storageArea(useSync);
   // 无扩展 API 但有 Web 回退存储（localStorage）时照常读写

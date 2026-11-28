@@ -159,6 +159,7 @@ export function createAppReloadCoordinator({
   processPendingIconFetches,
   consumeSaveToast,
   schedulePush,
+  isStorageReadFailure = () => false,
   claimExternalReload = defaultClaimExternalReload,
   toast,
   t,
@@ -172,6 +173,9 @@ export function createAppReloadCoordinator({
 
     // 先从磁盘重载 local（popup / 其它标签页 / sync_engine），再按写入来源决定是否触发同步
     const diskLocal = typeof loadData === "function" ? await loadData() : null;
+    if (diskLocal && typeof isStorageReadFailure === "function" && isStorageReadFailure(diskLocal)) {
+      return false;
+    }
     const writeSource = String(diskLocal?._syncMeta?.lastWriteSource || "external");
     const isNewtabManaged =
       writeSource === "newtab_edit" || writeSource === "sync_merge" || writeSource === "sync_meta";

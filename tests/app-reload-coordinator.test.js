@@ -64,6 +64,51 @@ describe("app-reload-coordinator pure helpers", () => {
 });
 
 describe("app-reload-coordinator lifecycle", () => {
+  it("keeps current data when storage reads fail", async () => {
+    const currentData = { lastUpdated: 100, settings: { syncEnabled: false }, nodes: {} };
+    const failedData = { lastUpdated: 0, settings: { syncEnabled: false }, nodes: {} };
+    let rendered = false;
+    let pullCount = 0;
+
+    const coordinator = createAppReloadCoordinator({
+      getData: () => currentData,
+      setData: () => {
+        throw new Error("failed storage data must not replace current data");
+      },
+      getActiveGroupId: () => null,
+      setActiveGroupId: () => {},
+      getOpenFolderId: () => null,
+      setOpenFolderId: () => {},
+      isPersistInFlight: () => false,
+      loadData: async () => failedData,
+      isStorageReadFailure: (data) => data === failedData,
+      pullNow: async () => {
+        pullCount++;
+      },
+      resetSettingsClockBaseline: () => {},
+      resetPlacementClockBaseline: () => {},
+      getRootContainerById: () => null,
+      getRootGroup: () => null,
+      recentGroupId: "__recent__",
+      getSelectionMgr: () => null,
+      ensureLanguageSetting: () => {},
+      syncBackupBaseline: () => {},
+      render: () => {
+        rendered = true;
+      },
+      processPendingIconFetches: () => {},
+      consumeSaveToast: async () => {},
+      schedulePush: () => {},
+      toast: () => {},
+      t: (key) => key,
+    });
+
+    const reloaded = await coordinator.reloadFromStorage();
+    assert.equal(reloaded, false);
+    assert.equal(rendered, false);
+    assert.equal(pullCount, 0);
+  });
+
   it("reloads disk data and resets baselines without sync", async () => {
     let currentData = {
       lastUpdated: 100,

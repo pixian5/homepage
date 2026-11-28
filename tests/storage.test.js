@@ -64,6 +64,7 @@ describe("storage", async () => {
     defaultData,
     createBackupSnapshot,
     saveData,
+    isStorageReadFailure,
     loadData,
     clearData,
     getStorageKey,
@@ -149,6 +150,35 @@ describe("storage", async () => {
     const loaded = await loadData();
     assert.equal(loaded.settings.language, "en");
     assert.ok(loaded.lastUpdated > 0);
+  });
+
+  it("loadData marks unreadable storage and saveData refuses to overwrite it", async () => {
+    const realData = defaultData();
+    realData.nodes.n1 = { id: "n1", type: "item", title: "保留", url: "https://example.com" };
+    stored[getStorageKey()] = realData;
+    const originalGet = global.chrome.storage.local.get;
+    let setCount = 0;
+    const originalSet = global.chrome.storage.local.set;
+    global.chrome.storage.local.get = (_key, callback) => {
+      lastError = new Error("read denied");
+      callback({});
+    };
+    global.chrome.storage.local.set = (obj, callback) => {
+      setCount++;
+      Object.assign(stored, obj);
+      callback?.();
+      return Promise.resolve();
+    };
+    try {
+      const loaded = await loadData();
+      assert.equal(isStorageReadFailure(loaded), true);
+      assert.equal(await saveData(loaded), "storage_read_failed");
+      assert.equal(setCount, 0);
+      assert.deepEqual(Object.keys(stored[getStorageKey()].nodes), ["n1"]);
+    } finally {
+      global.chrome.storage.local.get = originalGet;
+      global.chrome.storage.local.set = originalSet;
+    }
   });
 
   it("Safari restores non-empty App Group data when extension local storage is empty", async () => {

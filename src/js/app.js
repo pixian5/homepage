@@ -61,6 +61,7 @@ import {
   detectPreferredLanguage,
   getChromeApi,
   getStorageKey,
+  isStorageReadFailure,
   loadData,
   loadDataFromArea,
   loadIconCache,
@@ -307,6 +308,7 @@ function getAppReloadCoordinator() {
           onBeforeInternalWrite: () =>
             persistenceCoordinator?.setSuppressStorageUntil?.(Date.now() + STORAGE_SUPPRESS_MS * 4),
         }),
+      isStorageReadFailure,
       pullNow,
       resetSettingsClockBaseline,
       resetPlacementClockBaseline,
@@ -1133,7 +1135,7 @@ async function init() {
   data = localData;
   const deduped = dedupeData(data);
   const languageInitialized = ensureLanguageSetting();
-  if (deduped || languageInitialized) {
+  if ((deduped || languageInitialized) && !isStorageReadFailure(localData)) {
     persistenceCoordinator?.setSuppressStorageUntil?.(Date.now() + STORAGE_SUPPRESS_MS * 4);
     try {
       await saveData(data, false);

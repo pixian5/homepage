@@ -77,7 +77,7 @@ function parseNonNegativeInt(raw, fallback) {
  * } | null}
  */
 let state = null;
-const idempotency = new Map(); // key -> { status, body, at }
+const idempotency = new Map(); // key -> { status, body, requestHash, at }
 const responseCors = new WeakMap();
 const rateBuckets = new Map(); // `${scope}:${ip}` -> number[]
 let snapshotSeq = 0;
@@ -1309,7 +1309,16 @@ const server = createServer(async (req, res) => {
     }
     const result = await enqueueWrite(async () => {
       if (idem && idempotency.has(idem)) {
-        return idempotency.get(idem);
+        const cached = idempotency.get(idem);
+        const requestHash = sha256Hex(raw);
+        if (cached.requestHash !== requestHash) {
+          return {
+            status: 409,
+            body: { error: "idempotency_key_reused", idempotencyKey: idem },
+            headers: {},
+          };
+        }
+        return { status: cached.status, body: cached.body, headers: cached.headers };
       }
       const validationError = validateSyncDocument(doc);
       if (validationError) {
@@ -1402,7 +1411,7 @@ const server = createServer(async (req, res) => {
         "X-Sync-Revision": String(state.revision),
         "X-Sync-Epoch": String(state.epoch || 0),
       };
-      const cached = { status: 200, body, headers, at: Date.now() };
+      const cached = { status: 200, body, headers, requestHash: sha256Hex(raw), at: Date.now() };
       if (idem) {
         idempotency.set(idem, cached);
         // 简单清理：超过 200 条丢最旧

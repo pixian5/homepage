@@ -986,6 +986,7 @@ const server = createServer(async (req, res) => {
         return { status: 500, body: { error: "save_failed" }, headers: {} };
       }
       state = next;
+      idempotency.clear();
       return {
         status: 200,
         body: {
@@ -1308,24 +1309,6 @@ const server = createServer(async (req, res) => {
       doc = doc.doc;
     }
     const result = await enqueueWrite(async () => {
-      if (idem && idempotency.has(idem)) {
-        const cached = idempotency.get(idem);
-        const requestHash = sha256Hex(
-          JSON.stringify({
-            raw,
-            ifMatch: String(req.headers["if-match"] || ""),
-            epoch: String(req.headers["x-sync-epoch"] || ""),
-          }),
-        );
-        if (cached.requestHash !== requestHash) {
-          return {
-            status: 409,
-            body: { error: "idempotency_key_reused", idempotencyKey: idem },
-            headers: {},
-          };
-        }
-        return { status: cached.status, body: cached.body, headers: cached.headers };
-      }
       const validationError = validateSyncDocument(doc);
       if (validationError) {
         return { status: 400, body: { error: validationError }, headers: {} };
@@ -1353,6 +1336,25 @@ const server = createServer(async (req, res) => {
             headers: { "X-Sync-Epoch": String(state.epoch) },
           };
         }
+      }
+
+      if (idem && idempotency.has(idem)) {
+        const cached = idempotency.get(idem);
+        const requestHash = sha256Hex(
+          JSON.stringify({
+            raw,
+            ifMatch: String(req.headers["if-match"] || ""),
+            epoch: String(req.headers["x-sync-epoch"] || ""),
+          }),
+        );
+        if (cached.requestHash !== requestHash) {
+          return {
+            status: 409,
+            body: { error: "idempotency_key_reused", idempotencyKey: idem },
+            headers: {},
+          };
+        }
+        return { status: cached.status, body: cached.body, headers: cached.headers };
       }
 
       const ifMatch = String(req.headers["if-match"] || "").trim();

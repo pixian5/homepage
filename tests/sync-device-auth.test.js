@@ -182,7 +182,9 @@ describe("sync server device credentials", () => {
     secrets.dev_retire = paired.deviceSecret;
     const cfg = deviceCfg("dev_retire");
     // 先正常写一次，确认退役前凭据可用
-    assert.equal((await httpPushState(cfg, makeDoc("dev_retire"), { idempotencyKey: `r0-${Date.now()}` })).ok, true);
+    const key = `r0-${Date.now()}`;
+    const beforeRetirement = makeDoc("dev_retire");
+    assert.equal((await httpPushState(cfg, beforeRetirement, { idempotencyKey: key })).ok, true);
 
     // 管理员退役该设备
     const retire = await httpRetireDevice(masterCfg(), { deviceId: "dev_retire", retired: true });
@@ -194,7 +196,7 @@ describe("sync server device credentials", () => {
     assert.equal(pull.ok, false);
     assert.equal(pull.reason, "device_retired");
     assert.equal(pull.status, 403);
-    const push = await httpPushState(cfg, makeDoc("dev_retire"), { idempotencyKey: `r1-${Date.now()}` });
+    const push = await httpPushState(cfg, beforeRetirement, { idempotencyKey: key });
     assert.equal(push.ok, false);
     assert.equal(push.reason, "device_retired");
     assert.equal(push.status, 403);
